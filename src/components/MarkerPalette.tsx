@@ -11,7 +11,8 @@ import type { CustomMarker } from '@/lib/types'
 
 interface MarkerPaletteProps {
   markers: CustomMarker[]
-  onAdd: () => number
+  initialSelectedId?: number
+  onAdd: (kind?: 'base' | 'overlay') => number
   onUpdate: (id: number, patch: Partial<Omit<CustomMarker, 'id'>>) => void
   onDelete: (id: number) => void
   usageCount: (marker: CustomMarker) => number
@@ -20,8 +21,8 @@ interface MarkerPaletteProps {
 
 const HEX_RE = /^#[0-9a-fA-F]{6}$/
 
-export function MarkerPalette({ markers, onAdd, onUpdate, onDelete, usageCount, onClose }: MarkerPaletteProps) {
-  const [selectedId, setSelectedId] = useState<number | null>(markers[0]?.id ?? null)
+export function MarkerPalette({ markers, initialSelectedId, onAdd, onUpdate, onDelete, usageCount, onClose }: MarkerPaletteProps) {
+  const [selectedId, setSelectedId] = useState<number | null>(initialSelectedId ?? markers[0]?.id ?? null)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const selected = markers.find((m) => m.id === selectedId) ?? null
 

@@ -6,7 +6,7 @@ import { toast } from 'sonner'
 import { cn, uid } from '@/lib/utils'
 import {
   BASE, BASE_PALETTE, BASE_TYPES, CHUNK_SIZE, DEFAULT_CELL, EDGE_PALETTE, EDGE_TYPES,
-  MAX_CELL, MAX_NOTE_LEN, MIN_CELL, OVERLAY_PALETTE, OVERLAY_TYPES, VIEWPORT_CELLS, VIEWPORT_PX,
+  MAX_CELL, MAX_NOTE_LEN, MIN_CELL, OVERLAY_PALETTE, OVERLAY_TYPES, VIEWPORT_CELLS,
   baseDef, edgeDef, overlayDef,
 } from '@/lib/constants'
 import type { CellData, CellMap, CustomMarker, EdgeDir, EpochmapFile, MapData, MarkerDef } from '@/lib/types'
@@ -94,7 +94,36 @@ function edgeZoneStyle(zone: EdgeDir): React.CSSProperties {
 
 // ── Main component ─────────────────────────────────────────────────────────────
 
-export function DungeonMapper() {
+export interface DungeonMapperProps {
+  /**
+   * `'fill'` (standalone) sizes the grid to the available screen area — zoom
+   * changes how many cells are visible. `'fixed'` (default, used when embedding
+   * the component, e.g. in Epoch's game drawer) renders the locked 12×12 window.
+   */
+  layout?: 'fill' | 'fixed'
+  /**
+   * Seed the editor from an existing session instead of the localStorage draft.
+   * When provided, the welcome modal and draft restore are skipped and the host
+   * owns persistence (see `onSessionChange`).
+   */
+  initialSession?: EpochmapFile
+  /**
+   * Called (debounced) whenever the session changes. When provided, the
+   * component does NOT write the localStorage draft — the host persists instead
+   * (e.g. Epoch saves to the DungeonMap table).
+   */
+  onSessionChange?: (session: EpochmapFile) => void
+  /** Show the first-visit welcome modal in standalone mode. Default true. */
+  welcomeOnFirstVisit?: boolean
+}
+
+export function DungeonMapper({
+  layout = 'fixed',
+  initialSession,
+  onSessionChange,
+  welcomeOnFirstVisit = true,
+}: DungeonMapperProps = {}) {
+  const controlled = !!onSessionChange || !!initialSession
   const [gameTitle, setGameTitle] = useState('')
   const [romHash, setRomHash] = useState('')
   const [customMarkers, setCustomMarkers] = useState<CustomMarker[]>([])
@@ -109,6 +138,7 @@ export function DungeonMapper() {
   const [exporting, setExporting] = useState(false)
   const [showWelcome, setShowWelcome] = useState(false)
   const [showPalette, setShowPalette] = useState(false)
+  const [paletteSelectId, setPaletteSelectId] = useState<number | undefined>(undefined)
   const [tooltip, setTooltip] = useState<{ x: number; y: number; cell: CellData; isPlayer: boolean } | null>(null)
   const [hoverInfo, setHoverInfo] = useState<{ x: number; y: number; zone: EdgeDir | null } | null>(null)
   const [noteDialog, setNoteDialog] = useState<{ x: number; y: number; text: string } | null>(null)
@@ -122,6 +152,7 @@ export function DungeonMapper() {
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const nextMarkerIdRef = useRef(CUSTOM_ID_START)
   const [canUndo, setCanUndo] = useState(false)
+  const [viewportRef, viewportSize] = useElementSize<HTMLElement>()
 
   const activeMap = maps[activeIdx] ?? null
 
@@ -138,17 +169,22 @@ export function DungeonMapper() {
 
   const revealedSet = useMemo(() => new Set(activeMap?.revealedChunks ?? []), [activeMap])
 
-  // ── Hydration: restore draft or start fresh ───────────────────────────────────
+  // ── Hydration: host session, restored draft, or fresh ─────────────────────────
   useEffect(() => {
     let restored: EpochmapFile | null = null
-    try {
-      const raw = localStorage.getItem(DRAFT_KEY)
-      if (raw) {
-        const parsed = JSON.parse(raw) as EpochmapFile
-        if (parsed?.maps?.length) restored = parsed
+    if (initialSession) {
+      // Host-provided session (embedded / DB-backed). Ensure at least one map.
+      restored = initialSession.maps?.length ? initialSession : { ...initialSession, maps: newSession().maps }
+    } else {
+      try {
+        const raw = localStorage.getItem(DRAFT_KEY)
+        if (raw) {
+          const parsed = JSON.parse(raw) as EpochmapFile
+          if (parsed?.maps?.length) restored = parsed
+        }
+      } catch {
+        /* ignore corrupt draft */
       }
-    } catch {
-      /* ignore corrupt draft */
     }
     const session = restored ?? newSession()
     setGameTitle(session.gameTitle ?? '')
@@ -168,19 +204,31 @@ export function DungeonMapper() {
     }
     nextMarkerIdRef.current = Math.max(stored, usedMax + 1, CUSTOM_ID_START)
     setHydrated(true)
-    if (restored) {
+    if (restored && !initialSession) {
       setTimeout(() => toast('Restored unsaved session'), 50)
     }
-    if (!localStorage.getItem(WELCOME_KEY)) setShowWelcome(true)
+    if (!controlled && welcomeOnFirstVisit) {
+      try {
+        if (!localStorage.getItem(WELCOME_KEY)) setShowWelcome(true)
+      } catch {
+        /* ignore */
+      }
+    }
+    // Mount-once hydration; props captured intentionally.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // ── Draft auto-save (debounced 500ms) ─────────────────────────────────────────
+  // ── Auto-save (debounced 500ms): host callback, else localStorage draft ────────
   useEffect(() => {
     if (!hydrated) return
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
     saveTimerRef.current = setTimeout(() => {
+      const session: EpochmapFile = { version: 1, gameTitle, romHash, customMarkers, maps }
+      if (onSessionChange) {
+        onSessionChange(session)
+        return
+      }
       try {
-        const session: EpochmapFile = { version: 1, gameTitle, romHash, customMarkers, maps }
         localStorage.setItem(DRAFT_KEY, JSON.stringify(session))
       } catch {
         /* storage full / unavailable */
@@ -189,7 +237,7 @@ export function DungeonMapper() {
     return () => {
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
     }
-  }, [maps, gameTitle, romHash, customMarkers, hydrated])
+  }, [maps, gameTitle, romHash, customMarkers, hydrated, onSessionChange])
 
   // ── Map mutation helpers ──────────────────────────────────────────────────────
 
@@ -406,12 +454,32 @@ export function DungeonMapper() {
     return id
   }, [])
 
-  const addMarker = useCallback((): number => {
-    const id = allocMarkerId()
-    const marker: CustomMarker = { id, kind: 'overlay', label: 'New Marker', icon: '★', color: '#f59e0b' }
-    setCustomMarkers((prev) => [...prev, marker])
-    return id
-  }, [allocMarkerId])
+  const addMarker = useCallback(
+    (kind: 'base' | 'overlay' = 'overlay'): number => {
+      const id = allocMarkerId()
+      const marker: CustomMarker = {
+        id,
+        kind,
+        label: kind === 'base' ? 'New Terrain' : 'New Overlay',
+        icon: kind === 'base' ? '▦' : '★',
+        color: '#f59e0b',
+      }
+      setCustomMarkers((prev) => [...prev, marker])
+      return id
+    },
+    [allocMarkerId],
+  )
+
+  // Open the Marker Palette focused on a brand-new marker of the given kind —
+  // the inline "+" affordances on the Terrain / Overlays palette groups.
+  const addCustomAndEdit = useCallback(
+    (kind: 'base' | 'overlay') => {
+      const id = addMarker(kind)
+      setPaletteSelectId(id)
+      setShowPalette(true)
+    },
+    [addMarker],
+  )
 
   const updateMarker = useCallback((id: number, patch: Partial<Omit<CustomMarker, 'id'>>) => {
     setCustomMarkers((prev) => prev.map((m) => (m.id === id ? { ...m, ...patch } : m)))
@@ -650,13 +718,16 @@ export function DungeonMapper() {
   const isEdgeTool = activeTool.kind === 'edge'
   const zoomPct = Math.round((cellSize / DEFAULT_CELL) * 100)
 
+  // Standalone fills the viewport; embedded fills whatever container the host sizes.
+  const rootSize = layout === 'fill' ? 'h-screen w-screen' : 'h-full w-full'
+
   if (!hydrated) {
-    return <div className="h-screen w-screen grid place-items-center bg-zinc-950 text-white/40 text-sm">Loading…</div>
+    return <div className={cn(rootSize, 'grid place-items-center bg-zinc-950 text-white/40 text-sm')}>Loading…</div>
   }
 
   return (
     <div
-      className="h-screen w-screen flex flex-col bg-zinc-950 text-white overflow-hidden"
+      className={cn(rootSize, 'flex flex-col bg-zinc-950 text-white overflow-hidden')}
       onDragOver={(e) => e.preventDefault()}
       onDrop={(e) => {
         e.preventDefault()
@@ -680,7 +751,10 @@ export function DungeonMapper() {
         onUndo={undo}
         onZoomIn={() => setCellSize((s) => Math.min(MAX_CELL, s + 4))}
         onZoomOut={() => setCellSize((s) => Math.max(MIN_CELL, s - 4))}
-        onOpenPalette={() => setShowPalette(true)}
+        onOpenPalette={() => {
+          setPaletteSelectId(undefined)
+          setShowPalette(true)
+        }}
         onOpenHelp={() => setShowWelcome(true)}
         onRenameMap={(name) => updateActiveMap({ name })}
         onRenameGame={setGameTitle}
@@ -688,12 +762,12 @@ export function DungeonMapper() {
 
       <div className="flex-1 flex min-h-0">
         {/* Left sidebar: map list + tool palette */}
-        <aside className="w-64 shrink-0 border-r border-white/10 flex flex-col bg-zinc-950 overflow-y-auto">
+        <aside className="w-80 shrink-0 border-r border-white/10 flex flex-col bg-zinc-950 overflow-y-auto">
           {/* Maps */}
-          <div className="p-3 border-b border-white/10">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-[10px] font-semibold text-white/40 uppercase tracking-wider">Maps</span>
-              <button onClick={addMap} title="Add map" className="grid place-items-center h-6 w-6 rounded text-white/50 hover:text-white hover:bg-white/10">
+          <div className="p-4 border-b border-white/10">
+            <div className="flex items-center justify-between mb-2.5">
+              <span className="text-xs font-semibold text-white/55 uppercase tracking-wider">Maps</span>
+              <button onClick={addMap} title="Add map" className="grid place-items-center h-7 w-7 rounded text-white/60 hover:text-white hover:bg-white/10">
                 <Plus className="h-4 w-4" />
               </button>
             </div>
@@ -702,12 +776,12 @@ export function DungeonMapper() {
                 <div
                   key={m.id}
                   className={cn(
-                    'group flex items-center gap-1 rounded-md px-2 py-1.5 text-sm cursor-pointer',
-                    i === activeIdx ? 'bg-amber-500/20 text-amber-200 ring-1 ring-amber-500/30' : 'text-white/60 hover:bg-white/5',
+                    'group flex items-center gap-1.5 rounded-md px-2.5 py-2 text-sm cursor-pointer',
+                    i === activeIdx ? 'bg-amber-500/20 text-amber-200 ring-1 ring-amber-500/30' : 'text-white/70 hover:bg-white/5',
                   )}
                   onClick={() => setActiveIdx(i)}
                 >
-                  <MapPin className="h-3.5 w-3.5 shrink-0 opacity-60" />
+                  <MapPin className="h-4 w-4 shrink-0 opacity-60" />
                   <span className="flex-1 truncate">{m.name}</span>
                   <button
                     onClick={(e) => {
@@ -717,7 +791,7 @@ export function DungeonMapper() {
                     className="opacity-0 group-hover:opacity-100 text-white/40 hover:text-rose-400"
                     title="Delete map"
                   >
-                    <Trash2 className="h-3.5 w-3.5" />
+                    <Trash2 className="h-4 w-4" />
                   </button>
                 </div>
               ))}
@@ -725,20 +799,20 @@ export function DungeonMapper() {
           </div>
 
           {/* Game title field */}
-          <div className="p-3 border-b border-white/10">
-            <label className="text-[10px] font-semibold text-white/40 uppercase tracking-wider">Game title</label>
+          <div className="p-4 border-b border-white/10">
+            <label className="text-xs font-semibold text-white/55 uppercase tracking-wider">Game title</label>
             <input
               value={gameTitle}
               onChange={(e) => setGameTitle(e.target.value)}
               placeholder="e.g. Dragon Quest"
-              className="mt-1.5 w-full h-8 rounded-md border border-white/15 bg-transparent px-2 text-sm text-white placeholder:text-white/30 outline-none focus:ring-2 focus:ring-amber-500/30"
+              className="mt-2 w-full h-9 rounded-md border border-white/15 bg-transparent px-3 text-sm text-white placeholder:text-white/30 outline-none focus:ring-2 focus:ring-amber-500/30"
             />
           </div>
 
           {/* Tool palette */}
-          <div className="p-3 space-y-4">
-            <PaletteGroup title="Terrain">
-              <div className="grid grid-cols-3 gap-1">
+          <div className="p-4 space-y-5">
+            <PaletteGroup title="Terrain" onAdd={() => addCustomAndEdit('base')} addLabel="Add custom terrain">
+              <div className="grid grid-cols-2 gap-1.5">
                 {BASE_PALETTE.map((id) => (
                   <ToolButton
                     key={id}
@@ -758,14 +832,15 @@ export function DungeonMapper() {
                       color={m.color}
                       label={m.label}
                       icon={m.icon}
+                      custom
                       onClick={() => setActiveTool({ kind: 'base', value: m.id })}
                     />
                   ))}
               </div>
             </PaletteGroup>
 
-            <PaletteGroup title="Overlays (toggle)">
-              <div className="grid grid-cols-3 gap-1">
+            <PaletteGroup title="Overlays" hint="(toggle)" onAdd={() => addCustomAndEdit('overlay')} addLabel="Add custom overlay">
+              <div className="grid grid-cols-2 gap-1.5">
                 {OVERLAY_PALETTE.map((id) => (
                   <ToolButton
                     key={id}
@@ -785,14 +860,15 @@ export function DungeonMapper() {
                       color={m.color}
                       label={m.label}
                       icon={m.icon}
+                      custom
                       onClick={() => setActiveTool({ kind: 'overlay', value: m.id })}
                     />
                   ))}
               </div>
             </PaletteGroup>
 
-            <PaletteGroup title="Edges (click cell border)">
-              <div className="grid grid-cols-2 gap-1">
+            <PaletteGroup title="Edges" hint="(click cell border)">
+              <div className="grid grid-cols-2 gap-1.5">
                 {EDGE_PALETTE.map((id) => (
                   <ToolButton
                     key={id}
@@ -809,7 +885,7 @@ export function DungeonMapper() {
               <button
                 onClick={() => setActiveTool({ kind: 'erase' })}
                 className={cn(
-                  'flex-1 flex items-center justify-center gap-1.5 px-2 py-1.5 rounded text-xs font-medium border transition',
+                  'flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded text-sm font-medium border transition',
                   activeToolId === 'erase'
                     ? 'bg-rose-500/20 border-rose-500/50 text-rose-300'
                     : 'border-white/10 text-white/50 hover:border-white/30 hover:text-white/80',
@@ -820,7 +896,7 @@ export function DungeonMapper() {
               <button
                 onClick={() => setActiveTool({ kind: 'player' })}
                 className={cn(
-                  'flex-1 flex items-center justify-center gap-1.5 px-2 py-1.5 rounded text-xs font-medium border transition',
+                  'flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded text-sm font-medium border transition',
                   activeToolId === 'player'
                     ? 'bg-amber-500/20 border-amber-500/50 text-amber-300'
                     : 'border-white/10 text-white/50 hover:border-white/30 hover:text-white/80',
@@ -830,7 +906,7 @@ export function DungeonMapper() {
               </button>
             </div>
 
-            <p className="text-[10px] text-white/30 leading-relaxed">
+            <p className="text-xs text-white/45 leading-relaxed">
               Arrow keys / WASD move ⊕ · F toggles fog · N adds a note · right-click erases · middle-drag pans.
             </p>
           </div>
@@ -838,6 +914,7 @@ export function DungeonMapper() {
 
         {/* Center: viewport */}
         <main
+          ref={viewportRef}
           className="flex-1 min-w-0 grid place-items-center bg-zinc-900/40 overflow-hidden"
           onMouseEnter={() => (mapperHoveredRef.current = true)}
           onMouseLeave={() => {
@@ -848,6 +925,9 @@ export function DungeonMapper() {
         >
           {activeMap && (
             <Viewport
+              layout={layout}
+              availW={viewportSize.width}
+              availH={viewportSize.height}
               map={activeMap}
               cellSize={cellSize}
               cameraOffset={cameraOffset}
@@ -916,6 +996,7 @@ export function DungeonMapper() {
       {showPalette && (
         <MarkerPalette
           markers={customMarkers}
+          initialSelectedId={paletteSelectId}
           onAdd={addMarker}
           onUpdate={updateMarker}
           onDelete={deleteMarker}
@@ -930,6 +1011,9 @@ export function DungeonMapper() {
 // ── Viewport (camera window) ────────────────────────────────────────────────────
 
 interface ViewportProps {
+  layout: 'fill' | 'fixed'
+  availW: number
+  availH: number
   map: MapData
   cellSize: number
   cameraOffset: { x: number; y: number }
@@ -952,13 +1036,23 @@ interface ViewportProps {
 }
 
 function Viewport(props: ViewportProps) {
-  const { map, cellSize, cameraOffset } = props
-  const half = Math.floor(VIEWPORT_CELLS / 2)
+  const { map, cellSize, cameraOffset, layout, availW, availH } = props
+  const rulerSize = 18
+  const step = cellSize + 1
+
+  // 'fixed' keeps the locked 12×12 window (embedded). 'fill' renders as many
+  // cells as fit the available area — zooming changes the count, not the window.
+  const cols =
+    layout === 'fixed' ? VIEWPORT_CELLS : Math.max(8, Math.floor((Math.max(availW, step) - rulerSize - 1) / step))
+  const rows =
+    layout === 'fixed' ? VIEWPORT_CELLS : Math.max(8, Math.floor((Math.max(availH, step) - rulerSize - 1) / step))
+
   const px = map.playerX
   const py = map.playerY
-  const minX = px - half + cameraOffset.x
-  const minY = py - half + cameraOffset.y
-  const rulerSize = 18
+  const minX = px - Math.floor(cols / 2) + cameraOffset.x
+  const minY = py - Math.floor(rows / 2) + cameraOffset.y
+  const gridW = cols * step - 1
+  const gridH = rows * step - 1
 
   return (
     <div
@@ -977,11 +1071,11 @@ function Viewport(props: ViewportProps) {
       onWheel={(e) => props.onWheel(e.deltaY)}
       onContextMenu={(e) => e.preventDefault()}
     >
-      <div className="flex flex-col" style={{ width: VIEWPORT_PX + rulerSize + 1, height: VIEWPORT_PX + rulerSize + 1 }}>
+      <div className="flex flex-col" style={{ width: gridW + rulerSize + 1, height: gridH + rulerSize + 1 }}>
         {/* X ruler */}
         <div className="flex shrink-0" style={{ marginLeft: rulerSize + 1 }}>
-          {Array.from({ length: VIEWPORT_CELLS }, (_, ci) => (
-            <div key={ci} className="text-center text-[8px] text-white/30 shrink-0 overflow-hidden" style={{ width: cellSize, marginRight: 1 }}>
+          {Array.from({ length: cols }, (_, ci) => (
+            <div key={ci} className="text-center text-[9px] text-white/35 shrink-0 overflow-hidden" style={{ width: cellSize, marginRight: 1 }}>
               {minX + ci}
             </div>
           ))}
@@ -990,10 +1084,10 @@ function Viewport(props: ViewportProps) {
         <div className="flex">
           {/* Y ruler */}
           <div className="flex flex-col shrink-0" style={{ width: rulerSize, marginTop: 1 }}>
-            {Array.from({ length: VIEWPORT_CELLS }, (_, ri) => (
+            {Array.from({ length: rows }, (_, ri) => (
               <div
                 key={ri}
-                className="flex items-center justify-end pr-[3px] text-[8px] text-white/30 shrink-0 overflow-hidden"
+                className="flex items-center justify-end pr-[3px] text-[9px] text-white/35 shrink-0 overflow-hidden"
                 style={{ height: cellSize, marginBottom: 1 }}
               >
                 {minY + ri}
@@ -1005,15 +1099,15 @@ function Viewport(props: ViewportProps) {
           <div
             className="grid"
             style={{
-              gridTemplateColumns: `repeat(${VIEWPORT_CELLS}, ${cellSize}px)`,
-              gridTemplateRows: `repeat(${VIEWPORT_CELLS}, ${cellSize}px)`,
+              gridTemplateColumns: `repeat(${cols}, ${cellSize}px)`,
+              gridTemplateRows: `repeat(${rows}, ${cellSize}px)`,
               gap: '1px',
               backgroundColor: '#0a0a0c',
             }}
           >
-            {Array.from({ length: VIEWPORT_CELLS }, (_, ri) => {
+            {Array.from({ length: rows }, (_, ri) => {
               const y = minY + ri
-              return Array.from({ length: VIEWPORT_CELLS }, (_, ci) => {
+              return Array.from({ length: cols }, (_, ci) => {
                 const x = minX + ci
                 const key = `${x},${y}`
                 const isPlayer = x === px && y === py
@@ -1091,10 +1185,53 @@ function Viewport(props: ViewportProps) {
 
 // ── Small pieces ────────────────────────────────────────────────────────────────
 
-function PaletteGroup({ title, children }: { title: string; children: React.ReactNode }) {
+/** Tracks an element's content size via ResizeObserver (used by `fill` layout). */
+function useElementSize<T extends HTMLElement>() {
+  const ref = useRef<T | null>(null)
+  const [size, setSize] = useState({ width: 0, height: 0 })
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const ro = new ResizeObserver((entries) => {
+      const r = entries[0]?.contentRect
+      if (r) setSize({ width: r.width, height: r.height })
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+  return [ref, size] as const
+}
+
+function PaletteGroup({
+  title,
+  hint,
+  onAdd,
+  addLabel,
+  children,
+}: {
+  title: string
+  hint?: string
+  onAdd?: () => void
+  addLabel?: string
+  children: React.ReactNode
+}) {
   return (
     <div>
-      <p className="text-[10px] font-semibold text-white/40 uppercase tracking-wider mb-1.5">{title}</p>
+      <div className="flex items-center justify-between mb-2">
+        <p className="text-xs font-semibold text-white/55 uppercase tracking-wider">
+          {title}
+          {hint && <span className="ml-1 normal-case font-normal text-white/35 tracking-normal">{hint}</span>}
+        </p>
+        {onAdd && (
+          <button
+            onClick={onAdd}
+            title={addLabel ?? 'Add custom'}
+            className="flex items-center gap-1 px-1.5 h-6 rounded text-[11px] font-medium text-amber-300/80 hover:text-amber-200 hover:bg-amber-500/10"
+          >
+            <Plus className="h-3.5 w-3.5" /> Add
+          </button>
+        )}
+      </div>
       {children}
     </div>
   )
@@ -1105,12 +1242,14 @@ function ToolButton({
   color,
   label,
   icon,
+  custom,
   onClick,
 }: {
   active: boolean
   color?: string
   label: string
   icon?: string
+  custom?: boolean
   onClick: () => void
 }) {
   return (
@@ -1118,12 +1257,14 @@ function ToolButton({
       onClick={onClick}
       title={label}
       className={cn(
-        'flex items-center gap-1 px-1.5 py-1 rounded text-[10px] font-medium leading-tight transition border min-w-0',
-        active ? 'border-white/60 text-white bg-white/10' : 'border-white/10 text-white/55 hover:border-white/30 hover:text-white/85',
+        'flex items-center gap-1.5 px-2 py-1.5 rounded text-xs font-medium leading-tight transition border min-w-0',
+        active ? 'border-white/60 text-white bg-white/10' : 'border-white/10 text-white/65 hover:border-white/30 hover:text-white',
       )}
     >
-      <span className="h-2.5 w-2.5 rounded-sm shrink-0" style={{ background: color }} />
-      <span className="truncate">{icon ? `${icon} ` : ''}{label}</span>
+      <span className="h-3 w-3 rounded-sm shrink-0 grid place-items-center text-[8px]" style={{ background: color }}>
+        {custom && icon ? icon : ''}
+      </span>
+      <span className="truncate">{!custom && icon ? `${icon} ` : ''}{label}</span>
     </button>
   )
 }

@@ -6,7 +6,7 @@
  */
 
 // Components
-export { DungeonMapper } from './components/DungeonMapper'
+export { DungeonMapper, type DungeonMapperProps } from './components/DungeonMapper'
 export { WelcomeModal } from './components/WelcomeModal'
 export { CellTooltip } from './components/CellTooltip'
 export { Toolbar } from './components/Toolbar'
