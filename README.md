@@ -16,9 +16,10 @@ This repository is **both**:
 2. **The npm package `@epoch/mapper`** — the editor component, the PDF export
    pipeline, and the `.epochmap` codec, consumed directly by Epoch.
 
-> **Status:** Phase 1 (extract & publish). The standalone app, the `.epochmap`
-> binary format + codec, and the reusable package are complete. Custom markers
-> (Phase 2) and Epoch integration (Phase 3) follow. See
+> **Status:** Phases 1 & 2 complete. The standalone app, the `.epochmap` binary
+> format + codec, the reusable package, and the **custom marker system** (Marker
+> Palette, custom cell/overlay types, import ID conflict resolution) are all done.
+> Epoch integration (Phase 3) follows. See
 > [`EPOCH_MAPPER_SPEC.md`](https://github.com/northbridgetechnology/epoch/blob/main/EPOCH_MAPPER_SPEC.md)
 > in the Epoch repo for the full plan.
 
@@ -38,11 +39,13 @@ bun run dev          # standalone editor at http://localhost:3100
 | `dev`               | Run the standalone app (Next.js, port 3100)             |
 | `build`             | Production build of the standalone app                  |
 | `build:lib`         | Bundle the npm package into `dist/` (JS + `.d.ts`)      |
+| `test`              | Codec + custom-marker resolution tests                  |
 | `test:codec`        | Round-trip tests for the `.epochmap` codec              |
+| `test:markers`      | Custom-marker import conflict resolution (§5.3)         |
 | `lint`              | ESLint                                                  |
 
-`test:codec` runs under Node ≥ 22; the codec itself has no DOM dependencies, so
-it works in the browser, Node, and edge runtimes.
+Tests run via `tsx` (no DOM needed) — the codec and marker helpers are pure, so
+they work in the browser, Node, and edge runtimes.
 
 ---
 
@@ -104,6 +107,27 @@ design (the format reserves these for a future v2):
 Round-tripping a map with mixed overlay/edge types through `.epochmap` collapses
 those to the v1 representation. The codec's test suite asserts this behaviour
 explicitly (`test/codec.test.ts`).
+
+---
+
+## Custom markers
+
+Open the **Marker Palette** (palette icon in the toolbar) to define your own cell
+types and overlay icons. Each marker has a label (≤ 32 chars), a color, and an
+icon (single emoji or ASCII character), and is assigned a stable ID in the
+128–255 range. Custom markers appear in the sidebar palettes alongside the
+built-ins and are embedded in every `.epochmap` export, so anyone who opens the
+file sees your types correctly.
+
+- **IDs** are monotonic within a session and never reused (deleting #130 then
+  adding a new marker yields #131).
+- **Deleting** a marker that's in use warns you and reverts those cells to Empty
+  (base) or no-overlay (overlay).
+- **Importing** a file resolves ID conflicts per spec §5.3: a free ID keeps its
+  value, an identical definition is reused, and a clashing definition is
+  reassigned to the next free ID with the affected imported cells remapped. This
+  logic is exported (`resolveMarkerImport`, `remapMapMarkers`) for reuse in
+  Epoch's server-side import route.
 
 ---
 

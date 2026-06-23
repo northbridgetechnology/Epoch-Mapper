@@ -25,6 +25,9 @@ export {
   rgbToHex,
 } from './lib/epochmap-codec'
 
+// Custom-marker helpers (import conflict resolution, §5.3)
+export { sameMarker, nextFreeMarkerId, resolveMarkerImport, remapMapMarkers } from './lib/markers'
+
 // Built-in type tables & grid constants
 export {
   BASE,

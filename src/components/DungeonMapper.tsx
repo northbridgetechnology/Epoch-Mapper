@@ -11,13 +11,17 @@ import {
 } from '@/lib/constants'
 import type { CellData, CellMap, CustomMarker, EdgeDir, EpochmapFile, MapData, MarkerDef } from '@/lib/types'
 import { parseDotEpochmap, serializeDotEpochmap } from '@/lib/epochmap-codec'
+import { resolveMarkerImport, remapMapMarkers } from '@/lib/markers'
 import { exportMapsAsPdf } from '@/lib/dungeon-export'
 import { Toolbar } from './Toolbar'
 import { WelcomeModal } from './WelcomeModal'
 import { CellTooltip } from './CellTooltip'
+import { MarkerPalette } from './MarkerPalette'
 
 const DRAFT_KEY = 'epochmapper.draft'
 const WELCOME_KEY = 'epochmapper.welcomed'
+const NEXTID_KEY = 'epochmapper.nextMarkerId'
+const CUSTOM_ID_START = 128
 
 // ── Tool model ─────────────────────────────────────────────────────────────────
 
@@ -116,6 +120,7 @@ export function DungeonMapper() {
   const fileModeRef = useRef<'open' | 'import'>('open')
   const historyRef = useRef<MapData[][]>([])
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const nextMarkerIdRef = useRef(CUSTOM_ID_START)
   const [canUndo, setCanUndo] = useState(false)
 
   const activeMap = maps[activeIdx] ?? null
@@ -151,6 +156,17 @@ export function DungeonMapper() {
     setCustomMarkers(session.customMarkers ?? [])
     setMaps(session.maps)
     setActiveIdx(0)
+    // Custom marker IDs are monotonic within a session and never reused (§5.3).
+    // Recover the counter from a persisted value, falling back to max(used)+1.
+    const usedMax = (session.customMarkers ?? []).reduce((mx, m) => Math.max(mx, m.id), CUSTOM_ID_START - 1)
+    let stored = CUSTOM_ID_START
+    try {
+      stored = parseInt(localStorage.getItem(NEXTID_KEY) ?? '', 10)
+      if (!Number.isFinite(stored)) stored = CUSTOM_ID_START
+    } catch {
+      stored = CUSTOM_ID_START
+    }
+    nextMarkerIdRef.current = Math.max(stored, usedMax + 1, CUSTOM_ID_START)
     setHydrated(true)
     if (restored) {
       setTimeout(() => toast('Restored unsaved session'), 50)
@@ -377,6 +393,80 @@ export function DungeonMapper() {
     })
   }
 
+  // ── Custom markers ────────────────────────────────────────────────────────────
+
+  const allocMarkerId = useCallback(() => {
+    const id = nextMarkerIdRef.current
+    nextMarkerIdRef.current = id + 1
+    try {
+      localStorage.setItem(NEXTID_KEY, String(nextMarkerIdRef.current))
+    } catch {
+      /* ignore */
+    }
+    return id
+  }, [])
+
+  const addMarker = useCallback((): number => {
+    const id = allocMarkerId()
+    const marker: CustomMarker = { id, kind: 'overlay', label: 'New Marker', icon: '★', color: '#f59e0b' }
+    setCustomMarkers((prev) => [...prev, marker])
+    return id
+  }, [allocMarkerId])
+
+  const updateMarker = useCallback((id: number, patch: Partial<Omit<CustomMarker, 'id'>>) => {
+    setCustomMarkers((prev) => prev.map((m) => (m.id === id ? { ...m, ...patch } : m)))
+  }, [])
+
+  const markerUsage = useCallback(
+    (marker: CustomMarker): number => {
+      let n = 0
+      for (const map of maps) {
+        for (const cell of Object.values(map.cells)) {
+          if (marker.kind === 'base') {
+            if (cell.base === marker.id) n++
+          } else if (cell.overlays.includes(marker.id)) n++
+        }
+      }
+      return n
+    },
+    [maps],
+  )
+
+  const deleteMarker = useCallback(
+    (id: number) => {
+      const marker = customMarkers.find((m) => m.id === id)
+      if (!marker) return
+      // Revert any cells that used the deleted marker (§5.2).
+      historyRef.current.push(maps)
+      if (historyRef.current.length > 60) historyRef.current.shift()
+      setCanUndo(true)
+      setMaps((prev) =>
+        prev.map((map) => {
+          let changed = false
+          const cells: CellMap = {}
+          for (const [key, cell] of Object.entries(map.cells)) {
+            let next = cell
+            if (marker.kind === 'base' && cell.base === id) {
+              next = { ...cell, base: 0 }
+              changed = true
+            } else if (marker.kind === 'overlay' && cell.overlays.includes(id)) {
+              next = { ...cell, overlays: cell.overlays.filter((o) => o !== id) }
+              changed = true
+            }
+            if (!isCellEmpty(next)) cells[key] = next
+          }
+          return changed ? { ...map, cells } : map
+        }),
+      )
+      setCustomMarkers((prev) => prev.filter((m) => m.id !== id))
+      // If the active tool referenced this marker, fall back to a safe default.
+      setActiveTool((t) =>
+        (t.kind === 'base' || t.kind === 'overlay') && t.value === id ? { kind: 'base', value: BASE.FLOOR } : t,
+      )
+    },
+    [customMarkers, maps],
+  )
+
   // ── File operations ───────────────────────────────────────────────────────────
 
   const doNew = useCallback(() => {
@@ -404,23 +494,43 @@ export function DungeonMapper() {
           setCustomMarkers(parsed.customMarkers)
           setMaps(loaded)
           setActiveIdx(0)
+          const maxId = parsed.customMarkers.reduce((mx, m) => Math.max(mx, m.id), CUSTOM_ID_START - 1)
+          nextMarkerIdRef.current = Math.max(nextMarkerIdRef.current, maxId + 1)
+          try {
+            localStorage.setItem(NEXTID_KEY, String(nextMarkerIdRef.current))
+          } catch {
+            /* ignore */
+          }
           toast.success(`Opened ${loaded.length} map${loaded.length === 1 ? '' : 's'}`)
         } else {
           recordHistory()
-          setCustomMarkers((prev) => mergeMarkers(prev, parsed.customMarkers))
+          // §5.3 — the imported file's marker table takes precedence on free IDs;
+          // a collision with a *different* definition reassigns the imported marker
+          // to the next free ID and remaps the affected cells in the imported maps.
+          const { merged, remap } = resolveMarkerImport(customMarkers, parsed.customMarkers, allocMarkerId)
+          const remapped = remap.size > 0 ? loaded.map((m) => remapMapMarkers(m, remap)) : loaded
+          setCustomMarkers(merged)
+          const maxId = merged.reduce((mx, m) => Math.max(mx, m.id), CUSTOM_ID_START - 1)
+          nextMarkerIdRef.current = Math.max(nextMarkerIdRef.current, maxId + 1)
+          try {
+            localStorage.setItem(NEXTID_KEY, String(nextMarkerIdRef.current))
+          } catch {
+            /* ignore */
+          }
           setMaps((prev) => {
-            const next = [...prev, ...loaded]
+            const next = [...prev, ...remapped]
             setActiveIdx(prev.length)
             return next
           })
           if (!gameTitle && parsed.gameTitle) setGameTitle(parsed.gameTitle)
-          toast.success(`Imported ${loaded.length} map${loaded.length === 1 ? '' : 's'}`)
+          const note = remap.size > 0 ? ` (${remap.size} marker ID${remap.size === 1 ? '' : 's'} reassigned)` : ''
+          toast.success(`Imported ${remapped.length} map${remapped.length === 1 ? '' : 's'}${note}`)
         }
       } catch (err) {
         toast.error((err as Error).message || 'Could not read .epochmap file')
       }
     },
-    [gameTitle, recordHistory],
+    [gameTitle, recordHistory, customMarkers, allocMarkerId],
   )
 
   function pickFile(mode: 'open' | 'import') {
@@ -639,6 +749,18 @@ export function DungeonMapper() {
                     onClick={() => setActiveTool({ kind: 'base', value: id })}
                   />
                 ))}
+                {customMarkers
+                  .filter((m) => m.kind === 'base')
+                  .map((m) => (
+                    <ToolButton
+                      key={m.id}
+                      active={activeToolId === `base:${m.id}`}
+                      color={m.color}
+                      label={m.label}
+                      icon={m.icon}
+                      onClick={() => setActiveTool({ kind: 'base', value: m.id })}
+                    />
+                  ))}
               </div>
             </PaletteGroup>
 
@@ -654,6 +776,18 @@ export function DungeonMapper() {
                     onClick={() => setActiveTool({ kind: 'overlay', value: id })}
                   />
                 ))}
+                {customMarkers
+                  .filter((m) => m.kind === 'overlay')
+                  .map((m) => (
+                    <ToolButton
+                      key={m.id}
+                      active={activeToolId === `overlay:${m.id}`}
+                      color={m.color}
+                      label={m.label}
+                      icon={m.icon}
+                      onClick={() => setActiveTool({ kind: 'overlay', value: m.id })}
+                    />
+                  ))}
               </div>
             </PaletteGroup>
 
@@ -779,7 +913,16 @@ export function DungeonMapper() {
       )}
 
       {showWelcome && <WelcomeModal onClose={closeWelcome} />}
-      {showPalette && <MarkerPalettePlaceholder onClose={() => setShowPalette(false)} />}
+      {showPalette && (
+        <MarkerPalette
+          markers={customMarkers}
+          onAdd={addMarker}
+          onUpdate={updateMarker}
+          onDelete={deleteMarker}
+          usageCount={markerUsage}
+          onClose={() => setShowPalette(false)}
+        />
+      )}
     </div>
   )
 }
@@ -1039,29 +1182,3 @@ function NoteDialog({
   )
 }
 
-// Phase 2 builds the full Marker Palette (custom cell types & overlays). This
-// placeholder keeps the toolbar button wired so the help text stays accurate.
-function MarkerPalettePlaceholder({ onClose }: { onClose: () => void }) {
-  return (
-    <div className="fixed inset-0 z-[90] bg-black/60 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="w-full max-w-md rounded-xl border border-white/15 bg-zinc-900 p-5 text-center shadow-2xl" onClick={(e) => e.stopPropagation()}>
-        <h3 className="text-base font-semibold text-white mb-2">Marker Palette</h3>
-        <p className="text-sm text-white/60 leading-relaxed">
-          Custom cell types and overlay icons arrive in Phase 2. The <code className="text-amber-200">.epochmap</code>{' '}
-          format and codec already round-trip custom markers, so saved files are forward-compatible.
-        </p>
-        <button onClick={onClose} className="mt-4 px-4 py-2 rounded-md bg-amber-600 hover:bg-amber-500 text-white text-sm font-medium">
-          Got it
-        </button>
-      </div>
-    </div>
-  )
-}
-
-// ── Marker merge (used on import) ────────────────────────────────────────────────
-
-function mergeMarkers(existing: CustomMarker[], incoming: CustomMarker[]): CustomMarker[] {
-  const byId = new Map(existing.map((m) => [m.id, m]))
-  for (const m of incoming) if (!byId.has(m.id)) byId.set(m.id, m)
-  return [...byId.values()]
-}

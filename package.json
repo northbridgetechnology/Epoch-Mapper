@@ -1,6 +1,6 @@
 {
   "name": "@epoch/mapper",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Epoch Mapper — a free, open-source dungeon and world map editor for retro gaming. Standalone web app + reusable React component and .epochmap binary codec.",
   "license": "MIT",
   "homepage": "https://github.com/northbridgetechnology/epoch-mapper",
@@ -38,7 +38,9 @@
     "start": "next start -p 3100",
     "lint": "eslint .",
     "build:lib": "tsup && node scripts/add-use-client.mjs",
-    "test:codec": "node --experimental-strip-types --test test/codec.test.ts",
+    "test": "tsx test/codec.test.ts && tsx test/markers.test.ts",
+    "test:codec": "tsx test/codec.test.ts",
+    "test:markers": "tsx test/markers.test.ts",
     "prepublishOnly": "npm run build:lib"
   },
   "dependencies": {
@@ -70,6 +72,7 @@
     "react-dom": "^19.0.0",
     "tailwindcss": "^3.4.16",
     "tsup": "^8.3.5",
+    "tsx": "^4.22.4",
     "typescript": "^5.7.2"
   }
 }
