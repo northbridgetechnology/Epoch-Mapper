@@ -16,10 +16,11 @@ This repository is **both**:
 2. **The npm package `@epoch/mapper`** — the editor component, the PDF export
    pipeline, and the `.epochmap` codec, consumed directly by Epoch.
 
-> **Status:** Phases 1 & 2 complete. The standalone app, the `.epochmap` binary
-> format + codec, the reusable package, and the **custom marker system** (Marker
-> Palette, custom cell/overlay types, import ID conflict resolution) are all done.
-> Epoch integration (Phase 3) follows. See
+> **Status:** Phases 1–3 complete. The standalone app, the `.epochmap` binary
+> format + codec, the reusable package, the **custom marker system** (Marker
+> Palette, custom cell/overlay types, import ID conflict resolution), and the
+> **Epoch integration** (DB-backed embed via `initialSession`/`onSessionChange`,
+> `.epochmap` import/export, server-safe `/server` entry) are all done. See
 > [`EPOCH_MAPPER_SPEC.md`](https://github.com/northbridgetechnology/epoch/blob/main/EPOCH_MAPPER_SPEC.md)
 > in the Epoch repo for the full plan.
 
@@ -52,21 +53,42 @@ they work in the browser, Node, and edge runtimes.
 ## Using the package
 
 ```ts
+// Client entry — the React editor and everything it needs.
 import {
   DungeonMapper,            // the full React editor component
+  type DungeonMapperProps,
   exportMapsAsPdf,          // jsPDF export pipeline
   parseDotEpochmap,         // ArrayBuffer | Uint8Array -> EpochmapFile
   serializeDotEpochmap,     // EpochmapFile -> Uint8Array (gzipped)
-  EpochmapParseError,
   type EpochmapFile,
-  type MapData,
-  type CellData,
-  type CustomMarker,
 } from '@epoch/mapper'
+
+// Server entry — codec, marker helpers, type tables, and types only.
+// No "use client" boundary, so it is safe to import in route handlers /
+// server components (e.g. an .epochmap import API).
+import { parseDotEpochmap, resolveMarkerImport, type EpochmapFile } from '@epoch/mapper/server'
 ```
 
 `DungeonMapper` is a client component (it uses React hooks). Import it from a
 `'use client'` boundary in an RSC tree.
+
+### Embedding (host-owned persistence)
+
+By default the editor is file-based (localStorage draft + `.epochmap` files). A
+host app can instead own persistence and seed/save the session:
+
+```tsx
+<DungeonMapper
+  layout="fixed"                 // locked 12×12 grid for embeds; 'fill' = standalone
+  initialSession={session}       // EpochmapFile loaded from your store
+  onSessionChange={persist}      // debounced; you write it back (e.g. to a DB)
+  welcomeOnFirstVisit={false}
+/>
+```
+
+When `initialSession`/`onSessionChange` are provided the localStorage draft and
+first-visit welcome are skipped. This is exactly how Epoch backs the editor with
+its `DungeonMap` table — see `Epoch/src/components/arcade/DungeonMapPanel.tsx`.
 
 ---
 

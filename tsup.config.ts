@@ -4,7 +4,9 @@ import { defineConfig } from 'tsup'
 // Bundles the React component, PDF export, and .epochmap codec.
 // React / React-DOM stay external (peer deps).
 export default defineConfig({
-  entry: ['src/index.ts'],
+  // `index` is the client bundle (React editor); `server` is the server-safe
+  // codec/types entry. Only `index` gets the "use client" banner (post-build).
+  entry: ['src/index.ts', 'src/server.ts'],
   format: ['esm'],
   dts: true,
   tsconfig: './tsconfig.build.json',
