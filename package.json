@@ -1,0 +1,75 @@
+{
+  "name": "@epoch/mapper",
+  "version": "1.0.0",
+  "description": "Epoch Mapper — a free, open-source dungeon and world map editor for retro gaming. Standalone web app + reusable React component and .epochmap binary codec.",
+  "license": "MIT",
+  "homepage": "https://github.com/northbridgetechnology/epoch-mapper",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/northbridgetechnology/epoch-mapper.git"
+  },
+  "keywords": [
+    "dungeon",
+    "map",
+    "mapper",
+    "rpg",
+    "retro",
+    "grid-cartographer",
+    "epoch",
+    "epochmap"
+  ],
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "dev": "next dev -p 3100",
+    "build": "next build",
+    "start": "next start -p 3100",
+    "lint": "eslint .",
+    "build:lib": "tsup && node scripts/add-use-client.mjs",
+    "test:codec": "node --experimental-strip-types --test test/codec.test.ts",
+    "prepublishOnly": "npm run build:lib"
+  },
+  "dependencies": {
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "fflate": "^0.8.2",
+    "jspdf": "^2.5.2",
+    "lucide-react": "^0.460.0",
+    "sonner": "^1.7.1",
+    "tailwind-merge": "^2.5.5"
+  },
+  "peerDependencies": {
+    "react": ">=18",
+    "react-dom": ">=18"
+  },
+  "devDependencies": {
+    "@eslint/eslintrc": "^3.3.5",
+    "@types/node": "^22.10.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@typescript-eslint/eslint-plugin": "^8.62.0",
+    "@typescript-eslint/parser": "^8.62.0",
+    "autoprefixer": "^10.4.20",
+    "eslint": "^9",
+    "eslint-config-next": "^15.1.0",
+    "next": "^15.1.0",
+    "postcss": "^8.4.49",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "tailwindcss": "^3.4.16",
+    "tsup": "^8.3.5",
+    "typescript": "^5.7.2"
+  }
+}
