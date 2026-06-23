@@ -1185,21 +1185,28 @@ function Viewport(props: ViewportProps) {
 
 // ── Small pieces ────────────────────────────────────────────────────────────────
 
-/** Tracks an element's content size via ResizeObserver (used by `fill` layout). */
+/**
+ * Tracks an element's content size via ResizeObserver (used by `fill` layout).
+ * Uses a callback ref so the observer attaches whenever the node mounts — the
+ * viewport `<main>` only renders after hydration, so an effect with `[]` deps
+ * would run too early (while the loading placeholder is shown) and never attach.
+ */
 function useElementSize<T extends HTMLElement>() {
-  const ref = useRef<T | null>(null)
   const [size, setSize] = useState({ width: 0, height: 0 })
-  useEffect(() => {
-    const el = ref.current
-    if (!el) return
+  const observerRef = useRef<ResizeObserver | null>(null)
+  const refCallback = useCallback((node: T | null) => {
+    observerRef.current?.disconnect()
+    if (!node) return
     const ro = new ResizeObserver((entries) => {
       const r = entries[0]?.contentRect
       if (r) setSize({ width: r.width, height: r.height })
     })
-    ro.observe(el)
-    return () => ro.disconnect()
+    ro.observe(node)
+    observerRef.current = ro
+    // Measure immediately so the first paint isn't stuck at the 8×8 minimum.
+    setSize({ width: node.clientWidth, height: node.clientHeight })
   }, [])
-  return [ref, size] as const
+  return [refCallback, size] as const
 }
 
 function PaletteGroup({
