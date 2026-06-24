@@ -1,0 +1,41 @@
+name: Publish package
+
+# Publishes @northbridgetechnology/epoch-mapper to GitHub Packages.
+#
+# Triggers:
+#   - a published GitHub Release (recommended: tag the release after bumping
+#     the version in package.json)
+#   - manual run from the Actions tab (workflow_dispatch)
+#
+# Auth uses the workflow's built-in GITHUB_TOKEN — no secrets to configure.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://npm.pkg.github.com
+          scope: '@northbridgetechnology'
+
+      # Installs deps (incl. devDeps) and builds dist/ via the `prepare` script.
+      - run: npm ci
+
+      # Belt-and-suspenders: ensure the library bundle exists before packing.
+      - run: npm run build:lib
+
+      - run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

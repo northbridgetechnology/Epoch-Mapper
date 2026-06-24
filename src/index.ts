@@ -1,5 +1,5 @@
 /**
- * `@epoch/mapper` — public package entry point.
+ * `@northbridgetechnology/epoch-mapper` — public package entry point.
  *
  * Consumers (such as Epoch) import the editor component, the PDF export pipeline,
  * the `.epochmap` binary codec, and all shared types from here.

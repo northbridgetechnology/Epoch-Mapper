@@ -1,7 +1,7 @@
 /**
- * `@epoch/mapper/server` — server-safe entry point.
+ * `@northbridgetechnology/epoch-mapper/server` — server-safe entry point.
  *
- * The main entry (`@epoch/mapper`) is a `"use client"` bundle because it ships
+ * The main entry (`@northbridgetechnology/epoch-mapper`) is a `"use client"` bundle because it ships
  * the React editor. Server code (e.g. Epoch's `.epochmap` import API route) must
  * not import a client module for runtime values, so the pure, DOM-free pieces —
  * the binary codec, marker helpers, type tables, and all types — are re-exported

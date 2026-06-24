@@ -1,6 +1,6 @@
 import { defineConfig } from 'tsup'
 
-// Library build for the npm package `@epoch/mapper`.
+// Library build for the npm package `@northbridgetechnology/epoch-mapper`.
 // Bundles the React component, PDF export, and .epochmap codec.
 // React / React-DOM stay external (peer deps).
 export default defineConfig({

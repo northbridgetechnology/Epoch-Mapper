@@ -13,7 +13,7 @@ This repository is **both**:
 
 1. **A standalone web app** (Next.js) — open the editor in a browser tab, no
    login, no accounts, no server. State is file-based.
-2. **The npm package `@epoch/mapper`** — the editor component, the PDF export
+2. **The npm package `@northbridgetechnology/epoch-mapper`** — the editor component, the PDF export
    pipeline, and the `.epochmap` codec, consumed directly by Epoch.
 
 > **Status:** Phases 1–3 complete. The standalone app, the `.epochmap` binary
@@ -61,12 +61,12 @@ import {
   parseDotEpochmap,         // ArrayBuffer | Uint8Array -> EpochmapFile
   serializeDotEpochmap,     // EpochmapFile -> Uint8Array (gzipped)
   type EpochmapFile,
-} from '@epoch/mapper'
+} from '@northbridgetechnology/epoch-mapper'
 
 // Server entry — codec, marker helpers, type tables, and types only.
 // No "use client" boundary, so it is safe to import in route handlers /
 // server components (e.g. an .epochmap import API).
-import { parseDotEpochmap, resolveMarkerImport, type EpochmapFile } from '@epoch/mapper/server'
+import { parseDotEpochmap, resolveMarkerImport, type EpochmapFile } from '@northbridgetechnology/epoch-mapper/server'
 ```
 
 `DungeonMapper` is a client component (it uses React hooks). Import it from a
@@ -192,11 +192,27 @@ provided by [`fflate`](https://github.com/101arrowz/fflate) (browser + Node).
 
 ---
 
-## Publishing
+## Publishing (GitHub Packages)
 
-The package is publish-ready (`npm run build:lib` produces `dist/`), but the
-actual `npm publish` to the `@epoch` scope requires registry credentials that
-live outside this repo. `prepublishOnly` runs the library build automatically.
+The package is published to **GitHub Packages** as
+`@northbridgetechnology/epoch-mapper` (the scope must match the org, which is why
+it isn't `@epoch/*`).
+
+**Automated (recommended):** bump `version` in `package.json`, then create a
+GitHub Release. The [`publish` workflow](.github/workflows/publish.yml) builds
+`dist/` and publishes using the built-in `GITHUB_TOKEN` — no secrets to set up.
+You can also run it manually from the Actions tab.
+
+**Manual (from a machine with a PAT that has `write:packages`):**
+
+```bash
+npm run build:lib
+echo "//npm.pkg.github.com/:_authToken=YOUR_GITHUB_PAT" >> ~/.npmrc
+npm publish        # publishConfig already targets npm.pkg.github.com
+```
+
+Consumers (Epoch) authenticate to the same registry for `@northbridgetechnology`
+— see Epoch's `.npmrc`.
 
 ---
 
