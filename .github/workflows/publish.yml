@@ -31,7 +31,9 @@ jobs:
           scope: '@northbridgetechnology'
 
       # Installs deps (incl. devDeps) and builds dist/ via the `prepare` script.
-      - run: npm ci
+      # `npm install` (not `npm ci`) — the repo's lockfile is bun.lock, so there
+      # is no package-lock.json for `npm ci` to consume.
+      - run: npm install
 
       # Belt-and-suspenders: ensure the library bundle exists before packing.
       - run: npm run build:lib
