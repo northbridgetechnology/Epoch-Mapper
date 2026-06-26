@@ -1142,8 +1142,12 @@ interface ViewportProps {
   onPanEnd: () => void
 }
 
+// Player arrowhead rotation per facing (the CSS triangle points up = N at 0°).
+const FACING_DEG: Record<Facing, number> = { N: 0, E: 90, S: 180, W: 270 }
+
 function Viewport(props: ViewportProps) {
   const { map, cellSize, cameraOffset, layout, availW, availH } = props
+  const facing: Facing = map.facing ?? 'N'
   const rulerSize = 18
   const step = cellSize + 1
 
@@ -1247,7 +1251,18 @@ function Viewport(props: ViewportProps) {
                   >
                     {isPlayer && (
                       <div className="absolute inset-0 grid place-items-center pointer-events-none z-20">
-                        <div className="rounded-full bg-amber-300 shadow shadow-amber-400" style={{ width: Math.max(6, cellSize * 0.3), height: Math.max(6, cellSize * 0.3) }} />
+                        {/* Arrowhead points in the player's facing direction. */}
+                        <div
+                          style={{
+                            width: 0,
+                            height: 0,
+                            borderLeft: `${Math.max(4, cellSize * 0.22)}px solid transparent`,
+                            borderRight: `${Math.max(4, cellSize * 0.22)}px solid transparent`,
+                            borderBottom: `${Math.max(6, cellSize * 0.36)}px solid #fcd34d`,
+                            transform: `rotate(${FACING_DEG[facing]}deg)`,
+                            filter: 'drop-shadow(0 0 2px rgba(251,191,36,0.85))',
+                          }}
+                        />
                       </div>
                     )}
 
