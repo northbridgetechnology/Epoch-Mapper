@@ -13,7 +13,7 @@ import type { CellData, CellMap, CustomMarker, EdgeDir, EpochmapFile, MapData, M
 import { parseDotEpochmap, serializeDotEpochmap } from '@/lib/epochmap-codec'
 import { resolveMarkerImport, remapMapMarkers } from '@/lib/markers'
 import { exportMapsAsPdf } from '@/lib/dungeon-export'
-import { canPass, turnLeft, turnRight, vectorToFacing, type Facing } from '@/lib/crawler'
+import { canPass, turnLeft, turnRight, vectorToFacing, leftOf, rightOf, DIR_VECTOR, type Facing } from '@/lib/crawler'
 import { FirstPersonView } from './FirstPersonView'
 import { Toolbar } from './Toolbar'
 import { WelcomeModal } from './WelcomeModal'
@@ -290,18 +290,27 @@ export function DungeonMapper({
     return changed ? [...set] : (map.revealedChunks ?? [])
   }, [])
 
+  // Move by (dx,dy). `faceDir`:
+  //   undefined → auto-face the move direction (absolute / Edit-mode feel)
+  //   null      → keep current facing (relative forward/back/strafe)
   const movePlayer = useCallback(
-    (dx: number, dy: number) => {
+    (dx: number, dy: number, faceDir?: Facing | null) => {
       if (!activeMap) return
-      const dir = vectorToFacing(dx, dy)
-      // Explore mode enforces wall/floor physics; blocked moves just turn to face.
-      if (exploreMode && dir && !canPass(activeMap.cells, activeMap.playerX, activeMap.playerY, dir, customBase)) {
-        updateActiveMap({ facing: dir })
+      const moveDir = vectorToFacing(dx, dy) // direction of travel (for collision)
+      const autoFace = faceDir === undefined
+      // Explore mode enforces wall/floor physics.
+      if (exploreMode && moveDir && !canPass(activeMap.cells, activeMap.playerX, activeMap.playerY, moveDir, customBase)) {
+        if (autoFace && moveDir) updateActiveMap({ facing: moveDir })
         return
       }
       const nx = activeMap.playerX + dx
       const ny = activeMap.playerY + dy
-      updateActiveMap((m) => ({ playerX: nx, playerY: ny, facing: dir ?? m.facing, revealedChunks: revealAround(m, nx, ny) }))
+      updateActiveMap((m) => ({
+        playerX: nx,
+        playerY: ny,
+        facing: autoFace ? moveDir ?? m.facing : faceDir ?? m.facing,
+        revealedChunks: revealAround(m, nx, ny),
+      }))
       setCameraOffset({ x: 0, y: 0 })
     },
     [activeMap, updateActiveMap, revealAround, exploreMode, customBase],
@@ -700,21 +709,41 @@ export function DungeonMapper({
       }
 
       if (!mapperHoveredRef.current) return
-      const moves: Record<string, [number, number]> = {
-        ArrowUp: [0, -1], ArrowDown: [0, 1], ArrowLeft: [-1, 0], ArrowRight: [1, 0],
-        w: [0, -1], s: [0, 1], a: [-1, 0], d: [1, 0],
+      const facing: Facing = activeMap?.facing ?? 'N'
+      const dirMap: Record<string, 'F' | 'B' | 'L' | 'R'> = {
+        ArrowUp: 'F', w: 'F', ArrowDown: 'B', s: 'B', ArrowLeft: 'L', a: 'L', ArrowRight: 'R', d: 'R',
       }
-      if (moves[e.key]) {
+      const dirKey = dirMap[e.key]
+      if (dirKey) {
         e.preventDefault()
-        movePlayer(moves[e.key][0], moves[e.key][1])
+        if (exploreMode) {
+          // Relative crawler controls: forward/back step in/against facing;
+          // left/right turn the player.
+          const fwd = DIR_VECTOR[facing]
+          if (dirKey === 'F') movePlayer(fwd[0], fwd[1], null)
+          else if (dirKey === 'B') movePlayer(-fwd[0], -fwd[1], null)
+          else if (dirKey === 'L') turn(turnLeft)
+          else turn(turnRight)
+        } else {
+          // Edit mode: absolute move + auto-face.
+          const v = { F: [0, -1] as const, B: [0, 1] as const, L: [-1, 0] as const, R: [1, 0] as const }[dirKey]
+          movePlayer(v[0], v[1])
+        }
         return
       }
       if (e.key === 'q' || e.key === 'Q') {
-        turn(turnLeft)
+        // Explore: strafe left (keep facing). Edit: turn left.
+        if (exploreMode) {
+          const v = DIR_VECTOR[leftOf(facing)]
+          movePlayer(v[0], v[1], null)
+        } else turn(turnLeft)
         return
       }
       if (e.key === 'e' || e.key === 'E') {
-        turn(turnRight)
+        if (exploreMode) {
+          const v = DIR_VECTOR[rightOf(facing)]
+          movePlayer(v[0], v[1], null)
+        } else turn(turnRight)
         return
       }
       if (e.key === 'f' || e.key === 'F') {
@@ -741,7 +770,7 @@ export function DungeonMapper({
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
-  }, [activeMap, movePlayer, turn, toggleReveal, openNoteForPlayer, undo, saveEpochmap, exportPdf])
+  }, [activeMap, movePlayer, turn, exploreMode, toggleReveal, openNoteForPlayer, undo, saveEpochmap, exportPdf])
 
   function closeWelcome() {
     setShowWelcome(false)
@@ -1070,7 +1099,9 @@ export function DungeonMapper({
                 />
               </div>
               <div className="px-3 py-1.5 border-t border-white/10 text-[10px] text-white/35 leading-snug shrink-0">
-                WASD/arrows move &amp; face · Q/E turn{exploreMode ? ' · walls & floorless cells block' : ''}
+                {exploreMode
+                  ? '↑↓ forward/back · ←→ turn · Q/E strafe · walls & floorless cells block'
+                  : 'WASD/arrows move & face · Q/E turn'}
               </div>
             </div>
           </>

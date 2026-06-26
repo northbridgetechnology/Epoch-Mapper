@@ -3,8 +3,8 @@
 import { X } from 'lucide-react'
 
 const KEYS: Array<[string, string]> = [
-  ['Arrow keys / WASD', 'Move player (and face that direction)'],
-  ['Q / E', 'Turn the first-person view left / right'],
+  ['Arrow keys / WASD', 'Edit: move & face · Explore: ↑↓ forward/back, ←→ turn'],
+  ['Q / E', 'Edit: turn in place · Explore: strafe left / right'],
   ['F', 'Toggle fog of war reveal for current cell'],
   ['N', 'Add / edit note on current cell'],
   ['Z / Ctrl+Z', 'Undo last cell edit'],
@@ -129,10 +129,17 @@ export function WelcomeModal({ onClose }: { onClose: () => void }) {
                 3D-style viewport that renders the dungeon from the player&apos;s cell and facing — walls, floors, and
                 overlays drawn as you explore.
               </li>
-              <li>Moving with WASD/arrows faces that direction; <strong className="text-white/85">Q/E</strong> turn in place. Drag the panel&apos;s left edge to resize it.</li>
+              <li>Drag the panel&apos;s left edge to resize it.</li>
               <li>
-                Flip the panel to <strong className="text-white/85">Explore</strong> mode to enable wall/floor physics:
-                you can&apos;t walk through walls or step onto a cell with no floor tile placed. <strong className="text-white/85">Edit</strong> mode keeps placement free.
+                <strong className="text-white/85">Edit</strong> mode (free placement): WASD/arrows move the marker in
+                map directions and face that way; Q/E turn in place.
+              </li>
+              <li>
+                <strong className="text-white/85">Explore</strong> mode plays like a dungeon crawler — controls are
+                relative to facing: <strong className="text-white/85">↑/↓</strong> step forward/back,{' '}
+                <strong className="text-white/85">←/→</strong> turn, <strong className="text-white/85">Q/E</strong>{' '}
+                strafe. Wall/floor physics apply: you can&apos;t walk through walls or step onto a cell with no floor
+                tile placed.
               </li>
             </ul>
           </Section>
