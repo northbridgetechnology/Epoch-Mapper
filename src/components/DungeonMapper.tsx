@@ -709,6 +709,9 @@ export function DungeonMapper({
       }
 
       if (!mapperHoveredRef.current) return
+      // Controls are always relative to facing (crawler-style). Explore mode only
+      // adds wall/floor collision (enforced inside movePlayer).
+      //   ↑/W forward · ↓/S back · ←/A turn left · →/D turn right · Q/E strafe
       const facing: Facing = activeMap?.facing ?? 'N'
       const dirMap: Record<string, 'F' | 'B' | 'L' | 'R'> = {
         ArrowUp: 'F', w: 'F', ArrowDown: 'B', s: 'B', ArrowLeft: 'L', a: 'L', ArrowRight: 'R', d: 'R',
@@ -716,34 +719,21 @@ export function DungeonMapper({
       const dirKey = dirMap[e.key]
       if (dirKey) {
         e.preventDefault()
-        if (exploreMode) {
-          // Relative crawler controls: forward/back step in/against facing;
-          // left/right turn the player.
-          const fwd = DIR_VECTOR[facing]
-          if (dirKey === 'F') movePlayer(fwd[0], fwd[1], null)
-          else if (dirKey === 'B') movePlayer(-fwd[0], -fwd[1], null)
-          else if (dirKey === 'L') turn(turnLeft)
-          else turn(turnRight)
-        } else {
-          // Edit mode: absolute move + auto-face.
-          const v = { F: [0, -1] as const, B: [0, 1] as const, L: [-1, 0] as const, R: [1, 0] as const }[dirKey]
-          movePlayer(v[0], v[1])
-        }
+        const fwd = DIR_VECTOR[facing]
+        if (dirKey === 'F') movePlayer(fwd[0], fwd[1], null)
+        else if (dirKey === 'B') movePlayer(-fwd[0], -fwd[1], null)
+        else if (dirKey === 'L') turn(turnLeft)
+        else turn(turnRight)
         return
       }
       if (e.key === 'q' || e.key === 'Q') {
-        // Explore: strafe left (keep facing). Edit: turn left.
-        if (exploreMode) {
-          const v = DIR_VECTOR[leftOf(facing)]
-          movePlayer(v[0], v[1], null)
-        } else turn(turnLeft)
+        const v = DIR_VECTOR[leftOf(facing)] // strafe left
+        movePlayer(v[0], v[1], null)
         return
       }
       if (e.key === 'e' || e.key === 'E') {
-        if (exploreMode) {
-          const v = DIR_VECTOR[rightOf(facing)]
-          movePlayer(v[0], v[1], null)
-        } else turn(turnRight)
+        const v = DIR_VECTOR[rightOf(facing)] // strafe right
+        movePlayer(v[0], v[1], null)
         return
       }
       if (e.key === 'f' || e.key === 'F') {
@@ -981,7 +971,7 @@ export function DungeonMapper({
             </div>
 
             <p className="text-xs text-white/45 leading-relaxed">
-              Arrow keys / WASD move ⊕ · F toggles fog · N adds a note · right-click erases · middle-drag pans.
+              ↑↓ move ⊕ forward/back · ←→ turn · Q/E strafe · F fog · N note · right-click erase · middle-drag pan.
             </p>
 
             <button
@@ -1099,9 +1089,7 @@ export function DungeonMapper({
                 />
               </div>
               <div className="px-3 py-1.5 border-t border-white/10 text-[10px] text-white/35 leading-snug shrink-0">
-                {exploreMode
-                  ? '↑↓ forward/back · ←→ turn · Q/E strafe · walls & floorless cells block'
-                  : 'WASD/arrows move & face · Q/E turn'}
+                ↑↓ forward/back · ←→ turn · Q/E strafe{exploreMode ? ' · walls & floorless cells block' : ''}
               </div>
             </div>
           </>

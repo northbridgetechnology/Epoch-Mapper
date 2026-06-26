@@ -3,8 +3,9 @@
 import { X } from 'lucide-react'
 
 const KEYS: Array<[string, string]> = [
-  ['Arrow keys / WASD', 'Edit: move & face · Explore: ↑↓ forward/back, ←→ turn'],
-  ['Q / E', 'Edit: turn in place · Explore: strafe left / right'],
+  ['↑ / W, ↓ / S', 'Step forward / back (the way you face)'],
+  ['← / A, → / D', 'Turn left / right'],
+  ['Q / E', 'Strafe left / right'],
   ['F', 'Toggle fog of war reveal for current cell'],
   ['N', 'Add / edit note on current cell'],
   ['Z / Ctrl+Z', 'Undo last cell edit'],
@@ -131,15 +132,14 @@ export function WelcomeModal({ onClose }: { onClose: () => void }) {
               </li>
               <li>Drag the panel&apos;s left edge to resize it.</li>
               <li>
-                <strong className="text-white/85">Edit</strong> mode (free placement): WASD/arrows move the marker in
-                map directions and face that way; Q/E turn in place.
+                Movement is crawler-relative to your facing: <strong className="text-white/85">↑/↓</strong> step
+                forward/back, <strong className="text-white/85">←/→</strong> turn, <strong className="text-white/85">Q/E</strong>{' '}
+                strafe. The marker on the 2D map shows your facing as an arrow.
               </li>
               <li>
-                <strong className="text-white/85">Explore</strong> mode plays like a dungeon crawler — controls are
-                relative to facing: <strong className="text-white/85">↑/↓</strong> step forward/back,{' '}
-                <strong className="text-white/85">←/→</strong> turn, <strong className="text-white/85">Q/E</strong>{' '}
-                strafe. Wall/floor physics apply: you can&apos;t walk through walls or step onto a cell with no floor
-                tile placed.
+                <strong className="text-white/85">Explore</strong> mode adds wall/floor physics: you can&apos;t walk
+                through walls or step onto a cell with no floor tile placed. <strong className="text-white/85">Edit</strong>{' '}
+                mode lets the marker move freely.
               </li>
             </ul>
           </Section>
