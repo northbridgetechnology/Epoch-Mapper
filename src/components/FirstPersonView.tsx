@@ -64,11 +64,26 @@ export function FirstPersonView({
     draw(ctx, W, H, { cells, playerX, playerY, facing, customBase, customOverlay })
   }, [cells, playerX, playerY, facing, customBase, customOverlay, size])
 
+  // Live readout of the cell the player is currently standing on.
+  const here = cells[`${playerX},${playerY}`]
+  const baseLabel = here ? baseDef(here.base, customBase).label : 'Empty'
+  const overlayLabels = (here?.overlays ?? [])
+    .map((o) => overlayDef(o, customOverlay)?.label)
+    .filter(Boolean) as string[]
+
   return (
     <div ref={wrapRef} className="relative w-full h-full overflow-hidden bg-[#0a0a0c]">
       <canvas ref={canvasRef} className="block w-full h-full" />
-      <div className="absolute top-2 left-2 text-[10px] font-mono text-amber-300/70 pointer-events-none select-none">
-        ({playerX}, {playerY}) · facing {facing}
+      <div className="absolute top-2 left-2 right-2 flex items-start justify-between gap-2 pointer-events-none select-none">
+        <span className="text-[10px] font-mono text-amber-300/80 bg-black/40 rounded px-1.5 py-0.5">
+          ({playerX}, {playerY}) · facing {facing}
+        </span>
+      </div>
+      <div className="absolute bottom-2 left-2 right-2 pointer-events-none select-none">
+        <span className="inline-block max-w-full truncate text-[11px] text-white/85 bg-black/45 rounded px-2 py-1">
+          <span className="text-white/45">On:</span> {baseLabel}
+          {overlayLabels.length > 0 && <span className="text-amber-200/90"> · {overlayLabels.join(', ')}</span>}
+        </span>
       </div>
     </div>
   )
