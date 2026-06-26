@@ -4,8 +4,8 @@ import { X } from 'lucide-react'
 
 const KEYS: Array<[string, string]> = [
   ['↑ / W, ↓ / S', 'Step forward / back (the way you face)'],
-  ['← / A, → / D', 'Turn left / right'],
-  ['Q / E', 'Strafe left / right'],
+  ['← / A, → / D', 'Strafe left / right'],
+  ['Q / E', 'Turn left / right'],
   ['F', 'Toggle fog of war reveal for current cell'],
   ['N', 'Add / edit note on current cell'],
   ['Z / Ctrl+Z', 'Undo last cell edit'],
@@ -133,8 +133,8 @@ export function WelcomeModal({ onClose }: { onClose: () => void }) {
               <li>Drag the panel&apos;s left edge to resize it.</li>
               <li>
                 Movement is crawler-relative to your facing: <strong className="text-white/85">↑/↓</strong> step
-                forward/back, <strong className="text-white/85">←/→</strong> turn, <strong className="text-white/85">Q/E</strong>{' '}
-                strafe. The marker on the 2D map shows your facing as an arrow.
+                forward/back, <strong className="text-white/85">←/→</strong> strafe, <strong className="text-white/85">Q/E</strong>{' '}
+                turn. The marker on the 2D map shows your facing as an arrow.
               </li>
               <li>
                 <strong className="text-white/85">Explore</strong> mode adds wall/floor physics: you can&apos;t walk
