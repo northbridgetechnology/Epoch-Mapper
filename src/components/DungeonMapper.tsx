@@ -768,6 +768,11 @@ export function DungeonMapper({
   return (
     <div
       className={cn(rootSize, 'flex flex-col bg-zinc-950 text-white overflow-hidden')}
+      // Keyboard controls (move/turn/etc.) are active whenever the pointer is
+      // anywhere over the editor — including the first-person panel — and
+      // disabled only when it leaves the app entirely.
+      onMouseEnter={() => (mapperHoveredRef.current = true)}
+      onMouseLeave={() => (mapperHoveredRef.current = false)}
       onDragOver={(e) => e.preventDefault()}
       onDrop={(e) => {
         e.preventDefault()
@@ -968,9 +973,9 @@ export function DungeonMapper({
         <main
           ref={viewportRef}
           className="flex-1 min-w-0 grid place-items-center bg-zinc-900/40 overflow-hidden"
-          onMouseEnter={() => (mapperHoveredRef.current = true)}
           onMouseLeave={() => {
-            mapperHoveredRef.current = false
+            // Only clear 2D-grid hover state here; keyboard focus is tracked on
+            // the editor root so it survives moving onto the first-person panel.
             setHoverInfo(null)
             setTooltip(null)
           }}
