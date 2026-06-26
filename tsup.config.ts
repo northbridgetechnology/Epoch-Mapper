@@ -14,6 +14,13 @@ export default defineConfig({
   clean: true,
   treeshake: true,
   external: ['react', 'react-dom'],
+  // Use the automatic JSX runtime (imports react/jsx-runtime) instead of
+  // esbuild's default classic transform, which emits React.createElement and
+  // requires a `React` global the bundle never imports — that caused a
+  // "Can't find variable: React" crash in consumers.
+  esbuildOptions(options) {
+    options.jsx = 'automatic'
+  },
   // The bundled entry is a client module (the editor uses React hooks). esbuild
   // strips module-level directives when bundling, so the `"use client"` banner
   // is re-applied by scripts/add-use-client.mjs as a post-build step.
