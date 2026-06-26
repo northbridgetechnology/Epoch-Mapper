@@ -40,6 +40,13 @@ export interface MapData {
   playerX: number
   playerY: number
   /**
+   * Player facing for the first-person crawler view ('N'|'S'|'E'|'W').
+   * Optional/additive — defaults to 'N'. Not stored in the v1 `.epochmap`
+   * binary (it lives in the JSON draft / host session), so adding it does not
+   * change the binary format.
+   */
+  facing?: EdgeDir
+  /**
    * Revealed fog-of-war chunk keys (`"cx,cy"`). Optional in memory — when a
    * map is first created it is derived from the player position.
    */

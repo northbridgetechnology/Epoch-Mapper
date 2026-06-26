@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Plus, Trash2, MapPin, Eraser, X } from 'lucide-react'
+import { Plus, Trash2, MapPin, Eraser, X, Footprints, Box as BoxIcon } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn, uid } from '@/lib/utils'
 import {
@@ -13,6 +13,8 @@ import type { CellData, CellMap, CustomMarker, EdgeDir, EpochmapFile, MapData, M
 import { parseDotEpochmap, serializeDotEpochmap } from '@/lib/epochmap-codec'
 import { resolveMarkerImport, remapMapMarkers } from '@/lib/markers'
 import { exportMapsAsPdf } from '@/lib/dungeon-export'
+import { canPass, turnLeft, turnRight, vectorToFacing, type Facing } from '@/lib/crawler'
+import { FirstPersonView } from './FirstPersonView'
 import { Toolbar } from './Toolbar'
 import { WelcomeModal } from './WelcomeModal'
 import { CellTooltip } from './CellTooltip'
@@ -139,6 +141,9 @@ export function DungeonMapper({
   const [showWelcome, setShowWelcome] = useState(false)
   const [showPalette, setShowPalette] = useState(false)
   const [paletteSelectId, setPaletteSelectId] = useState<number | undefined>(undefined)
+  const [exploreMode, setExploreMode] = useState(false)
+  const [showCrawler, setShowCrawler] = useState(false)
+  const [crawlerWidth, setCrawlerWidth] = useState(360)
   const [tooltip, setTooltip] = useState<{ x: number; y: number; cell: CellData; isPlayer: boolean } | null>(null)
   const [hoverInfo, setHoverInfo] = useState<{ x: number; y: number; zone: EdgeDir | null } | null>(null)
   const [noteDialog, setNoteDialog] = useState<{ x: number; y: number; text: string } | null>(null)
@@ -288,13 +293,40 @@ export function DungeonMapper({
   const movePlayer = useCallback(
     (dx: number, dy: number) => {
       if (!activeMap) return
+      const dir = vectorToFacing(dx, dy)
+      // Explore mode enforces wall/floor physics; blocked moves just turn to face.
+      if (exploreMode && dir && !canPass(activeMap.cells, activeMap.playerX, activeMap.playerY, dir, customBase)) {
+        updateActiveMap({ facing: dir })
+        return
+      }
       const nx = activeMap.playerX + dx
       const ny = activeMap.playerY + dy
-      updateActiveMap((m) => ({ playerX: nx, playerY: ny, revealedChunks: revealAround(m, nx, ny) }))
+      updateActiveMap((m) => ({ playerX: nx, playerY: ny, facing: dir ?? m.facing, revealedChunks: revealAround(m, nx, ny) }))
       setCameraOffset({ x: 0, y: 0 })
     },
-    [activeMap, updateActiveMap, revealAround],
+    [activeMap, updateActiveMap, revealAround, exploreMode, customBase],
   )
+
+  const turn = useCallback(
+    (rotate: (f: Facing) => Facing) => {
+      updateActiveMap((m) => ({ facing: rotate(m.facing ?? 'N') }))
+    },
+    [updateActiveMap],
+  )
+
+  // Drag the divider to resize the first-person panel (docked on the right).
+  const startCrawlerResize = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    const onMove = (ev: MouseEvent) => {
+      setCrawlerWidth(Math.max(260, Math.min(720, window.innerWidth - ev.clientX)))
+    }
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+  }, [])
 
   const isCellRevealed = useCallback(
     (x: number, y: number) => {
@@ -677,6 +709,14 @@ export function DungeonMapper({
         movePlayer(moves[e.key][0], moves[e.key][1])
         return
       }
+      if (e.key === 'q' || e.key === 'Q') {
+        turn(turnLeft)
+        return
+      }
+      if (e.key === 'e' || e.key === 'E') {
+        turn(turnRight)
+        return
+      }
       if (e.key === 'f' || e.key === 'F') {
         if (activeMap) toggleReveal(activeMap.playerX, activeMap.playerY)
         return
@@ -701,7 +741,7 @@ export function DungeonMapper({
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
-  }, [activeMap, movePlayer, toggleReveal, openNoteForPlayer, undo, saveEpochmap, exportPdf])
+  }, [activeMap, movePlayer, turn, toggleReveal, openNoteForPlayer, undo, saveEpochmap, exportPdf])
 
   function closeWelcome() {
     setShowWelcome(false)
@@ -909,6 +949,18 @@ export function DungeonMapper({
             <p className="text-xs text-white/45 leading-relaxed">
               Arrow keys / WASD move ⊕ · F toggles fog · N adds a note · right-click erases · middle-drag pans.
             </p>
+
+            <button
+              onClick={() => setShowCrawler((v) => !v)}
+              className={cn(
+                'w-full flex items-center justify-center gap-1.5 px-2 py-2 rounded text-sm font-medium border transition',
+                showCrawler
+                  ? 'bg-amber-500/20 border-amber-500/50 text-amber-300'
+                  : 'border-white/15 text-white/60 hover:border-white/30 hover:text-white',
+              )}
+            >
+              <BoxIcon className="h-4 w-4" /> {showCrawler ? 'Hide' : 'Show'} first-person view
+            </button>
           </div>
         </aside>
 
@@ -968,6 +1020,56 @@ export function DungeonMapper({
             />
           )}
         </main>
+
+        {/* First-person crawler viewport (resizable) */}
+        {showCrawler && activeMap && (
+          <>
+            <div
+              onMouseDown={startCrawlerResize}
+              title="Drag to resize"
+              className="w-1.5 shrink-0 cursor-col-resize bg-white/10 hover:bg-amber-500/40 transition-colors"
+            />
+            <div className="shrink-0 flex flex-col bg-zinc-950 border-l border-white/10" style={{ width: crawlerWidth }}>
+              <div className="flex items-center justify-between px-3 h-9 border-b border-white/10 shrink-0">
+                <span className="text-[11px] font-semibold text-white/55 uppercase tracking-wider">First-person</span>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={() => setExploreMode((v) => !v)}
+                    title="Explore mode enforces wall/floor collision"
+                    className={cn(
+                      'flex items-center gap-1 px-2 h-6 rounded text-[10px] font-medium border transition',
+                      exploreMode
+                        ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-300'
+                        : 'border-white/15 text-white/55 hover:text-white/85 hover:border-white/30',
+                    )}
+                  >
+                    <Footprints className="h-3 w-3" /> {exploreMode ? 'Explore' : 'Edit'}
+                  </button>
+                  <button
+                    onClick={() => setShowCrawler(false)}
+                    title="Hide viewport"
+                    className="grid place-items-center h-6 w-6 rounded text-white/50 hover:text-white hover:bg-white/10"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              </div>
+              <div className="flex-1 min-h-0">
+                <FirstPersonView
+                  cells={activeMap.cells}
+                  playerX={activeMap.playerX}
+                  playerY={activeMap.playerY}
+                  facing={activeMap.facing ?? 'N'}
+                  customBase={customBase}
+                  customOverlay={customOverlay}
+                />
+              </div>
+              <div className="px-3 py-1.5 border-t border-white/10 text-[10px] text-white/35 leading-snug shrink-0">
+                WASD/arrows move &amp; face · Q/E turn{exploreMode ? ' · walls & floorless cells block' : ''}
+              </div>
+            </div>
+          </>
+        )}
       </div>
 
       {tooltip && (

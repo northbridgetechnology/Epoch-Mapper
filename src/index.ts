@@ -10,6 +10,21 @@ export { DungeonMapper, type DungeonMapperProps } from './components/DungeonMapp
 export { WelcomeModal } from './components/WelcomeModal'
 export { CellTooltip } from './components/CellTooltip'
 export { Toolbar } from './components/Toolbar'
+export { FirstPersonView } from './components/FirstPersonView'
+
+// First-person crawler logic (facing math + grid collision)
+export {
+  canPass,
+  isWalkableBase,
+  turnLeft,
+  turnRight,
+  leftOf,
+  rightOf,
+  vectorToFacing,
+  DIR_VECTOR,
+  OPPOSITE,
+  type Facing,
+} from './lib/crawler'
 
 // PDF export
 export { exportMapsAsPdf } from './lib/dungeon-export'

@@ -3,7 +3,8 @@
 import { X } from 'lucide-react'
 
 const KEYS: Array<[string, string]> = [
-  ['Arrow keys / WASD', 'Move player'],
+  ['Arrow keys / WASD', 'Move player (and face that direction)'],
+  ['Q / E', 'Turn the first-person view left / right'],
   ['F', 'Toggle fog of war reveal for current cell'],
   ['N', 'Add / edit note on current cell'],
   ['Z / Ctrl+Z', 'Undo last cell edit'],
@@ -118,6 +119,21 @@ export function WelcomeModal({ onClose }: { onClose: () => void }) {
                 with arrow keys or WASD, or click any revealed cell.
               </li>
               <li>The viewport is always centered on the player. The map moves; the viewport does not.</li>
+            </ul>
+          </Section>
+
+          <Section title="First-person view (crawler)">
+            <ul className="list-disc pl-5 space-y-1">
+              <li>
+                Toggle <strong className="text-white/85">Show first-person view</strong> to open a resizable retro
+                3D-style viewport that renders the dungeon from the player&apos;s cell and facing — walls, floors, and
+                overlays drawn as you explore.
+              </li>
+              <li>Moving with WASD/arrows faces that direction; <strong className="text-white/85">Q/E</strong> turn in place. Drag the panel&apos;s left edge to resize it.</li>
+              <li>
+                Flip the panel to <strong className="text-white/85">Explore</strong> mode to enable wall/floor physics:
+                you can&apos;t walk through walls or step onto a cell with no floor tile placed. <strong className="text-white/85">Edit</strong> mode keeps placement free.
+              </li>
             </ul>
           </Section>
 
