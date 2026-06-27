@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { ArrowUp, ArrowDown, ArrowLeft, ArrowRight, ZoomIn, ZoomOut, Coins, Map, Eye } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { baseDef, overlayDef, edgeDef, boundaryKey, DEFAULT_CELL, MIN_CELL, MAX_CELL } from '@/lib/constants'
+import { baseDef, overlayDef, edgeDef, boundaryKey, DEFAULT_CELL, MIN_CELL, MAX_CELL, BASE } from '@/lib/constants'
 import type { CellData, MapData, MarkerDef, EdgeDir } from '@/lib/types'
 import type { Character, Facing } from '@/lib/engine-types'
 
@@ -18,6 +18,7 @@ interface PlayWorkspaceProps {
   customOverlay: Record<number, MarkerDef>
   isCellRevealed: (x: number, y: number) => boolean
   revealedBoundaries?: Set<string>
+  bumpTrigger?: number
   onMoveForward: () => void
   onMoveBack: () => void
   onTurnLeft: () => void
@@ -191,11 +192,23 @@ function rightOf(f: Facing): EdgeDir { const m: Record<Facing,EdgeDir> = {N:'E',
 function frontOf(f: Facing): EdgeDir { return f as unknown as EdgeDir }
 
 // ── Geometry / wall queries ────────────────────────────────────────────────────
-function isWall(map: MapData, x: number, y: number, customBase: Record<number, MarkerDef>): boolean {
+
+type CellKind = 'wall' | 'open' | 'water' | 'lava' | 'void'
+
+function getCellKind(map: MapData, x: number, y: number): CellKind {
   const cell = map.cells[`${x},${y}`]
-  if (!cell) return true
-  const def = baseDef(cell.base ?? 0, customBase)
-  return (cell.base ?? 0) === 0 || def.label.toLowerCase().includes('wall')
+  if (!cell) return 'wall'
+  switch (cell.base ?? 0) {
+    case 0:          return 'wall'
+    case BASE.WATER: return 'water'
+    case BASE.LAVA:  return 'lava'
+    case BASE.VOID:  return 'void'
+    default:         return 'open'  // BASE.WALL (2) is an invisible solid — transparent in 3D
+  }
+}
+
+function isWall(map: MapData, x: number, y: number): boolean {
+  return getCellKind(map, x, y) === 'wall'
 }
 function hasBoundaryWall(
   map: MapData, x: number, y: number, dir: EdgeDir,
@@ -216,13 +229,12 @@ function hasBoundaryWall(
 interface FirstPersonViewProps {
   map: MapData
   facing: Facing
-  customBase: Record<number, MarkerDef>
   customOverlay: Record<number, MarkerDef>
   isCellRevealed: (x: number, y: number) => boolean
   revealedBoundaries?: Set<string>
 }
 
-function FirstPersonView({ map, facing, customBase, customOverlay, isCellRevealed, revealedBoundaries }: FirstPersonViewProps) {
+function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedBoundaries }: FirstPersonViewProps) {
   const [fd0, fd1] = facingDelta(facing)
   const [rd0, rd1] = rightDelta(facing)
   const px = map.playerX
@@ -235,7 +247,7 @@ function FirstPersonView({ map, facing, customBase, customOverlay, isCellReveale
     const [cx, cy] = cellAt(ahead, 0)
     if (hasBoundaryWall(map, cx, cy, frontOf(facing), revealedBoundaries)) return true
     const [nx, ny] = cellAt(ahead + 1, 0)
-    return isWall(map, nx, ny, customBase) || !isCellRevealed(nx, ny)
+    return isWall(map, nx, ny) || !isCellRevealed(nx, ny)
   }
   function hasSideWall(ahead: number, side: 'left' | 'right'): boolean {
     const s = side === 'right' ? 1 : -1
@@ -243,7 +255,20 @@ function FirstPersonView({ map, facing, customBase, customOverlay, isCellReveale
     const dir = side === 'right' ? rightOf(facing) : leftOf(facing)
     if (hasBoundaryWall(map, cx, cy, dir, revealedBoundaries)) return true
     const [sx, sy] = cellAt(ahead, s)
-    return isWall(map, sx, sy, customBase) || !isCellRevealed(sx, sy)
+    return isWall(map, sx, sy) || !isCellRevealed(sx, sy)
+  }
+  // Returns the terrain kind of the cell directly AHEAD at distance `ahead+1`.
+  // Only called when hasFrontWall(ahead) is false — the cell is revealed and non-wall.
+  function getFrontKind(ahead: number): CellKind {
+    const [nx, ny] = cellAt(ahead + 1, 0)
+    return getCellKind(map, nx, ny)
+  }
+  // Returns the terrain kind of the cell to the side at depth `ahead`.
+  // Only called when hasSideWall(ahead, side) is false — the cell is revealed and non-wall.
+  function getSideKind(ahead: number, side: 'left' | 'right'): CellKind {
+    const s = side === 'right' ? 1 : -1
+    const [sx, sy] = cellAt(ahead, s)
+    return getCellKind(map, sx, sy)
   }
   function isRevealedIllusoryFront(ahead: number): boolean {
     const [cx, cy] = cellAt(ahead, 0)
@@ -278,6 +303,19 @@ function FirstPersonView({ map, facing, customBase, customOverlay, isCellReveale
       <linearGradient id="ceil-fade" x1="0" y1="0" x2="0" y2="1">
         <stop offset="0%" stopColor="rgba(0,0,0,0)" />
         <stop offset="100%" stopColor="rgba(0,0,0,0.55)" />
+      </linearGradient>
+      {/* Special terrain gradients */}
+      <linearGradient id="void-grad" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stopColor="hsl(230 12% 6%)" />
+        <stop offset="100%" stopColor="hsl(230 8% 1%)" />
+      </linearGradient>
+      <linearGradient id="water-grad" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stopColor="hsl(195 55% 22%)" />
+        <stop offset="100%" stopColor="hsl(195 60% 12%)" />
+      </linearGradient>
+      <linearGradient id="lava-grad" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stopColor="hsl(15 75% 30%)" />
+        <stop offset="100%" stopColor="hsl(10 80% 20%)" />
       </linearGradient>
     </defs>,
     <rect key="ceil-mortar" x={0} y={0} width={VW} height={VP_Y} fill="url(#stone-grid)" />,
@@ -337,7 +375,12 @@ function FirstPersonView({ map, facing, customBase, customOverlay, isCellReveale
     const leftExists  = hasSideWall(d - 1, 'left')
     const rightExists = hasSideWall(d - 1, 'right')
 
-    // Front wall (solid) — or ghost if it's a revealed illusory wall
+    // Terrain kinds — only queried when the slot isn't a solid wall
+    const frontK = frontExists ? 'wall' : getFrontKind(d - 1)
+    const leftK  = leftExists  ? 'wall' : getSideKind(d - 1, 'left')
+    const rightK = rightExists ? 'wall' : getSideKind(d - 1, 'right')
+
+    // Front wall (solid) — ghost (revealed illusory) — or special terrain surface
     if (frontExists || isRevealedIllusoryFront(d - 1)) {
       const fw = far.x2 - far.x1
       const fh = far.y2 - far.y1
@@ -365,9 +408,39 @@ function FirstPersonView({ map, facing, customBase, customOverlay, isCellReveale
             stroke="rgba(160,210,255,0.20)" strokeWidth={0.8} />,
         )
       }
+    } else if (frontK === 'void') {
+      const fw = far.x2 - far.x1; const fh = far.y2 - far.y1
+      nodes.push(
+        <rect key={`vf${d}`} x={far.x1} y={far.y1} width={fw} height={fh} fill="url(#void-grad)" />,
+        <line key={`vf1${d}`} x1={far.x1} y1={far.y1+fh*.25} x2={far.x2} y2={far.y1+fh*.25}
+          stroke="rgba(50,50,80,.22)" strokeWidth={.5} />,
+        <line key={`vf2${d}`} x1={far.x1} y1={far.y1+fh*.5} x2={far.x2} y2={far.y1+fh*.5}
+          stroke="rgba(40,40,70,.18)" strokeWidth={.4} />,
+        <line key={`vf3${d}`} x1={far.x1} y1={far.y1+fh*.75} x2={far.x2} y2={far.y1+fh*.75}
+          stroke="rgba(30,30,60,.14)" strokeWidth={.3} />,
+      )
+    } else if (frontK === 'water' || frontK === 'lava') {
+      const fh = far.y2 - far.y1
+      const surfTop = far.y1 + fh * 0.72          // surface starts at 72% down
+      const cliffTop = far.y1 + fh * 0.68         // thin cliff ledge above surface
+      const isWater = frontK === 'water'
+      nodes.push(
+        // thin cliff ledge above water/lava surface
+        <rect key={`tf-cl${d}`} x={far.x1} y={cliffTop} width={far.x2-far.x1} height={surfTop-cliffTop}
+          fill={frontWallColor(d)} />,
+        // sunken surface pool
+        <rect key={`tf${d}`} x={far.x1} y={surfTop} width={far.x2-far.x1} height={far.y2-surfTop}
+          fill={isWater ? 'url(#water-grad)' : 'url(#lava-grad)'} />,
+        // surface shimmer / glow line
+        <line key={`tf-sh${d}`} x1={far.x1} y1={surfTop} x2={far.x2} y2={surfTop}
+          stroke={isWater ? 'rgba(100,200,240,.55)' : 'rgba(255,130,30,.6)'} strokeWidth={.8} />,
+        // lava: warm glow overlay
+        !isWater && <rect key={`tf-glow${d}`} x={far.x1} y={surfTop} width={far.x2-far.x1} height={far.y2-surfTop}
+          fill="rgba(220,80,20,.10)" />,
+      )
     }
 
-    // Left side wall trapezoid
+    // Left side wall trapezoid — or special terrain
     if (leftExists) {
       const pts = [
         `${cur.x1},${cur.y1}`,
@@ -381,9 +454,22 @@ function FirstPersonView({ map, facing, customBase, customOverlay, isCellReveale
           stroke={`hsl(215 25% ${Math.min(55, 55 - (d - 1) * 10)}%)`} strokeWidth={1} />,
         fog > 0 && <polygon key={`lwf${d}`} points={pts} fill={`rgba(0,0,0,${fog * 0.8})`} />,
       )
+    } else if (leftK === 'void') {
+      const pts = [`${cur.x1},${cur.y1}`,`${far.x1},${far.y1}`,`${far.x1},${far.y2}`,`${cur.x1},${cur.y2}`].join(' ')
+      nodes.push(<polygon key={`vls${d}`} points={pts} fill="url(#void-grad)" />)
+    } else if (leftK === 'water' || leftK === 'lava') {
+      const isWater = leftK === 'water'
+      const nwY = cur.y1 + (cur.y2 - cur.y1) * 0.72
+      const fwY = far.y1 + (far.y2 - far.y1) * 0.72
+      const wPts = [`${cur.x1},${nwY}`,`${far.x1},${fwY}`,`${far.x1},${far.y2}`,`${cur.x1},${cur.y2}`].join(' ')
+      nodes.push(
+        <polygon key={`tls${d}`} points={wPts} fill={isWater ? 'url(#water-grad)' : 'url(#lava-grad)'} />,
+        <line key={`tls-sh${d}`} x1={cur.x1} y1={nwY} x2={far.x1} y2={fwY}
+          stroke={isWater ? 'rgba(100,200,240,.42)' : 'rgba(255,130,30,.5)'} strokeWidth={.7} />,
+      )
     }
 
-    // Right side wall trapezoid
+    // Right side wall trapezoid — or special terrain
     if (rightExists) {
       const pts = [
         `${cur.x2},${cur.y1}`,
@@ -396,6 +482,19 @@ function FirstPersonView({ map, facing, customBase, customOverlay, isCellReveale
         <line key={`rwe${d}`} x1={cur.x2} y1={cur.y1} x2={cur.x2} y2={cur.y2}
           stroke={`hsl(215 25% ${Math.min(55, 55 - (d - 1) * 10)}%)`} strokeWidth={1} />,
         fog > 0 && <polygon key={`rwf${d}`} points={pts} fill={`rgba(0,0,0,${fog * 0.8})`} />,
+      )
+    } else if (rightK === 'void') {
+      const pts = [`${cur.x2},${cur.y1}`,`${far.x2},${far.y1}`,`${far.x2},${far.y2}`,`${cur.x2},${cur.y2}`].join(' ')
+      nodes.push(<polygon key={`vrs${d}`} points={pts} fill="url(#void-grad)" />)
+    } else if (rightK === 'water' || rightK === 'lava') {
+      const isWater = rightK === 'water'
+      const nwY = cur.y1 + (cur.y2 - cur.y1) * 0.72
+      const fwY = far.y1 + (far.y2 - far.y1) * 0.72
+      const wPts = [`${cur.x2},${nwY}`,`${far.x2},${fwY}`,`${far.x2},${far.y2}`,`${cur.x2},${cur.y2}`].join(' ')
+      nodes.push(
+        <polygon key={`trs${d}`} points={wPts} fill={isWater ? 'url(#water-grad)' : 'url(#lava-grad)'} />,
+        <line key={`trs-sh${d}`} x1={cur.x2} y1={nwY} x2={far.x2} y2={fwY}
+          stroke={isWater ? 'rgba(100,200,240,.42)' : 'rgba(255,130,30,.5)'} strokeWidth={.7} />,
       )
     }
 
@@ -658,7 +757,7 @@ function DungeonViewport({
 
 export function PlayWorkspace({
   activeMap, party, gold, facing,
-  customBase, customOverlay, isCellRevealed, revealedBoundaries,
+  customBase, customOverlay, isCellRevealed, revealedBoundaries, bumpTrigger,
   onMoveForward, onMoveBack, onTurnLeft, onTurnRight, onInteract,
 }: PlayWorkspaceProps) {
   const [cellSize, setCellSize] = useState(DEFAULT_CELL + 6)
@@ -666,6 +765,16 @@ export function PlayWorkspace({
   const zoom = useCallback((delta: number) => {
     setCellSize(s => Math.max(MIN_CELL, Math.min(MAX_CELL, s + delta)))
   }, [])
+
+  const viewRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!bumpTrigger) return
+    const el = viewRef.current
+    if (!el) return
+    el.classList.remove('view-bump')
+    void el.offsetHeight   // force reflow to restart animation
+    el.classList.add('view-bump')
+  }, [bumpTrigger])
 
   if (!activeMap) {
     return (
@@ -713,11 +822,10 @@ export function PlayWorkspace({
 
       {/* Main viewport — 3D fills all available space; map view keeps existing scroll grid */}
       {view === '3d' ? (
-        <div className="flex-1 min-h-0 bg-zinc-950 overflow-hidden">
+        <div ref={viewRef} className="flex-1 min-h-0 bg-zinc-950 overflow-hidden">
           <FirstPersonView
             map={activeMap}
             facing={facing}
-            customBase={customBase}
             customOverlay={customOverlay}
             isCellRevealed={isCellRevealed}
             revealedBoundaries={revealedBoundaries}

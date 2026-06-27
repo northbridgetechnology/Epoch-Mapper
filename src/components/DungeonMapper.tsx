@@ -148,6 +148,7 @@ export function DungeonMapper({
   const [hydrated, setHydrated] = useState(false)
 
   const [activeTool, setActiveTool] = useState<Tool>({ kind: 'base', value: BASE.FLOOR })
+  const [bumpTrigger, setBumpTrigger] = useState(0)
   const [cellSize, setCellSize] = useState(DEFAULT_CELL)
   const [cameraOffset, setCameraOffset] = useState({ x: 0, y: 0 })
   const [isPanning, setIsPanning] = useState(false)
@@ -448,6 +449,21 @@ export function DungeonMapper({
 
       const nx = activeMap.playerX + dx
       const ny = activeMap.playerY + dy
+
+      // Block movement into impassable terrain cells
+      const destBase = activeMap.cells[`${nx},${ny}`]?.base ?? 0
+      const TERRAIN_MSG: Partial<Record<number, string>> = {
+        [BASE.WATER]: 'The water blocks your path.',
+        [BASE.LAVA]:  'You cannot enter the lava!',
+        [BASE.VOID]:  'Only darkness lies below.',
+        [BASE.WALL]:  'Something invisible stops you.',
+      }
+      if (destBase in TERRAIN_MSG) {
+        toast(TERRAIN_MSG[destBase]!)
+        setBumpTrigger(t => t + 1)
+        return
+      }
+
       updateActiveMap((m) => ({ playerX: nx, playerY: ny, revealedChunks: revealAround(m, nx, ny) }))
       setCameraOffset({ x: 0, y: 0 })
 
@@ -1186,6 +1202,7 @@ export function DungeonMapper({
             customOverlay={customOverlay}
             isCellRevealed={isCellRevealed}
             revealedBoundaries={revealedBoundaries}
+            bumpTrigger={bumpTrigger}
             onMoveForward={stepForward}
             onMoveBack={stepBack}
             onTurnLeft={turnLeft}

@@ -30,3 +30,14 @@ body {
   background: rgba(255, 255, 255, 0.15);
   border-radius: 4px;
 }
+
+/* First-person view bump animation — triggered when movement is blocked */
+@keyframes view-bump {
+  0%   { transform: scale(1) }
+  38%  { transform: scale(1.055) }
+  100% { transform: scale(1) }
+}
+.view-bump {
+  animation: view-bump 200ms ease-in-out;
+  transform-origin: center center;
+}

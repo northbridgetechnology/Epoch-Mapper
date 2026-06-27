@@ -40,7 +40,7 @@ export const BASE = {
 export const BASE_TYPES: Record<number, MarkerDef> = {
   0: { id: 0, label: 'Empty', color: '#18181b' },
   1: { id: 1, label: 'Floor', color: '#3f3f46' },
-  2: { id: 2, label: 'Wall', color: '#52525b' },
+  2: { id: 2, label: 'Invisible Wall', color: '#52525b' },
   3: { id: 3, label: 'Door', color: '#b45309', icon: '🚪' },
   4: { id: 4, label: 'Stairs Up', color: '#0369a1', icon: '▲' },
   5: { id: 5, label: 'Stairs Down', color: '#4338ca', icon: '▼' },
