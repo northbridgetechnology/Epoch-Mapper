@@ -62,3 +62,59 @@ export type {
   EdgeDir,
   MarkerDef,
 } from './lib/types'
+
+// Engine types (L1/L2/L3)
+export type {
+  AttributeDef,
+  ClassDef,
+  RaceDef,
+  ItemDef,
+  SpellDef,
+  StatusEffectDef,
+  EnemyDef,
+  EncounterTableDef,
+  LootTableDef,
+  ShopDef,
+  GameMeta,
+  Ruleset,
+  Character,
+  Formation,
+  SaveState,
+  ItemInstance,
+  ActiveStatus,
+  Effect,
+  DamageType,
+  Dice,
+  ItemSlot,
+  ItemKind,
+  SpellTarget,
+  StatModifier,
+  Definition,
+  FieldSchema,
+  FieldType,
+} from './lib/engine-types'
+export { deriveMaxHp, deriveMaxMp, xpToNextLevel } from './lib/engine-types'
+
+// Default ruleset
+export { makeDefaultRuleset, DEFAULT_ATTRIBUTES, DEFAULT_CLASSES, DEFAULT_RACES } from './lib/default-ruleset'
+
+// .epochsave codec + party persistence
+export {
+  serializeSaveState,
+  parseSaveState,
+  downloadSaveState,
+  saveToDraft,
+  loadFromDraft,
+  deleteDraft,
+  savePartyTemplate,
+  loadPartyTemplate,
+  newSaveState,
+  newCharacter,
+  SaveStateParseError,
+} from './lib/save-state'
+
+// Schema-driven form generator
+export { SchemaForm } from './components/forms/SchemaForm'
+
+// Party workspace
+export { PartyWorkspace } from './components/workspaces/PartyWorkspace'

@@ -13,10 +13,15 @@ import type { CellData, CellMap, CustomMarker, EdgeDir, EpochmapFile, MapData, M
 import { parseDotEpochmap, serializeDotEpochmap } from '@/lib/epochmap-codec'
 import { resolveMarkerImport, remapMapMarkers } from '@/lib/markers'
 import { exportMapsAsPdf } from '@/lib/dungeon-export'
+import { Map, Database, Users, Play, Settings } from 'lucide-react'
 import { Toolbar } from './Toolbar'
 import { WelcomeModal } from './WelcomeModal'
 import { CellTooltip } from './CellTooltip'
 import { MarkerPalette } from './MarkerPalette'
+import { PartyWorkspace } from './workspaces/PartyWorkspace'
+import type { Character, Formation, Ruleset } from '@/lib/engine-types'
+import { makeDefaultRuleset } from '@/lib/default-ruleset'
+import { savePartyTemplate, loadPartyTemplate } from '@/lib/save-state'
 
 const DRAFT_KEY = 'epochmapper.draft'
 const WELCOME_KEY = 'epochmapper.welcomed'
@@ -153,6 +158,19 @@ export function DungeonMapper({
   const nextMarkerIdRef = useRef(CUSTOM_ID_START)
   const [canUndo, setCanUndo] = useState(false)
   const [viewportRef, viewportSize] = useElementSize<HTMLElement>()
+
+  // Activity-bar workspace
+  type Workspace = 'map' | 'database' | 'party' | 'play' | 'settings'
+  const [workspace, setWorkspace] = useState<Workspace>('map')
+  const [ruleset, setRuleset] = useState<Ruleset>(() => makeDefaultRuleset())
+  const [party, setParty] = useState<Character[]>([])
+  const [formation, setFormation] = useState<Formation>({ front: [], back: [] })
+
+  // Load persisted party template on mount
+  useEffect(() => {
+    const saved = loadPartyTemplate()
+    if (saved) { setParty(saved.party); setFormation(saved.formation) }
+  }, [])
 
   const activeMap = maps[activeIdx] ?? null
 
@@ -725,9 +743,17 @@ export function DungeonMapper({
     return <div className={cn(rootSize, 'grid place-items-center bg-zinc-950 text-white/40 text-sm')}>Loading…</div>
   }
 
+  const WORKSPACES: { id: Workspace; icon: React.ReactNode; label: string }[] = [
+    { id: 'map', icon: <Map className="w-5 h-5" />, label: 'Map' },
+    { id: 'database', icon: <Database className="w-5 h-5" />, label: 'Database' },
+    { id: 'party', icon: <Users className="w-5 h-5" />, label: 'Party' },
+    { id: 'play', icon: <Play className="w-5 h-5" />, label: 'Play' },
+    { id: 'settings', icon: <Settings className="w-5 h-5" />, label: 'Settings' },
+  ]
+
   return (
     <div
-      className={cn(rootSize, 'flex flex-col bg-zinc-950 text-white overflow-hidden')}
+      className={cn(rootSize, 'flex bg-zinc-950 text-white overflow-hidden')}
       onDragOver={(e) => e.preventDefault()}
       onDrop={(e) => {
         e.preventDefault()
@@ -735,6 +761,72 @@ export function DungeonMapper({
         if (file?.name.endsWith('.epochmap')) loadFile(file, 'open')
       }}
     >
+      {/* Activity bar */}
+      <nav className="w-12 flex-shrink-0 flex flex-col items-center gap-1 py-2 border-r border-white/10 bg-zinc-950 z-10">
+        {WORKSPACES.map(ws => (
+          <button
+            key={ws.id}
+            title={ws.label}
+            onClick={() => setWorkspace(ws.id)}
+            className={cn(
+              'w-9 h-9 grid place-items-center rounded-lg transition-colors',
+              workspace === ws.id
+                ? 'bg-amber-600/20 text-amber-400'
+                : 'text-white/40 hover:text-white hover:bg-white/10',
+            )}
+          >
+            {ws.icon}
+          </button>
+        ))}
+      </nav>
+
+      {/* Party workspace */}
+      {workspace === 'party' && (
+        <div className="flex-1 flex flex-col min-h-0">
+          <div className="px-4 py-2.5 border-b border-white/10 text-sm font-semibold text-white/70">Party Builder</div>
+          <div className="flex-1 min-h-0">
+            <PartyWorkspace
+              ruleset={ruleset}
+              party={party}
+              formation={formation}
+              onPartyChange={(p, f) => {
+                setParty(p)
+                setFormation(f)
+                savePartyTemplate(p, f)
+              }}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Database workspace (stub) */}
+      {workspace === 'database' && (
+        <div className="flex-1 flex items-center justify-center text-white/20 text-sm flex-col gap-2">
+          <Database className="w-8 h-8 opacity-30" />
+          <span>Database — Phase E2</span>
+          <span className="text-xs text-white/15">Items · Spells · Enemies · Encounters</span>
+        </div>
+      )}
+
+      {/* Play workspace (stub) */}
+      {workspace === 'play' && (
+        <div className="flex-1 flex items-center justify-center text-white/20 text-sm flex-col gap-2">
+          <Play className="w-8 h-8 opacity-30" />
+          <span>Play — Phase E4</span>
+          <span className="text-xs text-white/15">Build your party first, then run the dungeon</span>
+        </div>
+      )}
+
+      {/* Settings workspace (stub) */}
+      {workspace === 'settings' && (
+        <div className="flex-1 flex items-center justify-center text-white/20 text-sm flex-col gap-2">
+          <Settings className="w-8 h-8 opacity-30" />
+          <span>Settings — coming soon</span>
+        </div>
+      )}
+
+      {/* Map workspace (the existing editor) */}
+      <div className={cn('flex-1 flex flex-col min-h-0', workspace !== 'map' && 'hidden')}>
       <input ref={fileInputRef} type="file" accept=".epochmap" className="hidden" onChange={onFileChange} />
 
       <Toolbar
@@ -1004,6 +1096,7 @@ export function DungeonMapper({
           onClose={() => setShowPalette(false)}
         />
       )}
+      </div>{/* end Map workspace */}
     </div>
   )
 }
