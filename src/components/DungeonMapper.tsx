@@ -25,6 +25,8 @@ import { makeDefaultRuleset } from '@/lib/default-ruleset'
 import { savePartyTemplate, loadPartyTemplate } from '@/lib/save-state'
 import { checkCellForEncounter, visitedFlagKey } from '@/lib/encounter-engine'
 import { EncounterModal } from './EncounterModal'
+import { CombatScreen } from './CombatScreen'
+import { initCombat, applyCombatOutcome, type CombatState } from '@/lib/combat-engine'
 
 const DRAFT_KEY = 'epochmapper.draft'
 const WELCOME_KEY = 'epochmapper.welcomed'
@@ -172,6 +174,8 @@ export function DungeonMapper({
   const [gold, setGold] = useState<number>(100)
   const [flags, setFlags] = useState<Record<string, boolean | number | string>>({})
   const [activeEncounter, setActiveEncounter] = useState<ResolvedEncounter | null>(null)
+  const [combatState, setCombatState] = useState<CombatState | null>(null)
+  const handleCombatAction = useCallback((next: CombatState) => setCombatState(next), [])
 
   // Load persisted party template on mount
   useEffect(() => {
@@ -1129,10 +1133,28 @@ export function DungeonMapper({
         <EncounterModal
           encounter={activeEncounter}
           onFight={() => {
-            toast('Combat — Phase E4')
+            setCombatState(initCombat(party, activeEncounter))
             setActiveEncounter(null)
           }}
           onFlee={() => setActiveEncounter(null)}
+        />
+      )}
+
+      {/* Combat screen */}
+      {combatState && (
+        <CombatScreen
+          state={combatState}
+          onAction={handleCombatAction}
+          onClose={() => {
+            const { party: updatedParty, levelUps } = applyCombatOutcome(party, combatState, ruleset)
+            setParty(updatedParty)
+            if (combatState.phase === 'victory') {
+              setGold(g => g + combatState.goldReward)
+            }
+            savePartyTemplate(updatedParty, formation)
+            levelUps.forEach(name => toast.success(`${name} leveled up!`))
+            setCombatState(null)
+          }}
         />
       )}
     </div>

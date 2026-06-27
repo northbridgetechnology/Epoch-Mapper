@@ -138,3 +138,16 @@ export type { ResolvedEncounter, EnemyInstance, CellEntity } from './lib/engine-
 
 // Encounter modal (Phase E3)
 export { EncounterModal } from './components/EncounterModal'
+
+// Combat engine (Phase E4)
+export {
+  initCombat,
+  resolvePlayerAttack,
+  resolvePlayerFlee,
+  resolveEnemyTurn,
+  applyCombatOutcome,
+} from './lib/combat-engine'
+export type { CombatActor, CombatLogEntry, CombatPhase, CombatState } from './lib/combat-engine'
+
+// Combat screen (Phase E4)
+export { CombatScreen } from './components/CombatScreen'
