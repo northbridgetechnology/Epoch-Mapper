@@ -30,9 +30,10 @@ ENV NODE_ENV=production \
     HOSTNAME=0.0.0.0
 
 # Next standalone server bundle + static assets.
+# public/ is optional — Next.js projects don't require it.
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
-COPY --from=builder /app/public ./public
+RUN mkdir -p ./public
 
 EXPOSE 3100
 CMD ["node", "server.js"]
