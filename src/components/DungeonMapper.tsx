@@ -596,10 +596,23 @@ export function DungeonMapper({
     if (aheadCell) {
       const aheadObjects = getInteractableObjects(aheadCell)
       for (const obj of aheadObjects) {
-        // Chest with loot table
-        if (obj.kind === 'chest' && obj.loot) {
+        // Chest
+        if (obj.kind === 'chest') {
           const flagKey = objectUsedFlagKey(obj.id)
           if (flags[flagKey]) {
+            toast('The chest is empty.')
+            return
+          }
+          if (obj.locked?.key) {
+            const hasKey = inventory.some(i => i.def === obj.locked!.key)
+            if (!hasKey) {
+              const keyName = ruleset.items.find(i => i.id === obj.locked!.key)?.name ?? obj.locked.key
+              toast(`This chest requires: ${keyName}`)
+              return
+            }
+          }
+          if (!obj.loot) {
+            setFlags(prev => ({ ...prev, [flagKey]: true }))
             toast('The chest is empty.')
             return
           }
@@ -1278,6 +1291,8 @@ export function DungeonMapper({
             isCellRevealed={isCellRevealed}
             revealedBoundaries={revealedBoundaries}
             bumpTrigger={bumpTrigger}
+            flags={flags}
+            ruleset={ruleset}
             onMoveForward={stepForward}
             onMoveBack={stepBack}
             onTurnLeft={turnLeft}

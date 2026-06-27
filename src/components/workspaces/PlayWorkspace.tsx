@@ -5,7 +5,8 @@ import { ArrowUp, ArrowDown, ArrowLeft, ArrowRight, ZoomIn, ZoomOut, Coins, Map,
 import { cn } from '@/lib/utils'
 import { baseDef, overlayDef, edgeDef, boundaryKey, DEFAULT_CELL, MIN_CELL, MAX_CELL, BASE, EDGE } from '@/lib/constants'
 import type { CellData, MapData, MarkerDef, EdgeDir } from '@/lib/types'
-import type { BoundaryData, Character, Facing } from '@/lib/engine-types'
+import type { BoundaryData, CellEntity, Character, Facing, Ruleset } from '@/lib/engine-types'
+import { objectUsedFlagKey } from '@/lib/event-engine'
 
 // ── Props ─────────────────────────────────────────────────────────────────────
 
@@ -19,6 +20,8 @@ interface PlayWorkspaceProps {
   isCellRevealed: (x: number, y: number) => boolean
   revealedBoundaries?: Set<string>
   bumpTrigger?: number
+  flags: Record<string, boolean | number | string>
+  ruleset: Ruleset
   onMoveForward: () => void
   onMoveBack: () => void
   onTurnLeft: () => void
@@ -233,9 +236,10 @@ interface FirstPersonViewProps {
   customOverlay: Record<number, MarkerDef>
   isCellRevealed: (x: number, y: number) => boolean
   revealedBoundaries?: Set<string>
+  flags: Record<string, boolean | number | string>
 }
 
-function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedBoundaries }: FirstPersonViewProps) {
+function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedBoundaries, flags }: FirstPersonViewProps) {
   const [fd0, fd1] = facingDelta(facing)
   const [rd0, rd1] = rightDelta(facing)
   const px = map.playerX
@@ -626,45 +630,156 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
   }
 
   // ── 4. Entities at visible depths ─────────────────────────────────────────────
-  // Show the first overlay icon/emoji we can see looking forward, at its correct depth.
-  // face = sliceRect(d): entity at d steps ahead occupies the d-th projected face.
+  // Chests take priority over overlay icons. Only the nearest visible entity renders.
   for (let d = 1; d <= MAX_D; d++) {
-    if (hasFrontWall(d - 1)) break   // wall blocks line of sight
+    if (hasFrontWall(d - 1)) break
     const [fx, fy] = cellAt(d, 0)
     const frontCell = map.cells[`${fx},${fy}`]
     if (!frontCell) continue
+
+    // ── Chest object entity ──────────────────────────────────────────────────
+    const chestEnt = (frontCell.entities ?? []).find(
+      (e): e is Extract<CellEntity, { t: 'object' }> => e.t === 'object' && e.object.kind === 'chest',
+    )
+    if (chestEnt) {
+      const obj = chestEnt.object
+      const isOpen   = Boolean(flags[objectUsedFlagKey(obj.id)])
+      const isLocked = !isOpen && Boolean(obj.locked?.key)
+
+      const face  = sliceRect(d)
+      const faceW = face.x2 - face.x1
+      const faceH = face.y2 - face.y1
+      const cx = VP_X
+      const entFog = depthFog(d)
+
+      // Chest body bounds
+      const cW  = faceW * 0.44
+      const cH  = faceH * 0.26
+      const fb  = face.y2           // bottom = floor
+      const ft  = fb - cH           // top of body front face
+      const fl  = cx - cW / 2
+      const fr  = cx + cW / 2
+
+      // Top-face back edge (perspective recession toward VP)
+      const tRatio = 0.70
+      const tRecede = cH * 0.40
+      const tbl = cx - (cW / 2) * tRatio
+      const tbr = cx + (cW / 2) * tRatio
+      const tby = ft - tRecede
+
+      // Depth-scaled colours (wood + iron)
+      const lBase   = Math.max(12, 28 - d * 3)
+      const woodDk  = `hsl(28 42% ${lBase}%)`
+      const woodMd  = `hsl(32 46% ${lBase + 9}%)`
+      const woodLt  = `hsl(36 50% ${lBase + 18}%)`
+      const iron    = `hsl(215 14% ${Math.max(22, 40 - d * 4)}%)`
+      const goldCol = `hsl(44 75% ${Math.max(38, 55 - d * 3)}%)`
+
+      if (!isOpen) {
+        // Closed chest ─────────────────────────────────────────────────────
+        // Top face (lid surface)
+        nodes.push(
+          <polygon key={`chtop${d}`}
+            points={`${fl},${ft} ${fr},${ft} ${tbr},${tby} ${tbl},${tby}`}
+            fill={woodLt} />,
+          <line key={`chtl${d}`} x1={fl}  y1={ft}  x2={tbl} y2={tby} stroke={woodDk} strokeWidth={0.8} />,
+          <line key={`chtr${d}`} x1={fr}  y1={ft}  x2={tbr} y2={tby} stroke={woodDk} strokeWidth={0.8} />,
+          <line key={`chtb${d}`} x1={tbl} y1={tby} x2={tbr} y2={tby} stroke={woodDk} strokeWidth={0.8} />,
+          // Front body face
+          <rect key={`chbody${d}`}  x={fl} y={ft} width={cW} height={cH} fill={woodMd} />,
+          // Plank lines
+          <line key={`chp1${d}`} x1={fl} y1={ft + cH * 0.35} x2={fr} y2={ft + cH * 0.35}
+            stroke={woodDk} strokeWidth={0.7} />,
+          <line key={`chp2${d}`} x1={fl} y1={ft + cH * 0.68} x2={fr} y2={ft + cH * 0.68}
+            stroke={woodDk} strokeWidth={0.7} />,
+          // Iron bands
+          <rect key={`chb1${d}`} x={fl} y={ft + cH * 0.06} width={cW} height={cH * 0.13} fill={iron} opacity={0.75} />,
+          <rect key={`chb2${d}`} x={fl} y={ft + cH * 0.80} width={cW} height={cH * 0.13} fill={iron} opacity={0.75} />,
+          // Outline
+          <rect key={`chout${d}`} x={fl} y={ft} width={cW} height={cH} fill="none" stroke={woodDk} strokeWidth={1} />,
+          // Lock clasp or plain clasp
+          isLocked
+            ? <rect key={`chlb${d}`}  x={cx - cW * 0.065} y={ft + cH * 0.33} width={cW * 0.13} height={cH * 0.24} fill={goldCol} rx={1} />
+            : <rect key={`chcl${d}`}  x={cx - cW * 0.05}  y={ft + cH * 0.38} width={cW * 0.10} height={cH * 0.18} fill={goldCol} rx={1} />,
+          isLocked && <path key={`chls${d}`}
+            d={`M${cx - cW * 0.035},${ft + cH * 0.36} a${cW * 0.035},${cH * 0.13} 0 0,1 ${cW * 0.07},0`}
+            fill="none" stroke={goldCol} strokeWidth={Math.max(1, cW * 0.02)} />,
+        )
+      } else {
+        // Open chest ───────────────────────────────────────────────────────
+        const lidH = cH * 0.60
+        nodes.push(
+          // Dark interior (visible through open top)
+          <rect key={`chint${d}`}
+            x={fl + cW * 0.06} y={ft + cH * 0.04} width={cW * 0.88} height={cH * 0.32}
+            fill="hsl(20 18% 5%)" />,
+          // Front body
+          <rect key={`chbody${d}`}  x={fl} y={ft} width={cW} height={cH} fill={woodMd} />,
+          <rect key={`chb1${d}`}    x={fl} y={ft + cH * 0.06} width={cW} height={cH * 0.13} fill={iron} opacity={0.75} />,
+          <rect key={`chb2${d}`}    x={fl} y={ft + cH * 0.80} width={cW} height={cH * 0.13} fill={iron} opacity={0.75} />,
+          <rect key={`chout${d}`}   x={fl} y={ft} width={cW} height={cH} fill="none" stroke={woodDk} strokeWidth={1} />,
+          // Open lid standing at back edge
+          <polygon key={`chlid${d}`}
+            points={`${tbl},${tby} ${tbr},${tby} ${tbr},${tby - lidH} ${tbl},${tby - lidH}`}
+            fill={woodLt} />,
+          <rect key={`chlidout${d}`}
+            x={tbl} y={tby - lidH} width={tbr - tbl} height={lidH}
+            fill="none" stroke={woodDk} strokeWidth={0.8} />,
+        )
+      }
+
+      // Depth fog over chest area
+      if (entFog > 0) {
+        nodes.push(
+          <polygon key={`chfog${d}`}
+            points={`${fl},${Math.min(tby, ft - tRecede)} ${fr},${Math.min(tby, ft - tRecede)} ${fr},${fb} ${fl},${fb}`}
+            fill={`rgba(0,0,0,${entFog * 0.55})`} />,
+        )
+      }
+
+      // Lock indicator text overlay when locked
+      if (isLocked) {
+        const iconSz = Math.max(8, faceW * 0.09)
+        nodes.push(
+          <text key={`chlockicon${d}`}
+            x={cx} y={ft + cH * 0.46}
+            textAnchor="middle" dominantBaseline="middle"
+            fontSize={iconSz} opacity={Math.max(0.5, 1 - entFog * 0.6)}
+          >🔒</text>,
+        )
+      }
+
+      break
+    }
+
+    // ── Overlay icon fallback ────────────────────────────────────────────────
     const icons = (frontCell.overlays ?? [])
       .map(o => overlayDef(o, customOverlay)?.icon)
       .filter((x): x is string => Boolean(x))
     if (icons.length === 0) continue
 
-    const face = sliceRect(d)   // entity lives at this depth face, not one closer
-    const cx = VP_X
+    const face  = sliceRect(d)
     const faceW = face.x2 - face.x1
     const faceH = face.y2 - face.y1
     const iconSize = Math.max(10, faceW * 0.26)
-    const shadowH = Math.max(2, faceH * 0.06)
-    const shadowW = Math.max(4, faceW * 0.18)
-    const entFog = depthFog(d)
+    const shadowH  = Math.max(2, faceH * 0.06)
+    const shadowW  = Math.max(4, faceW * 0.18)
+    const entFog   = depthFog(d)
     nodes.push(
       <ellipse key={`eshadow${d}`}
-        cx={cx} cy={face.y2 - faceH * 0.08}
+        cx={VP_X} cy={face.y2 - faceH * 0.08}
         rx={shadowW} ry={shadowH}
         fill={`rgba(0,0,0,${0.4 + d * 0.08})`} />,
       <text key={`eicon${d}`}
-        x={cx} y={VP_Y + faceH * 0.04}
+        x={VP_X} y={VP_Y + faceH * 0.04}
         textAnchor="middle" dominantBaseline="middle"
-        fontSize={iconSize}
-        opacity={1 - entFog * 0.6}
-      >
-        {icons[0]}
-      </text>,
+        fontSize={iconSize} opacity={1 - entFog * 0.6}
+      >{icons[0]}</text>,
       entFog > 0 && <rect key={`efog${d}`}
-        x={face.x1} y={face.y1}
-        width={faceW} height={faceH}
+        x={face.x1} y={face.y1} width={faceW} height={faceH}
         fill={`rgba(0,0,0,${entFog * 0.5})`} />,
     )
-    break  // only render the nearest visible entity
+    break
   }
 
   // ── 5. HUD overlay ────────────────────────────────────────────────────────────
@@ -855,6 +970,7 @@ function DungeonViewport({
 export function PlayWorkspace({
   activeMap, party, gold, facing,
   customBase, customOverlay, isCellRevealed, revealedBoundaries, bumpTrigger,
+  flags, ruleset,
   onMoveForward, onMoveBack, onTurnLeft, onTurnRight, onInteract,
 }: PlayWorkspaceProps) {
   const [cellSize, setCellSize] = useState(DEFAULT_CELL + 6)
@@ -926,6 +1042,7 @@ export function PlayWorkspace({
             customOverlay={customOverlay}
             isCellRevealed={isCellRevealed}
             revealedBoundaries={revealedBoundaries}
+            flags={flags}
           />
         </div>
       ) : (
