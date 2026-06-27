@@ -19,7 +19,8 @@ import { WelcomeModal } from './WelcomeModal'
 import { CellTooltip } from './CellTooltip'
 import { MarkerPalette } from './MarkerPalette'
 import { PartyWorkspace } from './workspaces/PartyWorkspace'
-import type { Character, Formation, Ruleset } from '@/lib/engine-types'
+import { DatabaseWorkspace } from './workspaces/DatabaseWorkspace'
+import type { Character, Formation, ItemInstance, Ruleset } from '@/lib/engine-types'
 import { makeDefaultRuleset } from '@/lib/default-ruleset'
 import { savePartyTemplate, loadPartyTemplate } from '@/lib/save-state'
 
@@ -165,6 +166,8 @@ export function DungeonMapper({
   const [ruleset, setRuleset] = useState<Ruleset>(() => makeDefaultRuleset())
   const [party, setParty] = useState<Character[]>([])
   const [formation, setFormation] = useState<Formation>({ front: [], back: [] })
+  const [inventory, setInventory] = useState<ItemInstance[]>([])
+  const [gold, setGold] = useState<number>(100)
 
   // Load persisted party template on mount
   useEffect(() => {
@@ -789,22 +792,29 @@ export function DungeonMapper({
               ruleset={ruleset}
               party={party}
               formation={formation}
+              inventory={inventory}
+              gold={gold}
               onPartyChange={(p, f) => {
                 setParty(p)
                 setFormation(f)
                 savePartyTemplate(p, f)
+              }}
+              onInventoryChange={(inv, g) => {
+                setInventory(inv)
+                setGold(g)
               }}
             />
           </div>
         </div>
       )}
 
-      {/* Database workspace (stub) */}
+      {/* Database workspace */}
       {workspace === 'database' && (
-        <div className="flex-1 flex items-center justify-center text-white/20 text-sm flex-col gap-2">
-          <Database className="w-8 h-8 opacity-30" />
-          <span>Database — Phase E2</span>
-          <span className="text-xs text-white/15">Items · Spells · Enemies · Encounters</span>
+        <div className="flex-1 flex flex-col min-h-0">
+          <div className="px-4 py-2.5 border-b border-white/10 text-sm font-semibold text-white/70">Database</div>
+          <div className="flex-1 min-h-0">
+            <DatabaseWorkspace ruleset={ruleset} onRulesetChange={setRuleset} />
+          </div>
         </div>
       )}
 

@@ -1,6 +1,6 @@
 {
   "name": "@northbridgetechnology/epoch-mapper",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "description": "Epoch Mapper — a free, open-source dungeon and world map editor for retro gaming. Standalone web app + reusable React component and .epochmap binary codec.",
   "license": "MIT",
   "homepage": "https://github.com/northbridgetechnology/epoch-mapper",

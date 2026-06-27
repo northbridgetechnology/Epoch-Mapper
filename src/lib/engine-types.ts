@@ -7,12 +7,11 @@
  * L3 = Runtime save state (mutated while playing, never written into .epochmap)
  */
 
-import type { EdgeDir } from './types'
-
 // ── Branded ref ────────────────────────────────────────────────────────────────
 
 /** A stable string id referencing a definition in a specific table. */
-export type DefRef<_T> = string & { __brand?: never }
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+export type DefRef<T> = string
 
 // ── Shared leaf types ──────────────────────────────────────────────────────────
 

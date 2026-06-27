@@ -116,5 +116,15 @@ export {
 // Schema-driven form generator
 export { SchemaForm } from './components/forms/SchemaForm'
 
-// Party workspace
+// Effect builder (Phase E2)
+export { EffectBuilder } from './components/forms/EffectBuilder'
+
+// Workspaces
 export { PartyWorkspace } from './components/workspaces/PartyWorkspace'
+export { DatabaseWorkspace } from './components/workspaces/DatabaseWorkspace'
+
+// Item schema helpers
+export { ITEM_SCHEMA, LOOT_TABLE_SCHEMA, blankItem, blankLootTable } from './lib/item-schema'
+
+// Out-of-combat effect resolver
+export { applyEffectToChar, applyConsumable } from './lib/apply-effects'
