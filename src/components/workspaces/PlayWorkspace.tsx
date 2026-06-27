@@ -5,7 +5,7 @@ import { ArrowUp, ArrowDown, ArrowLeft, ArrowRight, ZoomIn, ZoomOut, Coins, Map,
 import { cn } from '@/lib/utils'
 import { baseDef, overlayDef, edgeDef, boundaryKey, DEFAULT_CELL, MIN_CELL, MAX_CELL, BASE, EDGE } from '@/lib/constants'
 import type { CellData, MapData, MarkerDef, EdgeDir } from '@/lib/types'
-import type { BoundaryData, CellEntity, Character, Facing, Ruleset } from '@/lib/engine-types'
+import type { BoundaryData, CellEntity, Character, Facing } from '@/lib/engine-types'
 import { objectUsedFlagKey } from '@/lib/event-engine'
 
 // ── Props ─────────────────────────────────────────────────────────────────────
@@ -21,7 +21,6 @@ interface PlayWorkspaceProps {
   revealedBoundaries?: Set<string>
   bumpTrigger?: number
   flags: Record<string, boolean | number | string>
-  ruleset: Ruleset
   onMoveForward: () => void
   onMoveBack: () => void
   onTurnLeft: () => void
@@ -970,7 +969,7 @@ function DungeonViewport({
 export function PlayWorkspace({
   activeMap, party, gold, facing,
   customBase, customOverlay, isCellRevealed, revealedBoundaries, bumpTrigger,
-  flags, ruleset,
+  flags,
   onMoveForward, onMoveBack, onTurnLeft, onTurnRight, onInteract,
 }: PlayWorkspaceProps) {
   const [cellSize, setCellSize] = useState(DEFAULT_CELL + 6)

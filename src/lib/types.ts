@@ -51,6 +51,8 @@ export interface MapData {
    * stored; north/west lookups are redirected by `boundaryKey()` automatically.
    */
   boundaries?: Record<string, import('./engine-types').BoundaryData>
+  /** Seed used when procedurally generating this map. Stored for reference/reproduction. */
+  seed?: number
 }
 
 /** A user-defined cell type or overlay icon. IDs are 128–255. */

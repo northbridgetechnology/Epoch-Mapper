@@ -16,6 +16,8 @@ import { exportMapsAsPdf } from '@/lib/dungeon-export'
 import { Map, Database, Users, Play, Settings } from 'lucide-react'
 import { Toolbar } from './Toolbar'
 import { WelcomeModal } from './WelcomeModal'
+import { NewMapModal } from './NewMapModal'
+import { buildBaseMap, buildGeneratedMap, type NewMapConfig } from '@/lib/map-generator'
 import { CellTooltip } from './CellTooltip'
 import { MarkerPalette } from './MarkerPalette'
 import { PartyWorkspace } from './workspaces/PartyWorkspace'
@@ -154,6 +156,8 @@ export function DungeonMapper({
   const [isPanning, setIsPanning] = useState(false)
   const [exporting, setExporting] = useState(false)
   const [showWelcome, setShowWelcome] = useState(false)
+  // 'session' = triggered by toolbar New (clears all), 'add' = triggered by map-list +
+  const [newMapMode, setNewMapMode] = useState<'session' | 'add' | null>(null)
   const [showPalette, setShowPalette] = useState(false)
   const [paletteSelectId, setPaletteSelectId] = useState<number | undefined>(undefined)
   const [tooltip, setTooltip] = useState<{ x: number; y: number; cell: CellData; isPlayer: boolean; cellBoundaries?: Partial<Record<EdgeDir, BoundaryData>> } | null>(null)
@@ -884,11 +888,7 @@ export function DungeonMapper({
   // ── Map list ops ──────────────────────────────────────────────────────────────
 
   function addMap() {
-    setMaps((prev) => {
-      const next = [...prev, newMap(`Map ${prev.length + 1}`)]
-      setActiveIdx(next.length - 1)
-      return next
-    })
+    setNewMapMode('add')
   }
 
   function deleteMap(idx: number) {
@@ -999,16 +999,30 @@ export function DungeonMapper({
 
   // ── File operations ───────────────────────────────────────────────────────────
 
-  const doNew = useCallback(() => {
-    const s = newSession()
-    historyRef.current = []
-    setCanUndo(false)
-    setGameTitle('')
-    setRomHash('')
-    setCustomMarkers([])
-    setMaps(s.maps)
-    setActiveIdx(0)
-  }, [])
+  const doNew = useCallback(() => { setNewMapMode('session') }, [])
+
+  const handleNewMapConfirm = useCallback((config: NewMapConfig) => {
+    const map = config.generate
+      ? buildGeneratedMap(config.name, config, ruleset)
+      : buildBaseMap(config.name, config)
+
+    if (newMapMode === 'session') {
+      historyRef.current = []
+      setCanUndo(false)
+      setGameTitle('')
+      setRomHash('')
+      setCustomMarkers([])
+      setMaps([map])
+      setActiveIdx(0)
+    } else {
+      setMaps(prev => {
+        const next = [...prev, map]
+        setActiveIdx(next.length - 1)
+        return next
+      })
+    }
+    setNewMapMode(null)
+  }, [newMapMode, ruleset])
 
   const loadFile = useCallback(
     async (file: File, mode: 'open' | 'import') => {
@@ -1292,7 +1306,6 @@ export function DungeonMapper({
             revealedBoundaries={revealedBoundaries}
             bumpTrigger={bumpTrigger}
             flags={flags}
-            ruleset={ruleset}
             onMoveForward={stepForward}
             onMoveBack={stepBack}
             onTurnLeft={turnLeft}
@@ -1623,6 +1636,14 @@ export function DungeonMapper({
       )}
 
       {showWelcome && <WelcomeModal onClose={closeWelcome} />}
+
+      {newMapMode && (
+        <NewMapModal
+          defaultName={newMapMode === 'add' ? `Map ${maps.length + 1}` : 'Map 1'}
+          onConfirm={handleNewMapConfirm}
+          onClose={() => setNewMapMode(null)}
+        />
+      )}
       {showPalette && (
         <MarkerPalette
           markers={customMarkers}
