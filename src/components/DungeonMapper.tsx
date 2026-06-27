@@ -20,6 +20,7 @@ import { CellTooltip } from './CellTooltip'
 import { MarkerPalette } from './MarkerPalette'
 import { PartyWorkspace } from './workspaces/PartyWorkspace'
 import { DatabaseWorkspace } from './workspaces/DatabaseWorkspace'
+import { PlayWorkspace } from './workspaces/PlayWorkspace'
 import type { Character, Formation, ItemInstance, ResolvedEncounter, Ruleset } from '@/lib/engine-types'
 import { makeDefaultRuleset } from '@/lib/default-ruleset'
 import { savePartyTemplate, loadPartyTemplate } from '@/lib/save-state'
@@ -167,6 +168,8 @@ export function DungeonMapper({
   // Activity-bar workspace
   type Workspace = 'map' | 'database' | 'party' | 'play' | 'settings'
   const [workspace, setWorkspace] = useState<Workspace>('map')
+  const workspaceRef = useRef<Workspace>('map')
+  workspaceRef.current = workspace
   const [ruleset, setRuleset] = useState<Ruleset>(() => makeDefaultRuleset())
   const [party, setParty] = useState<Character[]>([])
   const [formation, setFormation] = useState<Formation>({ front: [], back: [] })
@@ -708,7 +711,7 @@ export function DungeonMapper({
         return
       }
 
-      if (!mapperHoveredRef.current) return
+      if (!mapperHoveredRef.current && workspaceRef.current !== 'play') return
       const moves: Record<string, [number, number]> = {
         ArrowUp: [0, -1], ArrowDown: [0, 1], ArrowLeft: [-1, 0], ArrowRight: [1, 0],
         w: [0, -1], s: [0, 1], a: [-1, 0], d: [1, 0],
@@ -838,12 +841,18 @@ export function DungeonMapper({
         </div>
       )}
 
-      {/* Play workspace (stub) */}
+      {/* Play workspace */}
       {workspace === 'play' && (
-        <div className="flex-1 flex items-center justify-center text-white/20 text-sm flex-col gap-2">
-          <Play className="w-8 h-8 opacity-30" />
-          <span>Play — Phase E4</span>
-          <span className="text-xs text-white/15">Build your party first, then run the dungeon</span>
+        <div className="flex-1 flex flex-col min-h-0">
+          <PlayWorkspace
+            activeMap={activeMap}
+            party={party}
+            gold={gold}
+            customBase={customBase}
+            customOverlay={customOverlay}
+            isCellRevealed={isCellRevealed}
+            onMovePlayer={movePlayer}
+          />
         </div>
       )}
 

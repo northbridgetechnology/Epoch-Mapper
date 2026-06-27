@@ -122,6 +122,7 @@ export { EffectBuilder } from './components/forms/EffectBuilder'
 // Workspaces
 export { PartyWorkspace } from './components/workspaces/PartyWorkspace'
 export { DatabaseWorkspace } from './components/workspaces/DatabaseWorkspace'
+export { PlayWorkspace } from './components/workspaces/PlayWorkspace'
 
 // Item schema helpers
 export { ITEM_SCHEMA, LOOT_TABLE_SCHEMA, blankItem, blankLootTable } from './lib/item-schema'
