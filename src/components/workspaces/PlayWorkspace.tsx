@@ -3,9 +3,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { ArrowUp, ArrowDown, ArrowLeft, ArrowRight, ZoomIn, ZoomOut, Coins, Map, Eye } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { baseDef, overlayDef, edgeDef, boundaryKey, DEFAULT_CELL, MIN_CELL, MAX_CELL, BASE } from '@/lib/constants'
+import { baseDef, overlayDef, edgeDef, boundaryKey, DEFAULT_CELL, MIN_CELL, MAX_CELL, BASE, EDGE } from '@/lib/constants'
 import type { CellData, MapData, MarkerDef, EdgeDir } from '@/lib/types'
-import type { Character, Facing } from '@/lib/engine-types'
+import type { BoundaryData, Character, Facing } from '@/lib/engine-types'
 
 // ── Props ─────────────────────────────────────────────────────────────────────
 
@@ -218,7 +218,8 @@ function hasBoundaryWall(
   const b = map.boundaries?.[bk]
   if (!b) return false
   if (b.wall !== undefined) {
-    if (b.wall === 3) return revealedBoundaries ? !revealedBoundaries.has(bk) : true
+    if (b.wall === EDGE.ILLUSORY) return revealedBoundaries ? !revealedBoundaries.has(bk) : true
+    if (b.wall === EDGE.DOOR) return b.door ? b.door.state !== 'open' : true
     return true
   }
   return b.door !== undefined && b.door.state !== 'open'
@@ -277,7 +278,12 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
     const [cx, cy] = cellAt(ahead, 0)
     const bk = boundaryKey(cx, cy, frontOf(facing))
     const b = map.boundaries?.[bk]
-    return b?.wall === 3 && (revealedBoundaries?.has(bk) ?? false)
+    return b?.wall === EDGE.ILLUSORY && (revealedBoundaries?.has(bk) ?? false)
+  }
+  function getFrontBoundary(ahead: number): BoundaryData | null {
+    const [cx, cy] = cellAt(ahead, 0)
+    const bk = boundaryKey(cx, cy, frontOf(facing))
+    return map.boundaries?.[bk] ?? null
   }
 
   const nodes: React.ReactNode[] = []
@@ -462,11 +468,60 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
       )
     }
 
-    // Front wall (solid) — ghost (revealed illusory) — no wall for special terrain
+    // Front wall (solid) — ghost (revealed illusory) — door — no wall for special terrain
+    const frontBoundary = getFrontBoundary(d - 1)
+    const isFrontDoor = frontBoundary?.wall === EDGE.DOOR
     if (frontExists || isRevealedIllusoryFront(d - 1)) {
       const fw = far.x2 - far.x1
       const fh = far.y2 - far.y1
-      if (frontExists) {
+      if (frontExists && isFrontDoor) {
+        // ── Door: stone frame + wood panel (closed/locked) ──────────────────
+        const doorState = frontBoundary?.door?.state ?? 'closed'
+        const locked = doorState === 'locked'
+        const jamb   = fw * 0.10
+        const lintel = fh * 0.08
+        const thresh = fh * 0.04
+        const panelX = far.x1 + jamb
+        const panelY = far.y1 + lintel
+        const panelW = fw - jamb * 2
+        const panelH = fh - lintel - thresh
+        const woodL  = Math.max(8, 28 - (d - 1) * 5)
+        nodes.push(
+          // Stone frame
+          <rect key={`djl${d}`} x={far.x1}          y={far.y1} width={jamb}   height={fh}     fill={frontWallColor(d)} />,
+          <rect key={`djr${d}`} x={far.x2 - jamb}   y={far.y1} width={jamb}   height={fh}     fill={frontWallColor(d)} />,
+          <rect key={`dlt${d}`} x={far.x1}           y={far.y1} width={fw}     height={lintel} fill={frontWallColor(d)} />,
+          <rect key={`dth${d}`} x={far.x1}           y={far.y2 - thresh} width={fw} height={thresh} fill={frontWallColor(d)} />,
+          // Wood door panel
+          <rect key={`dp${d}`} x={panelX} y={panelY} width={panelW} height={panelH}
+            fill={`hsl(28 45% ${woodL}%)`} />,
+          // Vertical plank lines
+          <line key={`dpl1${d}`} x1={panelX + panelW * 0.35} y1={panelY + panelH * 0.04}
+            x2={panelX + panelW * 0.35} y2={panelY + panelH * 0.96}
+            stroke="rgba(0,0,0,0.28)" strokeWidth={0.7} />,
+          <line key={`dpl2${d}`} x1={panelX + panelW * 0.65} y1={panelY + panelH * 0.04}
+            x2={panelX + panelW * 0.65} y2={panelY + panelH * 0.96}
+            stroke="rgba(0,0,0,0.28)" strokeWidth={0.7} />,
+          // Horizontal rail
+          <line key={`dpr${d}`} x1={panelX + panelW * 0.04} y1={panelY + panelH * 0.50}
+            x2={panelX + panelW * 0.96} y2={panelY + panelH * 0.50}
+            stroke="rgba(0,0,0,0.22)" strokeWidth={0.6} />,
+          // Door handle
+          <circle key={`dph${d}`} cx={panelX + panelW * 0.74} cy={panelY + panelH * 0.52}
+            r={Math.max(1.5, fw * 0.028)} fill={locked ? '#b91c1c' : `hsl(44 80% ${Math.max(30, 50 - d * 4)}%)`} />,
+          // Depth fog
+          fog > 0 && <rect key={`dff${d}`} x={far.x1} y={far.y1} width={fw} height={fh}
+            fill={`rgba(0,0,0,${fog})`} />,
+        )
+        if (locked) {
+          nodes.push(
+            <text key={`dlck${d}`} x={panelX + panelW * 0.74} y={panelY + panelH * 0.40}
+              textAnchor="middle" dominantBaseline="middle"
+              fontSize={Math.max(4, fw * 0.07)}>🔒</text>
+          )
+        }
+      } else if (frontExists) {
+        // Standard stone wall
         nodes.push(
           <rect key={`fw${d}`} x={far.x1} y={far.y1} width={fw} height={fh}
             fill={frontWallColor(d)} />,
@@ -490,6 +545,21 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
             stroke="rgba(160,210,255,0.20)" strokeWidth={0.8} />,
         )
       }
+    } else if (isFrontDoor && frontBoundary?.door?.state === 'open') {
+      // ── Open door: stone archway frame only (no panel) ────────────────────
+      const fw = far.x2 - far.x1
+      const fh = far.y2 - far.y1
+      const jamb   = fw * 0.10
+      const lintel = fh * 0.08
+      const thresh = fh * 0.04
+      nodes.push(
+        <rect key={`djlo${d}`} x={far.x1}        y={far.y1} width={jamb}   height={fh}     fill={frontWallColor(d)} />,
+        <rect key={`djro${d}`} x={far.x2 - jamb} y={far.y1} width={jamb}   height={fh}     fill={frontWallColor(d)} />,
+        <rect key={`dlto${d}`} x={far.x1}         y={far.y1} width={fw}     height={lintel} fill={frontWallColor(d)} />,
+        <rect key={`dtho${d}`} x={far.x1}         y={far.y2 - thresh} width={fw} height={thresh} fill={frontWallColor(d)} />,
+        fog > 0 && <rect key={`dffo${d}`} x={far.x1} y={far.y1} width={fw} height={fh}
+          fill={`rgba(0,0,0,${fog * 0.6})`} />,
+      )
     }
     // (Special terrain front surfaces were already drawn above as floor polygons — no vertical panel)
 

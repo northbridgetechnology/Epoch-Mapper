@@ -5,7 +5,7 @@ import { Plus, Trash2, MapPin, Eraser, X, Search } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn, uid } from '@/lib/utils'
 import {
-  BASE, BASE_PALETTE, BASE_TYPES, CHUNK_SIZE, DEFAULT_CELL, EDGE_PALETTE, EDGE_TYPES,
+  BASE, BASE_PALETTE, BASE_TYPES, CHUNK_SIZE, DEFAULT_CELL, EDGE, EDGE_PALETTE, EDGE_TYPES,
   MAX_CELL, MAX_NOTE_LEN, MIN_CELL, OVERLAY_PALETTE, OVERLAY_TYPES, VIEWPORT_CELLS,
   baseDef, boundaryKey, edgeDef, overlayDef,
 } from '@/lib/constants'
@@ -21,7 +21,7 @@ import { MarkerPalette } from './MarkerPalette'
 import { PartyWorkspace } from './workspaces/PartyWorkspace'
 import { DatabaseWorkspace } from './workspaces/DatabaseWorkspace'
 import { PlayWorkspace } from './workspaces/PlayWorkspace'
-import type { BoundaryData, Character, CellEntity, Facing, Formation, ItemInstance, ResolvedEncounter, Ruleset } from '@/lib/engine-types'
+import type { BoundaryData, Character, CellEntity, DoorDef, DoorState, Facing, Formation, ItemInstance, ResolvedEncounter, Ruleset } from '@/lib/engine-types'
 import { makeDefaultRuleset } from '@/lib/default-ruleset'
 import { savePartyTemplate, loadPartyTemplate } from '@/lib/save-state'
 import { checkCellForEncounter, resolveEncounterTable, visitedFlagKey } from '@/lib/encounter-engine'
@@ -159,6 +159,7 @@ export function DungeonMapper({
   const [tooltip, setTooltip] = useState<{ x: number; y: number; cell: CellData; isPlayer: boolean; cellBoundaries?: Partial<Record<EdgeDir, BoundaryData>> } | null>(null)
   const [hoverInfo, setHoverInfo] = useState<{ x: number; y: number; zone: EdgeDir | null } | null>(null)
   const [noteDialog, setNoteDialog] = useState<{ x: number; y: number; text: string } | null>(null)
+  const [inspectedBoundary, setInspectedBoundary] = useState<{ bk: string; x: number; y: number; dir: EdgeDir; boundary: BoundaryData } | null>(null)
 
   const panOriginRef = useRef({ x: 0, y: 0 })
   const pixelAccumRef = useRef({ x: 0, y: 0 })
@@ -447,10 +448,11 @@ export function DungeonMapper({
         const bk = boundaryKey(activeMap.playerX, activeMap.playerY, moveDir)
         const b = activeMap.boundaries[bk]
         if (b) {
-          const illusoryRevealed = b.wall === 3 && revealedBoundariesRef.current.has(bk)
-          const wallBlocked = b.wall !== undefined && b.wall !== 3 // solid, non-illusory
-          const illusoryBlocked = b.wall === 3 && !illusoryRevealed  // unrevealed illusory blocks
-          const doorBlocked = b.door !== undefined && b.door.state !== 'open'
+          const illusoryRevealed = b.wall === EDGE.ILLUSORY && revealedBoundariesRef.current.has(bk)
+          const isDoorEdge = b.wall === EDGE.DOOR
+          const wallBlocked = b.wall !== undefined && b.wall !== EDGE.ILLUSORY && !(isDoorEdge && b.door?.state === 'open')
+          const illusoryBlocked = b.wall === EDGE.ILLUSORY && !illusoryRevealed
+          const doorBlocked = !isDoorEdge && b.door !== undefined && b.door.state !== 'open'
           if (wallBlocked || illusoryBlocked || doorBlocked) return
         }
       }
@@ -561,6 +563,13 @@ export function DungeonMapper({
           updateActiveMap(m => ({
             boundaries: { ...(m.boundaries ?? {}), [bk]: { ...boundary, door: { ...door, state: 'open' as const } } }
           }))
+          toast('The door creaks open.')
+          return
+        } else if (door.state === 'open') {
+          updateActiveMap(m => ({
+            boundaries: { ...(m.boundaries ?? {}), [bk]: { ...boundary, door: { ...door, state: 'closed' as const } } }
+          }))
+          toast('The door swings shut.')
           return
         } else if (door.state === 'locked') {
           if (door.keyItem && inventory.some(item => item.def === door.keyItem)) {
@@ -573,7 +582,6 @@ export function DungeonMapper({
           }
           return
         }
-        // open doors: fall through so cell-ahead objects can still be reached
       }
     }
 
@@ -736,8 +744,19 @@ export function DungeonMapper({
       if (!dir) return
       const bk = boundaryKey(x, y, dir)
       const existing = activeMap.boundaries?.[bk]
-      // Toggle: clicking same type erases; clicking new type sets
-      writeBoundary(bk, existing?.wall === activeTool.value ? null : { wall: activeTool.value })
+      if (existing?.wall === EDGE.DOOR) {
+        // Clicking an existing door opens the boundary inspector instead of toggling
+        setInspectedBoundary({ bk, x, y, dir, boundary: existing })
+        return
+      }
+      if (activeTool.value === EDGE.DOOR) {
+        // Place door with initial closed state; open inspector to configure
+        const newBoundary: BoundaryData = { wall: EDGE.DOOR, door: { state: 'closed' } }
+        writeBoundary(bk, newBoundary)
+        setInspectedBoundary({ bk, x, y, dir, boundary: newBoundary })
+      } else {
+        writeBoundary(bk, existing?.wall === activeTool.value ? null : { wall: activeTool.value })
+      }
       return
     }
 
@@ -1440,6 +1459,24 @@ export function DungeonMapper({
           </aside>
         )}
 
+        {/* Right: Boundary Inspector panel (door configuration) */}
+        {inspectedBoundary && activeMap && (
+          <BoundaryInspector
+            bk={inspectedBoundary.bk}
+            x={inspectedBoundary.x}
+            y={inspectedBoundary.y}
+            dir={inspectedBoundary.dir}
+            boundary={activeMap.boundaries?.[inspectedBoundary.bk] ?? inspectedBoundary.boundary}
+            ruleset={ruleset}
+            onChange={(bk, data) => {
+              writeBoundary(bk, data)
+              if (data === null) setInspectedBoundary(null)
+              else setInspectedBoundary(prev => prev ? { ...prev, boundary: data } : null)
+            }}
+            onClose={() => setInspectedBoundary(null)}
+          />
+        )}
+
         {/* Center: viewport */}
         <main
           ref={viewportRef}
@@ -1614,6 +1651,106 @@ interface ViewportProps {
   onPanStart: (x: number, y: number) => void
   onPanMove: (x: number, y: number) => void
   onPanEnd: () => void
+}
+
+// ── Boundary Inspector (door configuration panel) ────────────────────────────
+
+function BoundaryInspector({ bk, x, y, dir, boundary, ruleset, onChange, onClose }: {
+  bk: string; x: number; y: number; dir: EdgeDir
+  boundary: BoundaryData; ruleset: Ruleset
+  onChange: (bk: string, data: BoundaryData | null) => void
+  onClose: () => void
+}) {
+  const door: DoorDef = boundary.door ?? { state: 'closed' }
+  const isLocked = door.state === 'locked'
+
+  function setDoorState(state: DoorState) {
+    const newDoor: DoorDef = state === 'locked'
+      ? { ...door, state: 'locked' }
+      : { state: 'closed' }
+    onChange(bk, { ...boundary, door: newDoor })
+  }
+
+  function setKeyItem(itemId: string) {
+    onChange(bk, { ...boundary, door: { ...door, keyItem: itemId || undefined } })
+  }
+
+  return (
+    <aside className="w-72 shrink-0 border-l border-white/10 flex flex-col bg-zinc-950">
+      <div className="flex items-center gap-2 px-4 py-3 border-b border-white/10">
+        <span className="text-lg">🚪</span>
+        <div>
+          <div className="text-sm font-semibold text-white/80">Door</div>
+          <div className="text-xs text-white/30 font-mono">({x}, {y}) — {dir} face</div>
+        </div>
+        <button onClick={onClose} className="ml-auto p-1 rounded text-white/40 hover:text-white hover:bg-white/10">
+          <X className="w-4 h-4" />
+        </button>
+      </div>
+
+      <div className="p-4 space-y-5">
+        {/* Lock state */}
+        <div>
+          <div className="text-xs font-semibold text-white/40 uppercase tracking-wider mb-2">Mode</div>
+          <div className="flex gap-2">
+            {(['closed', 'locked'] as const).map(state => (
+              <button
+                key={state}
+                onClick={() => setDoorState(state)}
+                className={cn(
+                  'flex-1 py-1.5 rounded text-xs font-medium border transition-colors',
+                  door.state === state
+                    ? state === 'locked'
+                      ? 'bg-red-900/30 border-red-500/50 text-red-300'
+                      : 'bg-amber-900/30 border-amber-500/50 text-amber-300'
+                    : 'border-white/10 text-white/40 hover:text-white/70 hover:border-white/30',
+                )}
+              >
+                {state === 'closed' ? '🚪 Open/Close' : '🔒 Locked'}
+              </button>
+            ))}
+          </div>
+          <p className="text-xs text-white/25 mt-1.5 leading-relaxed">
+            {isLocked
+              ? 'Player must carry the key item to open this door.'
+              : 'Player can open and close this door freely.'}
+          </p>
+        </div>
+
+        {/* Key item picker */}
+        {isLocked && (
+          <div>
+            <div className="text-xs font-semibold text-white/40 uppercase tracking-wider mb-2">Key Item</div>
+            <select
+              value={door.keyItem ?? ''}
+              onChange={e => setKeyItem(e.target.value)}
+              className="w-full rounded bg-zinc-800 border border-white/10 text-sm text-white/80 px-2 py-1.5 focus:outline-none focus:border-red-500/40"
+            >
+              <option value="">— none (always locked) —</option>
+              {ruleset.items.map(item => (
+                <option key={item.id} value={item.id}>
+                  {item.icon ? `${item.icon} ` : ''}{item.name}
+                </option>
+              ))}
+            </select>
+            {!door.keyItem && (
+              <p className="text-xs text-amber-400/50 mt-1.5">No key set — door cannot be opened.</p>
+            )}
+          </div>
+        )}
+
+        {/* Remove */}
+        <div className="pt-3 border-t border-white/8">
+          <button
+            onClick={() => { onChange(bk, null); onClose() }}
+            className="w-full py-1.5 rounded text-xs font-medium border border-red-500/20 text-red-400/60 hover:text-red-300 hover:border-red-500/40 transition-colors"
+          >
+            Remove Door
+          </button>
+        </div>
+      </div>
+    </aside>
+  )
 }
 
 function Viewport(props: ViewportProps) {

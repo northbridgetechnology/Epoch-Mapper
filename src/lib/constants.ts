@@ -104,6 +104,7 @@ export const EDGE = {
   ILLUSORY: 3,
   DAMAGE: 4,
   SECRET: 5,
+  DOOR: 6,
 } as const
 
 /** Built-in edge types, keyed by ID. */
@@ -114,10 +115,11 @@ export const EDGE_TYPES: Record<number, MarkerDef> = {
   3: { id: 3, label: 'Illusory wall', color: '#a3a3a3' },
   4: { id: 4, label: 'Damage', color: '#dc2626' },
   5: { id: 5, label: 'Secret passage', color: '#22c55e' },
+  6: { id: 6, label: 'Door', color: '#b45309', icon: '🚪' },
 }
 
 /** Edge types offered in the edges palette. */
-export const EDGE_PALETTE: number[] = [0, 1, 2, 3, 4, 5]
+export const EDGE_PALETTE: number[] = [0, 6, 2, 3, 4, 5]
 
 // ── Lookup helpers ─────────────────────────────────────────────────────────────
 
