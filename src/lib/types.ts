@@ -27,6 +27,8 @@ export interface CellData {
   overlays: number[]
   edges: Partial<Record<EdgeDir, number>>
   note?: string
+  /** L2 world placement entities — encounters, objects, events (engine layer). */
+  entities?: import('./engine-types').CellEntity[]
 }
 
 /** Sparse cell storage keyed by `"x,y"`. */

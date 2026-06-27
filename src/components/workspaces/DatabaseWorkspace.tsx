@@ -1,18 +1,21 @@
 'use client'
 
 import { useState } from 'react'
-import { Plus, Trash2, Package, List } from 'lucide-react'
+import { Plus, Trash2, Package, List, Skull, Swords } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import type { Effect, ItemDef, LootTableDef, Ruleset } from '@/lib/engine-types'
+import type { Effect, EnemyDef, EncounterTableDef, ItemDef, LootTableDef, Ruleset } from '@/lib/engine-types'
 import { SchemaForm } from '../forms/SchemaForm'
 import { EffectBuilder } from '../forms/EffectBuilder'
-import { ITEM_SCHEMA, LOOT_TABLE_SCHEMA, blankItem, blankLootTable } from '@/lib/item-schema'
+import { ITEM_SCHEMA, LOOT_TABLE_SCHEMA, blankItem } from '@/lib/item-schema'
+import { ENEMY_SCHEMA, ENCOUNTER_TABLE_SCHEMA, blankEnemy } from '@/lib/enemy-schema'
 
-type Category = 'items' | 'loot_tables'
+type Category = 'items' | 'loot_tables' | 'bestiary' | 'encounters'
 
 const CATEGORIES: { id: Category; icon: React.ReactNode; label: string }[] = [
-  { id: 'items',       icon: <Package className="w-4 h-4" />,  label: 'Items' },
-  { id: 'loot_tables', icon: <List className="w-4 h-4" />,     label: 'Loot Tables' },
+  { id: 'items',       icon: <Package className="w-4 h-4" />, label: 'Items' },
+  { id: 'loot_tables', icon: <List className="w-4 h-4" />,    label: 'Loot Tables' },
+  { id: 'bestiary',    icon: <Skull className="w-4 h-4" />,   label: 'Bestiary' },
+  { id: 'encounters',  icon: <Swords className="w-4 h-4" />,  label: 'Encounter Tables' },
 ]
 
 // ── Item entry list ───────────────────────────────────────────────────────────
@@ -287,6 +290,251 @@ function LootTableEditor({
   )
 }
 
+// ── Enemy list ────────────────────────────────────────────────────────────────
+
+function EnemyList({
+  enemies,
+  selectedId,
+  onSelect,
+  onAdd,
+  onDelete,
+}: {
+  enemies: EnemyDef[]
+  selectedId: string | null
+  onSelect: (id: string) => void
+  onAdd: () => void
+  onDelete: (id: string) => void
+}) {
+  return (
+    <div className="flex flex-col h-full min-h-0">
+      <div className="flex items-center justify-between px-3 py-2 border-b border-white/10">
+        <span className="text-xs font-semibold text-white/60 uppercase tracking-wide">
+          Bestiary ({enemies.length})
+        </span>
+        <button onClick={onAdd} className="flex items-center gap-1 px-2 py-0.5 rounded text-xs text-amber-300/80 hover:text-amber-200 hover:bg-amber-500/10">
+          <Plus className="w-3 h-3" /> New
+        </button>
+      </div>
+      <div className="flex-1 overflow-y-auto p-1.5 space-y-0.5 min-h-0">
+        {enemies.length === 0 && (
+          <div className="text-center text-white/25 text-xs py-6">No enemies yet — click New</div>
+        )}
+        {enemies.map(e => (
+          <div
+            key={e.id}
+            className={cn(
+              'flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer group',
+              selectedId === e.id ? 'bg-amber-950/40 text-white' : 'text-white/70 hover:bg-white/5',
+            )}
+            onClick={() => onSelect(e.id)}
+          >
+            <span className="text-base w-6 text-center flex-shrink-0">{e.icon ?? '👾'}</span>
+            <div className="flex-1 min-w-0">
+              <div className="text-sm truncate">{e.name}</div>
+              <div className="text-xs text-white/35">{e.hp} HP · ATK {e.attack} · DEF {e.defense}</div>
+            </div>
+            <button onClick={ev => { ev.stopPropagation(); onDelete(e.id) }} className="opacity-0 group-hover:opacity-100 p-0.5 rounded text-white/30 hover:text-red-400">
+              <Trash2 className="w-3 h-3" />
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// ── Enemy editor ───────────────────────────────────────────────────────────────
+
+function EnemyEditor({ enemy, onChange }: { enemy: EnemyDef; onChange: (e: EnemyDef) => void }) {
+  const raw = enemy as unknown as Record<string, unknown>
+
+  return (
+    <div className="p-4 space-y-4 overflow-y-auto h-full">
+      <div className="flex items-center gap-2 mb-1">
+        <span className="text-2xl">{enemy.icon ?? '👾'}</span>
+        <div>
+          <div className="text-base font-bold text-white/90">{enemy.name}</div>
+          <div className="text-xs text-white/40 font-mono">{enemy.id}</div>
+        </div>
+      </div>
+
+      <SchemaForm
+        schema={ENEMY_SCHEMA}
+        value={raw}
+        onChange={v => onChange({ ...enemy, ...(v as Partial<EnemyDef>) })}
+      />
+
+      {/* Gold drop range */}
+      <div className="pt-2 border-t border-white/10">
+        <div className="text-xs font-medium text-white/50 uppercase tracking-wide mb-1.5">Gold Drop</div>
+        <div className="flex items-center gap-2">
+          <input type="number" min={0}
+            value={enemy.gold?.min ?? 0}
+            onChange={e => onChange({ ...enemy, gold: { min: e.target.valueAsNumber || 0, max: enemy.gold?.max ?? 0 } })}
+            className="w-20 px-2 py-1 rounded bg-zinc-800 border border-white/10 text-sm text-white/90 focus:outline-none focus:border-amber-500/50"
+            placeholder="Min"
+          />
+          <span className="text-white/30 text-sm">to</span>
+          <input type="number" min={0}
+            value={enemy.gold?.max ?? 0}
+            onChange={e => onChange({ ...enemy, gold: { min: enemy.gold?.min ?? 0, max: e.target.valueAsNumber || 0 } })}
+            className="w-20 px-2 py-1 rounded bg-zinc-800 border border-white/10 text-sm text-white/90 focus:outline-none focus:border-amber-500/50"
+            placeholder="Max"
+          />
+          <span className="text-xs text-white/30">gold</span>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Encounter table list ───────────────────────────────────────────────────────
+
+function EncounterTableList({
+  tables,
+  selectedId,
+  onSelect,
+  onAdd,
+  onDelete,
+}: {
+  tables: EncounterTableDef[]
+  selectedId: string | null
+  onSelect: (id: string) => void
+  onAdd: () => void
+  onDelete: (id: string) => void
+}) {
+  return (
+    <div className="flex flex-col h-full min-h-0">
+      <div className="flex items-center justify-between px-3 py-2 border-b border-white/10">
+        <span className="text-xs font-semibold text-white/60 uppercase tracking-wide">
+          Encounter Tables ({tables.length})
+        </span>
+        <button onClick={onAdd} className="flex items-center gap-1 px-2 py-0.5 rounded text-xs text-amber-300/80 hover:text-amber-200 hover:bg-amber-500/10">
+          <Plus className="w-3 h-3" /> New
+        </button>
+      </div>
+      <div className="flex-1 overflow-y-auto p-1.5 space-y-0.5 min-h-0">
+        {tables.length === 0 && (
+          <div className="text-center text-white/25 text-xs py-6">No encounter tables yet</div>
+        )}
+        {tables.map(t => (
+          <div
+            key={t.id}
+            className={cn(
+              'flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer group',
+              selectedId === t.id ? 'bg-amber-950/40 text-white' : 'text-white/70 hover:bg-white/5',
+            )}
+            onClick={() => onSelect(t.id)}
+          >
+            <Swords className="w-3.5 h-3.5 flex-shrink-0 text-white/40" />
+            <div className="flex-1 min-w-0">
+              <div className="text-sm truncate">{t.name}</div>
+              <div className="text-xs text-white/35">{t.entries.length} entr{t.entries.length !== 1 ? 'ies' : 'y'}</div>
+            </div>
+            <button onClick={ev => { ev.stopPropagation(); onDelete(t.id) }} className="opacity-0 group-hover:opacity-100 p-0.5 rounded text-white/30 hover:text-red-400">
+              <Trash2 className="w-3 h-3" />
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// ── Encounter table editor ─────────────────────────────────────────────────────
+
+function EncounterTableEditor({
+  table,
+  ruleset,
+  onChange,
+}: {
+  table: EncounterTableDef
+  ruleset: Ruleset
+  onChange: (t: EncounterTableDef) => void
+}) {
+  function addEntry() {
+    const def = ruleset.enemies[0]
+    if (!def) return
+    onChange({ ...table, entries: [...table.entries, { enemy: def.id, min: 1, max: 1, weight: 1 }] })
+  }
+
+  function updateEntry(idx: number, field: string, value: unknown) {
+    const entries = table.entries.map((e, i) => i === idx ? { ...e, [field]: value } : e)
+    onChange({ ...table, entries })
+  }
+
+  function removeEntry(idx: number) {
+    onChange({ ...table, entries: table.entries.filter((_, i) => i !== idx) })
+  }
+
+  return (
+    <div className="p-4 space-y-4 overflow-y-auto h-full">
+      <SchemaForm
+        schema={ENCOUNTER_TABLE_SCHEMA}
+        value={table as unknown as Record<string, unknown>}
+        onChange={v => onChange({ ...table, ...(v as Partial<EncounterTableDef>) })}
+      />
+
+      <div className="pt-2 border-t border-white/10">
+        <div className="flex items-center justify-between mb-1.5">
+          <span className="text-xs font-medium text-white/50 uppercase tracking-wide">Entries</span>
+          <button onClick={addEntry} disabled={ruleset.enemies.length === 0} className="flex items-center gap-1 px-2 py-0.5 rounded text-xs text-amber-300/80 hover:text-amber-200 hover:bg-amber-500/10 disabled:opacity-30">
+            <Plus className="w-3 h-3" /> Add
+          </button>
+        </div>
+
+        {ruleset.enemies.length === 0 && (
+          <div className="text-xs text-white/25 text-center py-2">Define some enemies first</div>
+        )}
+
+        <div className="space-y-1.5">
+          {table.entries.map((entry, idx) => (
+            <div key={idx} className="rounded bg-zinc-800 border border-white/10 p-2 space-y-1.5">
+              <div className="flex items-center gap-2">
+                <select
+                  value={entry.enemy}
+                  onChange={e => updateEntry(idx, 'enemy', e.target.value)}
+                  className="flex-1 px-1.5 py-0.5 rounded bg-zinc-700 border border-white/10 text-xs text-white/90 focus:outline-none"
+                >
+                  {ruleset.enemies.map(en => (
+                    <option key={en.id} value={en.id}>{en.icon} {en.name}</option>
+                  ))}
+                </select>
+                <button onClick={() => removeEntry(idx)} className="p-0.5 rounded text-white/30 hover:text-red-400 flex-shrink-0">
+                  <Trash2 className="w-3 h-3" />
+                </button>
+              </div>
+              <div className="flex items-center gap-3 text-xs">
+                <div className="flex items-center gap-1">
+                  <span className="text-white/30">Min</span>
+                  <input type="number" min={1} value={entry.min}
+                    onChange={e => updateEntry(idx, 'min', Math.max(1, e.target.valueAsNumber || 1))}
+                    className="w-12 px-1 py-0.5 rounded bg-zinc-700 border border-white/10 font-mono text-white/90 focus:outline-none"
+                  />
+                </div>
+                <div className="flex items-center gap-1">
+                  <span className="text-white/30">Max</span>
+                  <input type="number" min={1} value={entry.max}
+                    onChange={e => updateEntry(idx, 'max', Math.max(1, e.target.valueAsNumber || 1))}
+                    className="w-12 px-1 py-0.5 rounded bg-zinc-700 border border-white/10 font-mono text-white/90 focus:outline-none"
+                  />
+                </div>
+                <div className="flex items-center gap-1">
+                  <span className="text-white/30">Weight</span>
+                  <input type="number" min={1} value={entry.weight}
+                    onChange={e => updateEntry(idx, 'weight', Math.max(1, e.target.valueAsNumber || 1))}
+                    className="w-12 px-1 py-0.5 rounded bg-zinc-700 border border-white/10 font-mono text-white/90 focus:outline-none"
+                  />
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── Main workspace ─────────────────────────────────────────────────────────────
 
 interface DatabaseWorkspaceProps {
@@ -296,6 +544,8 @@ interface DatabaseWorkspaceProps {
 
 let _itemSeq = 1
 let _lootSeq = 1
+let _enemySeq = 1
+let _encSeq = 1
 
 export function DatabaseWorkspace({ ruleset, onRulesetChange }: DatabaseWorkspaceProps) {
   const [category, setCategory] = useState<Category>('items')
@@ -357,10 +607,69 @@ export function DatabaseWorkspace({ ruleset, onRulesetChange }: DatabaseWorkspac
     if (selectedId === id) setSelectedId(next[0]?.id ?? null)
   }
 
+  // ── enemies ──
+
+  const selectedEnemy = ruleset.enemies.find(e => e.id === selectedId) ?? null
+
+  function addEnemy() {
+    const id = `enemy.enemy_${_enemySeq++}`
+    const raw = blankEnemy(id)
+    const enemy: EnemyDef = {
+      id,
+      name: raw.name as string,
+      icon: raw.icon as string,
+      color: raw.color as string,
+      hp: raw.hp as number,
+      attack: raw.attack as number,
+      defense: raw.defense as number,
+      speed: raw.speed as number,
+      xp: raw.xp as number,
+      gold: raw.gold as { min: number; max: number },
+      attributes: {},
+    }
+    onRulesetChange({ ...ruleset, enemies: [...ruleset.enemies, enemy] })
+    setSelectedId(id)
+    setCategory('bestiary')
+  }
+
+  function updateEnemy(enemy: EnemyDef) {
+    onRulesetChange({ ...ruleset, enemies: ruleset.enemies.map(e => e.id === enemy.id ? enemy : e) })
+  }
+
+  function deleteEnemy(id: string) {
+    const next = ruleset.enemies.filter(e => e.id !== id)
+    onRulesetChange({ ...ruleset, enemies: next })
+    if (selectedId === id) setSelectedId(next[0]?.id ?? null)
+  }
+
+  // ── encounter tables ──
+
+  const selectedEncTable = ruleset.encounterTables.find(t => t.id === selectedId) ?? null
+
+  function addEncounterTable() {
+    const id = `enc.table_${_encSeq++}`
+    const table: EncounterTableDef = { id, name: 'New Encounter Table', entries: [] }
+    onRulesetChange({ ...ruleset, encounterTables: [...ruleset.encounterTables, table] })
+    setSelectedId(id)
+    setCategory('encounters')
+  }
+
+  function updateEncounterTable(t: EncounterTableDef) {
+    onRulesetChange({ ...ruleset, encounterTables: ruleset.encounterTables.map(x => x.id === t.id ? t : x) })
+  }
+
+  function deleteEncounterTable(id: string) {
+    const next = ruleset.encounterTables.filter(t => t.id !== id)
+    onRulesetChange({ ...ruleset, encounterTables: next })
+    if (selectedId === id) setSelectedId(next[0]?.id ?? null)
+  }
+
   function handleCategoryChange(cat: Category) {
     setCategory(cat)
     if (cat === 'items')       setSelectedId(ruleset.items[0]?.id ?? null)
     if (cat === 'loot_tables') setSelectedId(ruleset.lootTables[0]?.id ?? null)
+    if (cat === 'bestiary')    setSelectedId(ruleset.enemies[0]?.id ?? null)
+    if (cat === 'encounters')  setSelectedId(ruleset.encounterTables[0]?.id ?? null)
   }
 
   return (
@@ -387,22 +696,16 @@ export function DatabaseWorkspace({ ruleset, onRulesetChange }: DatabaseWorkspac
       {/* Entry list */}
       <div className="w-56 flex-shrink-0 border-r border-white/10 bg-zinc-950 min-h-0">
         {category === 'items' && (
-          <ItemList
-            items={ruleset.items}
-            selectedId={selectedId}
-            onSelect={setSelectedId}
-            onAdd={addItem}
-            onDelete={deleteItem}
-          />
+          <ItemList items={ruleset.items} selectedId={selectedId} onSelect={setSelectedId} onAdd={addItem} onDelete={deleteItem} />
         )}
         {category === 'loot_tables' && (
-          <LootTableList
-            tables={ruleset.lootTables}
-            selectedId={selectedId}
-            onSelect={setSelectedId}
-            onAdd={addLootTable}
-            onDelete={deleteLootTable}
-          />
+          <LootTableList tables={ruleset.lootTables} selectedId={selectedId} onSelect={setSelectedId} onAdd={addLootTable} onDelete={deleteLootTable} />
+        )}
+        {category === 'bestiary' && (
+          <EnemyList enemies={ruleset.enemies} selectedId={selectedId} onSelect={setSelectedId} onAdd={addEnemy} onDelete={deleteEnemy} />
+        )}
+        {category === 'encounters' && (
+          <EncounterTableList tables={ruleset.encounterTables} selectedId={selectedId} onSelect={setSelectedId} onAdd={addEncounterTable} onDelete={deleteEncounterTable} />
         )}
       </div>
 
@@ -412,6 +715,10 @@ export function DatabaseWorkspace({ ruleset, onRulesetChange }: DatabaseWorkspac
           <ItemEditor item={selectedItem} ruleset={ruleset} onChange={updateItem} />
         ) : category === 'loot_tables' && selectedTable ? (
           <LootTableEditor table={selectedTable} ruleset={ruleset} onChange={updateLootTable} />
+        ) : category === 'bestiary' && selectedEnemy ? (
+          <EnemyEditor enemy={selectedEnemy} onChange={updateEnemy} />
+        ) : category === 'encounters' && selectedEncTable ? (
+          <EncounterTableEditor table={selectedEncTable} ruleset={ruleset} onChange={updateEncounterTable} />
         ) : (
           <div className="h-full flex items-center justify-center text-white/20 text-sm flex-col gap-2">
             <Package className="w-8 h-8 opacity-30" />

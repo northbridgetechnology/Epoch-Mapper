@@ -1,0 +1,51 @@
+/**
+ * FieldSchema definitions for EnemyDef and EncounterTableDef database tables.
+ */
+
+import type { FieldSchema } from './engine-types'
+
+export const ENEMY_SCHEMA: FieldSchema[] = [
+  { key: 'id',          label: 'ID',          type: 'text',    placeholder: 'enemy.short_name' },
+  { key: 'name',        label: 'Name',         type: 'text' },
+  { key: 'icon',        label: 'Icon',         type: 'icon',    optional: true },
+  { key: 'color',       label: 'Color',        type: 'color',   optional: true },
+  { key: 'description', label: 'Description',  type: 'textarea', optional: true },
+  { key: 'hp',      label: 'HP',      type: 'number', min: 1 },
+  { key: 'attack',  label: 'Attack',  type: 'number', min: 0 },
+  { key: 'defense', label: 'Defense', type: 'number', min: 0 },
+  { key: 'speed',   label: 'Speed',   type: 'number', min: 1 },
+  { key: 'xp',     label: 'XP Reward',        type: 'number', min: 0 },
+  {
+    key: 'size',
+    label: 'Size',
+    type: { kind: 'enum', options: [{ value: '1', label: '1 — Standard' }, { value: '2', label: '2 — Large (front+back row)' }] },
+    optional: true,
+  },
+]
+
+export const ENCOUNTER_TABLE_SCHEMA: FieldSchema[] = [
+  { key: 'id',          label: 'ID',          type: 'text', placeholder: 'enc.table_name' },
+  { key: 'name',        label: 'Name',         type: 'text' },
+  { key: 'description', label: 'Description',  type: 'textarea', optional: true },
+]
+
+export function blankEnemy(id: string): Record<string, unknown> {
+  return {
+    id,
+    name: 'New Enemy',
+    icon: '👾',
+    color: '#c0392b',
+    description: '',
+    hp: 20,
+    attack: 8,
+    defense: 4,
+    speed: 5,
+    xp: 10,
+    gold: { min: 0, max: 5 },
+    size: '1',
+  }
+}
+
+export function blankEncounterTable(id: string): Record<string, unknown> {
+  return { id, name: 'New Encounter Table', description: '', entries: [] }
+}

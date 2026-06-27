@@ -203,6 +203,50 @@ export interface Ruleset {
   formulas?: FormulaOverrides
 }
 
+// ── L2: Cell entities (world placement) ──────────────────────────────────────
+
+/**
+ * Entities placed on a map cell by the author.
+ * Stored in CellData.entities[]. Evaluated by the engine on step.
+ */
+export type CellEntity =
+  | {
+      t: 'encounter'
+      table: DefRef<EncounterTableDef>
+      mode: 'fixed' | 'zone'
+      /** Per-step trigger probability for zone encounters (0–1, default 0.1). */
+      rate?: number
+      /** If true, can only trigger once; self-sets a flag after firing. */
+      oncePerVisit?: boolean
+    }
+  | { t: 'partyStart' }
+  | { t: 'mapLink'; mapId: string; x: number; y: number; facing?: 'N' | 'S' | 'E' | 'W' }
+
+// ── Runtime encounter instances ────────────────────────────────────────────────
+
+/** A single live enemy during an encounter. */
+export interface EnemyInstance {
+  defId: DefRef<EnemyDef>
+  name: string
+  icon?: string
+  hp: number
+  maxHp: number
+  attack: number
+  defense: number
+  speed: number
+  xp: number
+  gold: number
+}
+
+/** Result of resolving an encounter table roll. */
+export interface ResolvedEncounter {
+  tableId: string
+  tableName: string
+  enemies: EnemyInstance[]
+  goldReward: number
+  xpReward: number
+}
+
 // ── L3: Runtime save state ─────────────────────────────────────────────────────
 
 export interface ItemInstance {

@@ -126,5 +126,15 @@ export { DatabaseWorkspace } from './components/workspaces/DatabaseWorkspace'
 // Item schema helpers
 export { ITEM_SCHEMA, LOOT_TABLE_SCHEMA, blankItem, blankLootTable } from './lib/item-schema'
 
+// Enemy + encounter-table schema helpers (Phase E3)
+export { ENEMY_SCHEMA, ENCOUNTER_TABLE_SCHEMA, blankEnemy, blankEncounterTable } from './lib/enemy-schema'
+
 // Out-of-combat effect resolver
 export { applyEffectToChar, applyConsumable } from './lib/apply-effects'
+
+// Encounter engine (Phase E3)
+export { resolveEncounterTable, checkCellForEncounter, visitedFlagKey } from './lib/encounter-engine'
+export type { ResolvedEncounter, EnemyInstance, CellEntity } from './lib/engine-types'
+
+// Encounter modal (Phase E3)
+export { EncounterModal } from './components/EncounterModal'

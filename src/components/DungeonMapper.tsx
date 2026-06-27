@@ -20,9 +20,11 @@ import { CellTooltip } from './CellTooltip'
 import { MarkerPalette } from './MarkerPalette'
 import { PartyWorkspace } from './workspaces/PartyWorkspace'
 import { DatabaseWorkspace } from './workspaces/DatabaseWorkspace'
-import type { Character, Formation, ItemInstance, Ruleset } from '@/lib/engine-types'
+import type { Character, Formation, ItemInstance, ResolvedEncounter, Ruleset } from '@/lib/engine-types'
 import { makeDefaultRuleset } from '@/lib/default-ruleset'
 import { savePartyTemplate, loadPartyTemplate } from '@/lib/save-state'
+import { checkCellForEncounter, visitedFlagKey } from '@/lib/encounter-engine'
+import { EncounterModal } from './EncounterModal'
 
 const DRAFT_KEY = 'epochmapper.draft'
 const WELCOME_KEY = 'epochmapper.welcomed'
@@ -168,6 +170,8 @@ export function DungeonMapper({
   const [formation, setFormation] = useState<Formation>({ front: [], back: [] })
   const [inventory, setInventory] = useState<ItemInstance[]>([])
   const [gold, setGold] = useState<number>(100)
+  const [flags, setFlags] = useState<Record<string, boolean | number | string>>({})
+  const [activeEncounter, setActiveEncounter] = useState<ResolvedEncounter | null>(null)
 
   // Load persisted party template on mount
   useEffect(() => {
@@ -313,8 +317,20 @@ export function DungeonMapper({
       const ny = activeMap.playerY + dy
       updateActiveMap((m) => ({ playerX: nx, playerY: ny, revealedChunks: revealAround(m, nx, ny) }))
       setCameraOffset({ x: 0, y: 0 })
+
+      // Encounter check
+      const cellKey = `${nx},${ny}`
+      const cell = activeMap.cells[cellKey]
+      if (cell) {
+        const encounter = checkCellForEncounter(cell, flags, ruleset, Math.random)
+        if (encounter) {
+          setActiveEncounter(encounter)
+          const visitedKey = visitedFlagKey(encounter.tableId, nx, ny)
+          setFlags(prev => ({ ...prev, [visitedKey]: true }))
+        }
+      }
     },
-    [activeMap, updateActiveMap, revealAround],
+    [activeMap, updateActiveMap, revealAround, ruleset, flags],
   )
 
   const isCellRevealed = useCallback(
@@ -1107,6 +1123,18 @@ export function DungeonMapper({
         />
       )}
       </div>{/* end Map workspace */}
+
+      {/* Encounter modal (shown over any workspace) */}
+      {activeEncounter && (
+        <EncounterModal
+          encounter={activeEncounter}
+          onFight={() => {
+            toast('Combat — Phase E4')
+            setActiveEncounter(null)
+          }}
+          onFlee={() => setActiveEncounter(null)}
+        />
+      )}
     </div>
   )
 }
