@@ -18,14 +18,13 @@ export type EdgeDir = 'N' | 'S' | 'E' | 'W'
  * - `overlays` — overlay type IDs stacked on the cell (0 is never stored here).
  *                The editor and the localStorage draft support multiple overlays;
  *                the v1 `.epochmap` binary stores only the first (see codec).
- * - `edges`    — per-direction edge type ID. The editor supports a different type
- *                per side; the v1 binary stores one edge type for all marked sides.
  * - `note`     — optional free text (≤ 500 chars).
+ *
+ * Walls, doors, and other boundary data live in `MapData.boundaries`, not here.
  */
 export interface CellData {
   base: number
   overlays: number[]
-  edges: Partial<Record<EdgeDir, number>>
   note?: string
   /** L2 world placement entities — encounters, objects, events (engine layer). */
   entities?: import('./engine-types').CellEntity[]
@@ -46,6 +45,12 @@ export interface MapData {
    * map is first created it is derived from the player position.
    */
   revealedChunks?: string[]
+  /**
+   * Boundary data keyed by canonical key from `boundaryKey()`.
+   * Keys are of the form `"x,y:S"` or `"x,y:E"` — only south and east faces are
+   * stored; north/west lookups are redirected by `boundaryKey()` automatically.
+   */
+  boundaries?: Record<string, import('./engine-types').BoundaryData>
 }
 
 /** A user-defined cell type or overlay icon. IDs are 128–255. */

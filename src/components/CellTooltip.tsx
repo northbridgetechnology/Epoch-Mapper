@@ -1,9 +1,24 @@
 'use client'
 
 import type { CellData, EdgeDir, MarkerDef } from '@/lib/types'
+import type { BoundaryData } from '@/lib/engine-types'
 import { baseDef, edgeDef, overlayDef } from '@/lib/constants'
 
 const DIR_LABELS: Record<EdgeDir, string> = { N: 'North', S: 'South', E: 'East', W: 'West' }
+
+function boundaryLabel(b: BoundaryData): string {
+  if (b.door) return `Door (${b.door.state})`
+  if (b.wall !== undefined) return edgeDef(b.wall).label
+  if (b.blocked) return 'Impassable'
+  if (b.damage) return 'Damage zone'
+  return 'Boundary'
+}
+
+function boundaryColor(b: BoundaryData): string {
+  if (b.door) return b.door.state === 'locked' ? '#ef4444' : '#b45309'
+  if (b.wall !== undefined) return edgeDef(b.wall).color
+  return 'rgba(228,228,231,0.95)'
+}
 
 export function CellTooltip({
   x,
@@ -12,6 +27,7 @@ export function CellTooltip({
   isPlayer,
   customBase,
   customOverlay,
+  cellBoundaries,
 }: {
   x: number
   y: number
@@ -19,17 +35,19 @@ export function CellTooltip({
   isPlayer: boolean
   customBase?: Record<number, MarkerDef>
   customOverlay?: Record<number, MarkerDef>
+  cellBoundaries?: Partial<Record<EdgeDir, BoundaryData>>
 }) {
+  const hasBoundaries = Object.keys(cellBoundaries ?? {}).length > 0
   const hasContent =
     isPlayer ||
     (cell.base ?? 0) !== 0 ||
     cell.overlays.length > 0 ||
-    Object.keys(cell.edges).length > 0 ||
+    hasBoundaries ||
     !!cell.note
 
   if (!hasContent) return null
 
-  const edges = Object.entries(cell.edges) as [EdgeDir, number][]
+  const boundaries = Object.entries(cellBoundaries ?? {}) as [EdgeDir, BoundaryData][]
   const flipX = x > window.innerWidth - 220
   const flipY = y > window.innerHeight - 160
 
@@ -59,13 +77,13 @@ export function CellTooltip({
           </div>
         )}
 
-        {edges.length > 0 && (
+        {boundaries.length > 0 && (
           <div className="space-y-0.5">
-            {edges.map(([dir, et]) => (
+            {boundaries.map(([dir, b]) => (
               <div key={dir} className="flex items-center gap-1.5">
-                <span className="w-2 h-2 rounded-sm shrink-0" style={{ background: edgeDef(et).color }} />
+                <span className="w-2 h-2 rounded-sm shrink-0" style={{ background: boundaryColor(b) }} />
                 <span className="text-white/60">
-                  {DIR_LABELS[dir]}: {edgeDef(et).label}
+                  {DIR_LABELS[dir]}: {boundaryLabel(b)}
                 </span>
               </div>
             ))}
@@ -89,7 +107,7 @@ export function CellTooltip({
         )}
 
         {cell.note && (
-          <div className="border-t border-white/10 pt-1.5 text-white/70 italic leading-snug">“{cell.note}”</div>
+          <div className="border-t border-white/10 pt-1.5 text-white/70 italic leading-snug">&ldquo;{cell.note}&rdquo;</div>
         )}
       </div>
     </div>

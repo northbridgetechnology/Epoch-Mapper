@@ -12,7 +12,7 @@
 
 import { jsPDF } from 'jspdf'
 import type { CellData, CellMap, CustomMarker, EdgeDir, MapData, MarkerDef } from './types'
-import { BASE_TYPES, EDGE_TYPES, OVERLAY_TYPES, baseDef, edgeDef, overlayDef } from './constants'
+import { BASE_TYPES, EDGE_TYPES, OVERLAY_TYPES, baseDef, boundaryKey, edgeDef, overlayDef } from './constants'
 
 // ── Page constants ─────────────────────────────────────────────────────────────
 
@@ -248,14 +248,18 @@ interface UsedTypes {
   edges: Set<number>
 }
 
-function collectUsed(cells: CellMap): UsedTypes {
+function collectUsed(cells: CellMap, boundaries?: Record<string, import('./engine-types').BoundaryData>): UsedTypes {
   const bases = new Set<number>()
   const overlays = new Set<number>()
   const edges = new Set<number>()
   for (const cell of Object.values(cells)) {
     if ((cell.base ?? 0) !== 0) bases.add(cell.base)
     for (const o of cell.overlays) overlays.add(o)
-    for (const e of Object.values(cell.edges)) if (e !== undefined) edges.add(e)
+  }
+  if (boundaries) {
+    for (const b of Object.values(boundaries)) {
+      if (b.wall !== undefined) edges.add(b.wall)
+    }
   }
   return { bases, overlays, edges }
 }
@@ -406,7 +410,7 @@ function drawMap(
     for (let col = 0; col < cols; col++) {
       const gx = minX + col
       const gy = minY + row
-      const cell: CellData = cells[`${gx},${gy}`] ?? { base: 0, overlays: [], edges: {} }
+      const cell: CellData = cells[`${gx},${gy}`] ?? { base: 0, overlays: [] }
       const cx = offX + col * (cs + 1)
       const cy = offY + row * (cs + 1)
 
@@ -435,9 +439,11 @@ function drawMap(
         }
       }
 
-      // Edges
-      for (const [dir, et] of Object.entries(cell.edges) as [EdgeDir, number][]) {
-        if (et === undefined) continue
+      // Boundary edges
+      for (const dir of ['N', 'S', 'E', 'W'] as EdgeDir[]) {
+        const b = map.boundaries?.[boundaryKey(gx, gy, dir)]
+        if (!b) continue
+        const et = b.wall !== undefined ? b.wall : b.door ? 1 : 0
         const thickness = Math.max(1, Math.round(cs / 7))
         const gap = et === 0 ? 0 : Math.round(cs * 0.18)
         ctx.fillStyle = edgeDef(et).color
@@ -521,7 +527,7 @@ async function renderMapToCanvas(
   drawBorder(ctx)
   drawHeader(ctx, gameTitle, map.name)
   drawMap(ctx, map, customBase, customOverlay)
-  drawLegend(ctx, collectUsed(map.cells), customBase, customOverlay)
+  drawLegend(ctx, collectUsed(map.cells, map.boundaries), customBase, customOverlay)
   drawNotesIndex(ctx, map.cells)
   drawFooter(ctx, pageNum, total)
   return canvas

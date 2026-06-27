@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { ArrowUp, ArrowDown, ArrowLeft, ArrowRight, ZoomIn, ZoomOut, Coins, Map, Eye } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { baseDef, overlayDef, edgeDef, DEFAULT_CELL, MIN_CELL, MAX_CELL } from '@/lib/constants'
+import { baseDef, overlayDef, edgeDef, boundaryKey, DEFAULT_CELL, MIN_CELL, MAX_CELL } from '@/lib/constants'
 import type { CellData, MapData, MarkerDef, EdgeDir } from '@/lib/types'
 import type { Character, Facing } from '@/lib/engine-types'
 
@@ -26,7 +26,7 @@ interface PlayWorkspaceProps {
 
 // ── Small helpers ─────────────────────────────────────────────────────────────
 
-const EMPTY_CELL: CellData = { base: 0, overlays: [], edges: {} }
+const EMPTY_CELL: CellData = { base: 0, overlays: [] }
 
 function EdgeStripe({ dir, type, cellSize }: { dir: EdgeDir; type: number; cellSize: number }) {
   const color = edgeDef(type).color
@@ -196,8 +196,10 @@ function isWall(map: MapData, x: number, y: number, customBase: Record<number, M
   const def = baseDef(cell.base ?? 0, customBase)
   return (cell.base ?? 0) === 0 || def.label.toLowerCase().includes('wall')
 }
-function hasEdgeWall(map: MapData, x: number, y: number, dir: EdgeDir): boolean {
-  return (map.cells[`${x},${y}`]?.edges[dir] ?? 0) !== 0
+function hasBoundaryWall(map: MapData, x: number, y: number, dir: EdgeDir): boolean {
+  const b = map.boundaries?.[boundaryKey(x, y, dir)]
+  if (!b) return false
+  return (b.wall !== undefined && b.wall !== 3) || (b.door !== undefined && b.door.state !== 'open')
 }
 
 // ── SVG component ──────────────────────────────────────────────────────────────
@@ -221,7 +223,7 @@ function FirstPersonView({ map, facing, customBase, customOverlay, isCellReveale
   }
   function hasFrontWall(ahead: number): boolean {
     const [cx, cy] = cellAt(ahead, 0)
-    if (hasEdgeWall(map, cx, cy, frontOf(facing))) return true
+    if (hasBoundaryWall(map, cx, cy, frontOf(facing))) return true
     const [nx, ny] = cellAt(ahead + 1, 0)
     return isWall(map, nx, ny, customBase) || !isCellRevealed(nx, ny)
   }
@@ -229,7 +231,7 @@ function FirstPersonView({ map, facing, customBase, customOverlay, isCellReveale
     const s = side === 'right' ? 1 : -1
     const [cx, cy] = cellAt(ahead, 0)
     const dir = side === 'right' ? rightOf(facing) : leftOf(facing)
-    if (hasEdgeWall(map, cx, cy, dir)) return true
+    if (hasBoundaryWall(map, cx, cy, dir)) return true
     const [sx, sy] = cellAt(ahead, s)
     return isWall(map, sx, sy, customBase) || !isCellRevealed(sx, sy)
   }
@@ -583,9 +585,12 @@ function DungeonViewport({
                           </div>
                         )}
                         {cell.note && <span className="absolute top-0 right-0 z-10 block w-0 h-0 border-t-[6px] border-l-[6px] border-t-amber-300 border-l-transparent" />}
-                        {(Object.keys(cell.edges) as EdgeDir[]).map(dir => (
-                          <EdgeStripe key={dir} dir={dir} type={cell.edges[dir]!} cellSize={cellSize} />
-                        ))}
+                        {(['N', 'S', 'E', 'W'] as EdgeDir[]).map(dir => {
+                          const b = map.boundaries?.[boundaryKey(x, y, dir)]
+                          if (!b) return null
+                          const type = b.wall !== undefined ? b.wall : b.door ? 1 : 0
+                          return <EdgeStripe key={dir} dir={dir} type={type} cellSize={cellSize} />
+                        })}
                       </div>
                     )
                   })

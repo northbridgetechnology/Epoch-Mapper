@@ -50,6 +50,7 @@ export {
   overlayDef,
   edgeDef,
   isCustomId,
+  boundaryKey,
 } from './lib/constants'
 
 // Types
@@ -138,7 +139,7 @@ export { applyEffectToChar, applyConsumable } from './lib/apply-effects'
 
 // Encounter engine (Phase E3)
 export { resolveEncounterTable, checkCellForEncounter, visitedFlagKey } from './lib/encounter-engine'
-export type { ResolvedEncounter, EnemyInstance, CellEntity, ObjectInstance, Condition, CellEvent } from './lib/engine-types'
+export type { ResolvedEncounter, EnemyInstance, CellEntity, ObjectInstance, Condition, CellEvent, BoundaryData, DoorDef, DoorState, Facing } from './lib/engine-types'
 
 // Encounter modal (Phase E3)
 export { EncounterModal } from './components/EncounterModal'

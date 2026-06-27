@@ -26,7 +26,7 @@ function test(name: string, fn: () => void) {
 }
 
 const sample: EpochmapFile = {
-  version: 1,
+  version: 2,
   gameTitle: 'Dragon Quest III 🐉',
   romHash: 'a'.repeat(64),
   customMarkers: [
@@ -40,10 +40,15 @@ const sample: EpochmapFile = {
       playerX: -3,
       playerY: 7,
       cells: {
-        '0,0': { base: 1, overlays: [10], edges: { N: 0, E: 0 } },
-        '-3,7': { base: 4, overlays: [], edges: {} },
-        '2,-5': { base: 130, overlays: [131], edges: { S: 5 } },
-        '1,1': { base: 0, overlays: [], edges: {}, note: 'Secret switch behind the statue' },
+        '0,0': { base: 1, overlays: [10] },
+        '-3,7': { base: 4, overlays: [] },
+        '2,-5': { base: 130, overlays: [131] },
+        '1,1': { base: 0, overlays: [], note: 'Secret switch behind the statue' },
+      },
+      boundaries: {
+        '0,-1:S': { wall: 0 },  // N side of (0,0) → (0,-1):S
+        '0,0:E':  { wall: 0 },  // E side of (0,0)
+        '2,-5:S': { wall: 5 },  // S side of (2,-5)
       },
       revealedChunks: ['0,0', '-1,2', '0,-2'],
     },
@@ -60,16 +65,16 @@ const sample: EpochmapFile = {
 
 console.log('epochmap codec round-trip')
 
-test('serialize produces EPKM magic + version 1 in the clear header', () => {
+test('serialize produces EPKM magic + version 2 in the clear header', () => {
   const bytes = serializeDotEpochmap(sample)
   const magic = String.fromCharCode(bytes[0], bytes[1], bytes[2], bytes[3])
   assert.equal(magic, EPOCHMAP_MAGIC)
-  assert.equal(bytes[4], 1)
+  assert.equal(bytes[4], 2)
 })
 
 test('full round-trip preserves header fields', () => {
   const back = parseDotEpochmap(serializeDotEpochmap(sample))
-  assert.equal(back.version, 1)
+  assert.equal(back.version, 2)
   assert.equal(back.gameTitle, sample.gameTitle)
   assert.equal(back.romHash, sample.romHash)
 })
@@ -79,58 +84,60 @@ test('custom markers round-trip (id, kind, label, icon, color)', () => {
   assert.deepEqual(back.customMarkers, sample.customMarkers)
 })
 
-test('maps, cells, overlays and edges round-trip', () => {
+test('maps, cells and overlays round-trip', () => {
   const back = parseDotEpochmap(serializeDotEpochmap(sample))
   assert.equal(back.maps.length, 2)
   const f1 = back.maps[0]
   assert.equal(f1.name, 'Floor 1')
   assert.equal(f1.playerX, -3)
   assert.equal(f1.playerY, 7)
-  assert.deepEqual(f1.cells['0,0'].edges, { N: 0, E: 0 })
   assert.deepEqual(f1.cells['0,0'].overlays, [10])
   assert.equal(f1.cells['2,-5'].base, 130)
   assert.deepEqual(f1.cells['2,-5'].overlays, [131])
 })
 
-test('v1 collapses mixed edge types to one per cell (documented limitation)', () => {
-  // The v1 binary stores a single edge type for all marked sides; the first
-  // marked side (N) wins. Per-edge types are reserved for a future v2.
-  const file: EpochmapFile = {
-    version: 1,
-    gameTitle: '',
-    romHash: '',
-    customMarkers: [],
-    maps: [
-      {
-        id: 'm',
-        name: 'm',
-        playerX: 0,
-        playerY: 0,
-        cells: { '0,0': { base: 1, overlays: [], edges: { N: 3, S: 5 } } },
-        revealedChunks: ['0,0'],
-      },
-    ],
-  }
-  const back = parseDotEpochmap(serializeDotEpochmap(file))
-  assert.deepEqual(back.maps[0].cells['0,0'].edges, { N: 3, S: 3 })
+test('boundaries round-trip via JSON extension block', () => {
+  const back = parseDotEpochmap(serializeDotEpochmap(sample))
+  const f1 = back.maps[0]
+  assert.deepEqual(f1.boundaries?.['0,-1:S'], { wall: 0 })
+  assert.deepEqual(f1.boundaries?.['0,0:E'],  { wall: 0 })
+  assert.deepEqual(f1.boundaries?.['2,-5:S'], { wall: 5 })
 })
 
-test('v1 keeps only the first overlay per cell (documented limitation)', () => {
+test('door boundary round-trips with state', () => {
   const file: EpochmapFile = {
-    version: 1,
+    version: 2,
     gameTitle: '',
     romHash: '',
     customMarkers: [],
-    maps: [
-      {
-        id: 'm',
-        name: 'm',
-        playerX: 0,
-        playerY: 0,
-        cells: { '0,0': { base: 1, overlays: [8, 10], edges: {} } },
-        revealedChunks: ['0,0'],
-      },
-    ],
+    maps: [{
+      id: 'm',
+      name: 'm',
+      playerX: 0,
+      playerY: 0,
+      cells: { '0,0': { base: 1, overlays: [] } },
+      boundaries: { '0,0:E': { door: { state: 'locked', keyItem: 'gold-key' } } },
+      revealedChunks: ['0,0'],
+    }],
+  }
+  const back = parseDotEpochmap(serializeDotEpochmap(file))
+  assert.deepEqual(back.maps[0].boundaries?.['0,0:E'], { door: { state: 'locked', keyItem: 'gold-key' } })
+})
+
+test('v2 keeps only the first overlay per cell (documented limitation)', () => {
+  const file: EpochmapFile = {
+    version: 2,
+    gameTitle: '',
+    romHash: '',
+    customMarkers: [],
+    maps: [{
+      id: 'm',
+      name: 'm',
+      playerX: 0,
+      playerY: 0,
+      cells: { '0,0': { base: 1, overlays: [8, 10] } },
+      revealedChunks: ['0,0'],
+    }],
   }
   const back = parseDotEpochmap(serializeDotEpochmap(file))
   assert.deepEqual(back.maps[0].cells['0,0'].overlays, [8])

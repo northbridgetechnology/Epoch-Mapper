@@ -369,3 +369,33 @@ export interface FieldSchema {
   min?: number
   max?: number
 }
+
+// ── Boundary system ─────────────────────────────────────────────────────────────
+
+export type DoorState = 'open' | 'closed' | 'locked'
+
+export interface DoorDef {
+  state: DoorState
+  keyItem?: DefRef<ItemDef>
+  keyFlag?: string
+  toggleFlag?: string
+  oneWay?: boolean
+}
+
+/**
+ * Data stored on the "line" between two adjacent cells (canonical key from boundaryKey()).
+ * Replaces the old per-cell `edges` record.
+ */
+export interface BoundaryData {
+  /** Visual wall type ID matching EDGE_TYPES (0=standard wall, 1=locked-door, etc). */
+  wall?: number
+  door?: DoorDef
+  secret?: boolean
+  revealFlag?: string
+  blocked?: boolean
+  onPass?: Effect[]
+  onPassOnce?: boolean
+  passedFlag?: string
+  damage?: { dice: Dice; type?: DamageType }
+  label?: string
+}

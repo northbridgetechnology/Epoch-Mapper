@@ -5,7 +5,7 @@
  * `.epochmap` binary format (EPOCH_MAPPER_SPEC.md §4.3). Do not renumber.
  */
 
-import type { MarkerDef } from './types'
+import type { EdgeDir, MarkerDef } from './types'
 
 // ── Grid / viewport ───────────────────────────────────────────────────────────
 
@@ -138,4 +138,18 @@ export function edgeDef(id: number): MarkerDef {
 
 export function isCustomId(id: number): boolean {
   return id >= CUSTOM_ID_MIN && id <= CUSTOM_ID_MAX
+}
+
+/**
+ * Returns the canonical storage key for the boundary between cell (x,y) and its
+ * neighbour in direction `dir`. Only S and E faces are stored; N and W are
+ * redirected to the south/east face of the adjacent cell.
+ */
+export function boundaryKey(x: number, y: number, dir: EdgeDir): string {
+  switch (dir) {
+    case 'N': return `${x},${y - 1}:S`
+    case 'S': return `${x},${y}:S`
+    case 'E': return `${x},${y}:E`
+    case 'W': return `${x - 1},${y}:E`
+  }
 }

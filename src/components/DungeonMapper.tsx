@@ -7,7 +7,7 @@ import { cn, uid } from '@/lib/utils'
 import {
   BASE, BASE_PALETTE, BASE_TYPES, CHUNK_SIZE, DEFAULT_CELL, EDGE_PALETTE, EDGE_TYPES,
   MAX_CELL, MAX_NOTE_LEN, MIN_CELL, OVERLAY_PALETTE, OVERLAY_TYPES, VIEWPORT_CELLS,
-  baseDef, edgeDef, overlayDef,
+  baseDef, boundaryKey, edgeDef, overlayDef,
 } from '@/lib/constants'
 import type { CellData, CellMap, CustomMarker, EdgeDir, EpochmapFile, MapData, MarkerDef } from '@/lib/types'
 import { parseDotEpochmap, serializeDotEpochmap } from '@/lib/epochmap-codec'
@@ -21,7 +21,7 @@ import { MarkerPalette } from './MarkerPalette'
 import { PartyWorkspace } from './workspaces/PartyWorkspace'
 import { DatabaseWorkspace } from './workspaces/DatabaseWorkspace'
 import { PlayWorkspace } from './workspaces/PlayWorkspace'
-import type { Character, CellEntity, Facing, Formation, ItemInstance, ResolvedEncounter, Ruleset } from '@/lib/engine-types'
+import type { BoundaryData, Character, CellEntity, Facing, Formation, ItemInstance, ResolvedEncounter, Ruleset } from '@/lib/engine-types'
 import { makeDefaultRuleset } from '@/lib/default-ruleset'
 import { savePartyTemplate, loadPartyTemplate } from '@/lib/save-state'
 import { checkCellForEncounter, resolveEncounterTable, visitedFlagKey } from '@/lib/encounter-engine'
@@ -54,10 +54,10 @@ function toolId(t: Tool): string {
 
 // ── Cell helpers ───────────────────────────────────────────────────────────────
 
-const EMPTY_CELL: CellData = { base: 0, overlays: [], edges: {} }
+const EMPTY_CELL: CellData = { base: 0, overlays: [] }
 
 function isCellEmpty(c: CellData) {
-  return (c.base ?? 0) === 0 && c.overlays.length === 0 && Object.keys(c.edges).length === 0 && !c.note && !c.entities?.length
+  return (c.base ?? 0) === 0 && c.overlays.length === 0 && !c.note && !c.entities?.length
 }
 
 function getEdgeDir(relX: number, relY: number): EdgeDir | null {
@@ -155,7 +155,7 @@ export function DungeonMapper({
   const [showWelcome, setShowWelcome] = useState(false)
   const [showPalette, setShowPalette] = useState(false)
   const [paletteSelectId, setPaletteSelectId] = useState<number | undefined>(undefined)
-  const [tooltip, setTooltip] = useState<{ x: number; y: number; cell: CellData; isPlayer: boolean } | null>(null)
+  const [tooltip, setTooltip] = useState<{ x: number; y: number; cell: CellData; isPlayer: boolean; cellBoundaries?: Partial<Record<EdgeDir, BoundaryData>> } | null>(null)
   const [hoverInfo, setHoverInfo] = useState<{ x: number; y: number; zone: EdgeDir | null } | null>(null)
   const [noteDialog, setNoteDialog] = useState<{ x: number; y: number; text: string } | null>(null)
 
@@ -427,6 +427,19 @@ export function DungeonMapper({
   const movePlayer = useCallback(
     (dx: number, dy: number) => {
       if (!activeMap) return
+
+      // Block movement through impassable boundaries (walls, closed/locked doors)
+      const moveDir: EdgeDir | null = dx === 1 ? 'E' : dx === -1 ? 'W' : dy === 1 ? 'S' : dy === -1 ? 'N' : null
+      if (moveDir !== null && activeMap.boundaries) {
+        const bk = boundaryKey(activeMap.playerX, activeMap.playerY, moveDir)
+        const b = activeMap.boundaries[bk]
+        if (b) {
+          const wallBlocked = b.wall !== undefined && b.wall !== 3  // 3 = illusory
+          const doorBlocked = b.door !== undefined && b.door.state !== 'open'
+          if (wallBlocked || doorBlocked) return
+        }
+      }
+
       const nx = activeMap.playerX + dx
       const ny = activeMap.playerY + dy
       updateActiveMap((m) => ({ playerX: nx, playerY: ny, revealedChunks: revealAround(m, nx, ny) }))
@@ -498,6 +511,31 @@ export function DungeonMapper({
 
   const handleInteract = useCallback(() => {
     if (!activeMap) return
+
+    // Check boundary in facing direction for doors
+    const facingDir = facingRef.current as EdgeDir
+    const bk = boundaryKey(activeMap.playerX, activeMap.playerY, facingDir)
+    const boundary = activeMap.boundaries?.[bk]
+    if (boundary?.door) {
+      const door = boundary.door
+      if (door.state === 'closed') {
+        updateActiveMap(m => ({
+          boundaries: { ...(m.boundaries ?? {}), [bk]: { ...boundary, door: { ...door, state: 'open' as const } } }
+        }))
+        return
+      } else if (door.state === 'locked') {
+        if (door.keyItem && inventory.some(item => item.def === door.keyItem)) {
+          updateActiveMap(m => ({
+            boundaries: { ...(m.boundaries ?? {}), [bk]: { ...boundary, door: { ...door, state: 'open' as const } } }
+          }))
+          toast('Door unlocked!')
+        } else {
+          toast('This door is locked.')
+        }
+        return
+      }
+    }
+
     const cellKey = `${activeMap.playerX},${activeMap.playerY}`
     const cell = activeMap.cells[cellKey]
     if (!cell) return
@@ -532,7 +570,7 @@ export function DungeonMapper({
       }
       break
     }
-  }, [activeMap, makeEventContext, applyExploreEffect])
+  }, [activeMap, makeEventContext, applyExploreEffect, updateActiveMap, inventory])
 
   const isCellRevealed = useCallback(
     (x: number, y: number) => {
@@ -571,6 +609,19 @@ export function DungeonMapper({
     [recordHistory, updateActiveMap],
   )
 
+  const writeBoundary = useCallback(
+    (bk: string, next: BoundaryData | null) => {
+      recordHistory()
+      updateActiveMap((m) => {
+        const boundaries = { ...(m.boundaries ?? {}) }
+        if (next === null) delete boundaries[bk]
+        else boundaries[bk] = next
+        return { boundaries }
+      })
+    },
+    [recordHistory, updateActiveMap],
+  )
+
   function handleCellClick(e: React.MouseEvent<HTMLDivElement>, x: number, y: number) {
     if (!activeMap || !isCellRevealed(x, y)) return
     const key = `${x},${y}`
@@ -591,10 +642,10 @@ export function DungeonMapper({
       const rect = e.currentTarget.getBoundingClientRect()
       const dir = getEdgeDir((e.clientX - rect.left) / rect.width, (e.clientY - rect.top) / rect.height)
       if (!dir) return
-      const edges = { ...cur.edges }
-      if (edges[dir] === activeTool.value) delete edges[dir]
-      else edges[dir] = activeTool.value
-      writeCell(key, { ...cur, edges })
+      const bk = boundaryKey(x, y, dir)
+      const existing = activeMap.boundaries?.[bk]
+      // Toggle: clicking same type erases; clicking new type sets
+      writeBoundary(bk, existing?.wall === activeTool.value ? null : { wall: activeTool.value })
       return
     }
 
@@ -625,9 +676,7 @@ export function DungeonMapper({
       const rect = e.currentTarget.getBoundingClientRect()
       const dir = getEdgeDir((e.clientX - rect.left) / rect.width, (e.clientY - rect.top) / rect.height)
       if (!dir) return
-      const edges = { ...cur.edges }
-      delete edges[dir]
-      writeCell(key, { ...cur, edges })
+      writeBoundary(boundaryKey(x, y, dir), null)
       return
     }
     writeCell(key, EMPTY_CELL)
@@ -1282,12 +1331,12 @@ export function DungeonMapper({
             <CellInspector
               x={inspectedCell.x}
               y={inspectedCell.y}
-              cell={activeMap.cells[`${inspectedCell.x},${inspectedCell.y}`] ?? { base: 0, overlays: [], edges: {} }}
+              cell={activeMap.cells[`${inspectedCell.x},${inspectedCell.y}`] ?? { base: 0, overlays: [] }}
               maps={maps}
               ruleset={ruleset}
               onChange={(entities: CellEntity[]) => {
                 const key = `${inspectedCell.x},${inspectedCell.y}`
-                const cur = activeMap.cells[key] ?? { base: 0, overlays: [], edges: {} }
+                const cur = activeMap.cells[key] ?? { base: 0, overlays: [] }
                 writeCell(key, { ...cur, entities: entities.length ? entities : undefined })
               }}
               onClose={() => setInspectedCell(null)}
@@ -1361,6 +1410,7 @@ export function DungeonMapper({
           isPlayer={tooltip.isPlayer}
           customBase={customBase}
           customOverlay={customOverlay}
+          cellBoundaries={tooltip.cellBoundaries}
         />
       )}
 
@@ -1463,7 +1513,7 @@ interface ViewportProps {
   onCellRightClick: (e: React.MouseEvent<HTMLDivElement>, x: number, y: number) => void
   onCellMouseMove: (e: React.MouseEvent<HTMLDivElement>, x: number, y: number) => void
   onCellHoverEnd: () => void
-  onTooltip: (t: { x: number; y: number; cell: CellData; isPlayer: boolean }) => void
+  onTooltip: (t: { x: number; y: number; cell: CellData; isPlayer: boolean; cellBoundaries?: Partial<Record<EdgeDir, BoundaryData>> }) => void
   onWheel: (delta: number) => void
   onPanStart: (x: number, y: number) => void
   onPanMove: (x: number, y: number) => void
@@ -1569,7 +1619,12 @@ function Viewport(props: ViewportProps) {
                     onContextMenu={(e) => props.onCellRightClick(e, x, y)}
                     onMouseMove={(e) => {
                       props.onCellMouseMove(e, x, y)
-                      props.onTooltip({ x: e.clientX, y: e.clientY, cell, isPlayer })
+                      const cellBoundaries = (['N', 'S', 'E', 'W'] as EdgeDir[]).reduce<Partial<Record<EdgeDir, BoundaryData>>>((acc, dir) => {
+                        const b = map.boundaries?.[boundaryKey(x, y, dir)]
+                        if (b) acc[dir] = b
+                        return acc
+                      }, {})
+                      props.onTooltip({ x: e.clientX, y: e.clientY, cell, isPlayer, cellBoundaries })
                     }}
                     onMouseLeave={props.onCellHoverEnd}
                   >
@@ -1598,10 +1653,13 @@ function Viewport(props: ViewportProps) {
                       <span className="absolute top-0 right-0 z-10 block w-0 h-0 border-t-[6px] border-l-[6px] border-t-amber-300 border-l-transparent" />
                     )}
 
-                    {/* edges */}
-                    {(Object.keys(cell.edges) as EdgeDir[]).map((dir) => (
-                      <EdgeStripe key={dir} dir={dir} type={cell.edges[dir]!} cellSize={cellSize} />
-                    ))}
+                    {/* boundary edges */}
+                    {(['N', 'S', 'E', 'W'] as EdgeDir[]).map((dir) => {
+                      const b = map.boundaries?.[boundaryKey(x, y, dir)]
+                      if (!b) return null
+                      const type = b.wall !== undefined ? b.wall : b.door ? 1 : 0
+                      return <EdgeStripe key={dir} dir={dir} type={type} cellSize={cellSize} />
+                    })}
 
                     {/* edge hover highlight */}
                     {props.isEdgeTool && isHovered && props.hoverInfo?.zone && (

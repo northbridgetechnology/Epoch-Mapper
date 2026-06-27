@@ -57,8 +57,8 @@ test('remap rewrites base and overlay IDs in imported maps', () => {
     playerX: 0,
     playerY: 0,
     cells: {
-      '0,0': { base: 135, overlays: [135, 10], edges: {} },
-      '1,0': { base: 2, overlays: [], edges: {} },
+      '0,0': { base: 135, overlays: [135, 10] },
+      '1,0': { base: 2, overlays: [] },
     },
   }
   const out = remapMapMarkers(map, remap)

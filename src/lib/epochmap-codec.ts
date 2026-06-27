@@ -18,7 +18,7 @@
 
 import { gzipSync, gunzipSync } from 'fflate'
 import type { CellData, CellMap, CustomMarker, EdgeDir, EpochmapFile, MapData } from './types'
-import type { CellEntity, Ruleset } from './engine-types'
+import type { BoundaryData, CellEntity, Ruleset } from './engine-types'
 
 export const EPOCHMAP_MAGIC = 'EPKM'
 export const EPOCHMAP_VERSION = 2  // v1 = visual-only; v2 adds ruleset + entities JSON block
@@ -182,31 +182,15 @@ function readRomHash(r: ByteReader): string {
   return s
 }
 
-// ── Cell <-> binary ────────────────────────────────────────────────────────────
+// ── Boundary key (inlined from constants to avoid circular import) ─────────────
 
-function packEdges(edges: CellData['edges']): { mask: number; edgeType: number } {
-  let mask = 0
-  let edgeType = 0
-  let chosen = false
-  EDGE_DIRS.forEach((dir, bit) => {
-    const t = edges[dir]
-    if (t !== undefined) {
-      mask |= 1 << bit
-      if (!chosen) {
-        edgeType = t // v1: one edge type per cell (first marked side wins)
-        chosen = true
-      }
-    }
-  })
-  return { mask, edgeType }
-}
-
-function unpackEdges(mask: number, edgeType: number): CellData['edges'] {
-  const edges: CellData['edges'] = {}
-  EDGE_DIRS.forEach((dir, bit) => {
-    if (mask & (1 << bit)) edges[dir] = edgeType
-  })
-  return edges
+function bKey(x: number, y: number, dir: EdgeDir): string {
+  switch (dir) {
+    case 'N': return `${x},${y - 1}:S`
+    case 'S': return `${x},${y}:S`
+    case 'E': return `${x},${y}:E`
+    case 'W': return `${x - 1},${y}:E`
+  }
 }
 
 // ── Serialize ──────────────────────────────────────────────────────────────────
@@ -243,8 +227,7 @@ export function serializeDotEpochmap(file: EpochmapFile): Uint8Array {
     for (const key of Object.keys(map.cells)) {
       const [x, y] = key.split(',').map(Number)
       const cell = map.cells[key]
-      const hasGeometry =
-        (cell.base ?? 0) !== 0 || cell.overlays.length > 0 || Object.keys(cell.edges).length > 0
+      const hasGeometry = (cell.base ?? 0) !== 0 || cell.overlays.length > 0
       if (hasGeometry) cellEntries.push([x, y, cell])
       if (cell.note && cell.note.length > 0) noteEntries.push([x, y, cell.note])
     }
@@ -255,9 +238,8 @@ export function serializeDotEpochmap(file: EpochmapFile): Uint8Array {
       body.i16(y)
       body.u8(cell.base ?? 0)
       body.u8(cell.overlays[0] ?? 0) // v1: single overlay byte
-      const { mask, edgeType } = packEdges(cell.edges)
-      body.u8(mask)
-      body.u8(edgeType)
+      body.u8(0) // edge mask — boundaries now in JSON ext block
+      body.u8(0) // edge type — boundaries now in JSON ext block
     }
 
     body.u32(noteEntries.length)
@@ -276,8 +258,12 @@ export function serializeDotEpochmap(file: EpochmapFile): Uint8Array {
     }
   }
 
-  // ----- v2 JSON extension block: ruleset + per-map cell entities -----
-  const v2ext: { ruleset?: Ruleset; mapEntities?: Array<Record<string, CellEntity[]>> } = {}
+  // ----- v2 JSON extension block: ruleset + per-map cell entities + boundaries -----
+  const v2ext: {
+    ruleset?: Ruleset
+    mapEntities?: Array<Record<string, CellEntity[]>>
+    mapBoundaries?: Array<Record<string, BoundaryData>>
+  } = {}
   if (file.ruleset) v2ext.ruleset = file.ruleset
   const mapEntities: Array<Record<string, CellEntity[]>> = maps.map(map => {
     const ent: Record<string, CellEntity[]> = {}
@@ -287,6 +273,8 @@ export function serializeDotEpochmap(file: EpochmapFile): Uint8Array {
     return ent
   })
   if (mapEntities.some(m => Object.keys(m).length > 0)) v2ext.mapEntities = mapEntities
+  const mapBoundaries = maps.map(map => map.boundaries ?? {})
+  if (mapBoundaries.some(m => Object.keys(m).length > 0)) v2ext.mapBoundaries = mapBoundaries
   const jsonBytes = new TextEncoder().encode(JSON.stringify(v2ext))
   body.u32(jsonBytes.length)
   body.bytes(jsonBytes)
@@ -363,6 +351,7 @@ export function parseDotEpochmap(buffer: ArrayBuffer | Uint8Array): EpochmapFile
     const playerY = r.i16()
 
     const cells: CellMap = {}
+    const boundaries: Record<string, BoundaryData> = {}
     const cellCount = r.u32()
     for (let ci = 0; ci < cellCount; ci++) {
       const x = r.i16()
@@ -371,10 +360,14 @@ export function parseDotEpochmap(buffer: ArrayBuffer | Uint8Array): EpochmapFile
       const overlay = r.u8()
       const mask = r.u8()
       const edgeType = r.u8()
-      cells[`${x},${y}`] = {
-        base,
-        overlays: overlay ? [overlay] : [],
-        edges: unpackEdges(mask, edgeType),
+      cells[`${x},${y}`] = { base, overlays: overlay ? [overlay] : [] }
+      // Legacy edge bits → boundaries (backward compat for v1 files)
+      if (mask !== 0) {
+        EDGE_DIRS.forEach((dir, bit) => {
+          if (mask & (1 << bit)) {
+            boundaries[bKey(x, y, dir)] = { wall: edgeType }
+          }
+        })
       }
     }
 
@@ -384,7 +377,7 @@ export function parseDotEpochmap(buffer: ArrayBuffer | Uint8Array): EpochmapFile
       const y = r.i16()
       const text = r.str(r.u16())
       const key = `${x},${y}`
-      const existing = cells[key] ?? { base: 0, overlays: [], edges: {} }
+      const existing = cells[key] ?? { base: 0, overlays: [] }
       existing.note = text
       cells[key] = existing
     }
@@ -397,18 +390,22 @@ export function parseDotEpochmap(buffer: ArrayBuffer | Uint8Array): EpochmapFile
       revealedChunks.push(`${cx},${cy}`)
     }
 
-    maps.push({ id: `imported-${mi}`, name, cells, playerX, playerY, revealedChunks })
+    maps.push({ id: `imported-${mi}`, name, cells, boundaries, playerX, playerY, revealedChunks })
   }
 
   const result: EpochmapFile = { version, gameTitle, romHash, customMarkers, maps }
 
-  // v2: read JSON extension block (ruleset + entities)
+  // v2: read JSON extension block (ruleset + entities + boundaries)
   if (version === 2 && r.remaining >= 4) {
     try {
       const jsonLen = r.u32()
       if (jsonLen > 0 && r.remaining >= jsonLen) {
         const jsonStr = r.str(jsonLen)
-        const ext = JSON.parse(jsonStr) as { ruleset?: Ruleset; mapEntities?: Array<Record<string, CellEntity[]>> }
+        const ext = JSON.parse(jsonStr) as {
+          ruleset?: Ruleset
+          mapEntities?: Array<Record<string, CellEntity[]>>
+          mapBoundaries?: Array<Record<string, BoundaryData>>
+        }
         if (ext.ruleset) result.ruleset = ext.ruleset
         if (ext.mapEntities) {
           ext.mapEntities.forEach((mapEnt, mi) => {
@@ -416,10 +413,18 @@ export function parseDotEpochmap(buffer: ArrayBuffer | Uint8Array): EpochmapFile
             if (!map || !mapEnt) return
             for (const [key, entities] of Object.entries(mapEnt)) {
               if (!entities?.length) continue
-              const cell = map.cells[key] ?? { base: 0, overlays: [], edges: {} }
+              const cell = map.cells[key] ?? { base: 0, overlays: [] }
               cell.entities = entities
               map.cells[key] = cell
             }
+          })
+        }
+        if (ext.mapBoundaries) {
+          ext.mapBoundaries.forEach((mapBounds, mi) => {
+            const map = maps[mi]
+            if (!map || !mapBounds) return
+            // v2 boundaries override legacy edge-bit boundaries
+            map.boundaries = { ...(map.boundaries ?? {}), ...mapBounds }
           })
         }
       }
