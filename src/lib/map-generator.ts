@@ -5,7 +5,7 @@
  */
 
 import { BASE, EDGE, OVERLAY, CHUNK_SIZE, boundaryKey } from './constants'
-import type { CellMap, MapData } from './types'
+import type { CellMap, MapData, EdgeDir } from './types'
 import type { BoundaryData, CellEntity, Ruleset } from './engine-types'
 import { uid } from './utils'
 
@@ -195,18 +195,32 @@ export function buildGeneratedMap(name: string, config: NewMapConfig, ruleset: R
   for (const leaf of withRooms) carveRoom(leaf.room, cells, roomCells)
   connectTree(root, cells, rng)
 
-  // Doors at corridor choke-points (not inside rooms, 40% chance each)
+  // Wall boundary stripes: add EDGE.WALL on every floor-cell face that borders an empty cell.
+  // This makes rooms and corridors visually distinct in the 2D map editor.
+  const DIRS: EdgeDir[] = ['N', 'S', 'E', 'W']
+  const DELTA: Record<EdgeDir, [number, number]> = { N: [0,-1], S: [0,1], E: [1,0], W: [-1,0] }
   for (const key of Object.keys(cells)) {
-    if (roomCells.has(key)) continue
     const [x, y] = key.split(',').map(Number)
-    const N = Boolean(cells[`${x},${y - 1}`])
-    const S = Boolean(cells[`${x},${y + 1}`])
-    const E = Boolean(cells[`${x + 1},${y}`])
-    const W = Boolean(cells[`${x - 1},${y}`])
-    if (N && S && !E && !W && rng() < 0.40) {
-      boundaries[boundaryKey(x, y, 'S')] = { wall: EDGE.DOOR, door: { state: 'closed' } }
-    } else if (E && W && !N && !S && rng() < 0.40) {
-      boundaries[boundaryKey(x, y, 'E')] = { wall: EDGE.DOOR, door: { state: 'closed' } }
+    for (const dir of DIRS) {
+      const [dx, dy] = DELTA[dir]
+      if (!cells[`${x + dx},${y + dy}`]) {
+        const bk = boundaryKey(x, y, dir)
+        if (!boundaries[bk]) boundaries[bk] = { wall: EDGE.WALL }
+      }
+    }
+  }
+
+  // Zone encounter entities on corridor cells (not inside rooms).
+  // Only placed when the ruleset has encounter tables to reference.
+  const encTableIds = ruleset.encounterTables.map(t => t.id)
+  if (encTableIds.length > 0) {
+    for (const key of Object.keys(cells)) {
+      if (roomCells.has(key)) continue
+      if (rng() > 0.20) continue
+      const tableId = pickRandom(rng, encTableIds)
+      const encEnt: CellEntity = { t: 'encounter', table: tableId, mode: 'zone', rate: 0.12 }
+      const c = cells[key]
+      cells[key] = { ...c, entities: [...(c.entities ?? []), encEnt] }
     }
   }
 
