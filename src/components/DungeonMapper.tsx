@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Plus, Trash2, MapPin, Eraser, X, Search } from 'lucide-react'
+import { Plus, Trash2, MapPin, Eraser, X, Search, Pipette } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn, uid } from '@/lib/utils'
 import {
@@ -48,10 +48,23 @@ type Tool =
   | { kind: 'erase' }
   | { kind: 'player' }
   | { kind: 'inspect' }
+  | { kind: 'eyedropper'; sample: CellData | null }
 
 function toolId(t: Tool): string {
-  if (t.kind === 'erase' || t.kind === 'player' || t.kind === 'inspect') return t.kind
+  if (t.kind === 'erase' || t.kind === 'player' || t.kind === 'inspect' || t.kind === 'eyedropper') return t.kind
   return `${t.kind}:${t.value}`
+}
+
+function stampCell(sample: CellData): CellData {
+  const entities = sample.entities?.map(ent => {
+    if (ent.t === 'object') return { ...ent, object: { ...ent.object, id: uid() } }
+    if (ent.t === 'event')  return { ...ent, event:  { ...ent.event,  id: uid() } }
+    return ent
+  })
+  const out: CellData = { base: sample.base, overlays: [...sample.overlays] }
+  if (entities?.length) out.entities = entities
+  if (sample.note) out.note = sample.note
+  return out
 }
 
 // ── Cell helpers ───────────────────────────────────────────────────────────────
@@ -739,10 +752,11 @@ export function DungeonMapper({
     [recordHistory, updateActiveMap],
   )
 
-  // ── Drag-paint support (base / overlay / erase) ────────────────────────────
-  const isPaintingRef     = useRef(false)
-  const paintedCellsRef   = useRef(new Set<string>())
-  const dragHistoryRef    = useRef(false)
+  // ── Drag-paint support (base / overlay / erase / eyedropper) ─────────────────
+  const isPaintingRef        = useRef(false)
+  const paintedCellsRef      = useRef(new Set<string>())
+  const dragHistoryRef       = useRef(false)
+  const eyedropConfirmedRef  = useRef(false)
 
   function applyPaintTool(x: number, y: number) {
     if (!activeMap) return
@@ -776,9 +790,45 @@ export function DungeonMapper({
     })
   }
 
+  function applyStampTool(x: number, y: number, sample: CellData) {
+    if (!activeMap || !isCellRevealed(x, y)) return
+    const key = `${x},${y}`
+    if (paintedCellsRef.current.has(key)) return
+    paintedCellsRef.current.add(key)
+    if (!dragHistoryRef.current) { dragHistoryRef.current = true; recordHistory() }
+    updateActiveMap((m) => {
+      const cells = { ...m.cells }
+      const stamped = stampCell(sample)
+      if (isCellEmpty(stamped)) delete cells[key]
+      else cells[key] = stamped
+      return { cells }
+    })
+  }
+
   function handleCellMouseDown(e: React.MouseEvent<HTMLDivElement>, x: number, y: number) {
     if (e.button !== 0) return
     const tool = activeTool
+
+    if (tool.kind === 'eyedropper') {
+      if (!activeMap || !isCellRevealed(x, y)) return
+      e.preventDefault()
+      if (tool.sample === null) {
+        const key = `${x},${y}`
+        const cell = activeMap.cells[key] ?? EMPTY_CELL
+        setActiveTool({ kind: 'eyedropper', sample: cell })
+        toast('Cell sampled — click or drag to stamp')
+        return
+      }
+      eyedropConfirmedRef.current = false
+      if (!window.confirm('Replace cell contents with sampled data?')) return
+      eyedropConfirmedRef.current = true
+      isPaintingRef.current  = true
+      dragHistoryRef.current = false
+      paintedCellsRef.current = new Set()
+      applyStampTool(x, y, tool.sample)
+      return
+    }
+
     if (tool.kind !== 'base' && tool.kind !== 'overlay' && tool.kind !== 'erase') return
     e.preventDefault()
     isPaintingRef.current  = true
@@ -788,7 +838,12 @@ export function DungeonMapper({
   }
 
   function handleCellMouseEnter(x: number, y: number) {
-    if (isPaintingRef.current) applyPaintTool(x, y)
+    if (!isPaintingRef.current) return
+    if (activeTool.kind === 'eyedropper' && activeTool.sample && eyedropConfirmedRef.current) {
+      applyStampTool(x, y, activeTool.sample)
+    } else {
+      applyPaintTool(x, y)
+    }
   }
 
   function handlePaintEnd() {
@@ -853,7 +908,18 @@ export function DungeonMapper({
       writeBoundary(boundaryKey(x, y, dir), null)
       return
     }
-    writeCell(key, EMPTY_CELL)
+    // FILO: remove last entity → last overlay → base → clear
+    if (cur.entities?.length) {
+      writeCell(key, { ...cur, entities: cur.entities.length > 1 ? cur.entities.slice(0, -1) : undefined })
+    } else if (cur.overlays.length) {
+      writeCell(key, { ...cur, overlays: cur.overlays.slice(0, -1) })
+    } else if (cur.base !== 0) {
+      const next = { ...cur, base: 0 }
+      if (isCellEmpty(next)) writeCell(key, EMPTY_CELL)
+      else writeCell(key, next)
+    } else {
+      writeCell(key, EMPTY_CELL)
+    }
   }
 
   function handleCellMouseMove(e: React.MouseEvent<HTMLDivElement>, x: number, y: number) {
@@ -1496,20 +1562,37 @@ export function DungeonMapper({
               </button>
             </div>
 
-            <button
-              onClick={() => setActiveTool({ kind: 'inspect' })}
-              className={cn(
-                'w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded text-sm font-medium border transition',
-                activeToolId === 'inspect'
-                  ? 'bg-violet-500/20 border-violet-500/50 text-violet-300'
-                  : 'border-white/10 text-white/50 hover:border-white/30 hover:text-white/80',
-              )}
-            >
-              <Search className="h-3.5 w-3.5" /> Inspect Cell
-            </button>
+            <div className="flex gap-1.5">
+              <button
+                onClick={() => setActiveTool({ kind: 'inspect' })}
+                className={cn(
+                  'flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded text-sm font-medium border transition',
+                  activeToolId === 'inspect'
+                    ? 'bg-violet-500/20 border-violet-500/50 text-violet-300'
+                    : 'border-white/10 text-white/50 hover:border-white/30 hover:text-white/80',
+                )}
+              >
+                <Search className="h-3.5 w-3.5" /> Inspect Cell
+              </button>
+              <button
+                onClick={() => setActiveTool({ kind: 'eyedropper', sample: null })}
+                title={activeTool.kind === 'eyedropper' && activeTool.sample ? 'Eyedropper (sample loaded — click to stamp)' : 'Eyedropper (click cell to sample)'}
+                className={cn(
+                  'flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded text-sm font-medium border transition',
+                  activeToolId === 'eyedropper'
+                    ? activeTool.kind === 'eyedropper' && activeTool.sample
+                      ? 'bg-cyan-500/20 border-cyan-500/50 text-cyan-300'
+                      : 'bg-cyan-500/10 border-cyan-500/30 text-cyan-400'
+                    : 'border-white/10 text-white/50 hover:border-white/30 hover:text-white/80',
+                )}
+              >
+                <Pipette className="h-3.5 w-3.5" />
+                {activeTool.kind === 'eyedropper' && activeTool.sample ? 'Stamp' : 'Sample'}
+              </button>
+            </div>
 
             <p className="text-xs text-white/45 leading-relaxed">
-              Arrow keys / WASD move ⊕ · E interacts · F toggles fog · N adds a note · right-click erases · middle-drag pans.
+              Arrow keys / WASD move ⊕ · E interacts · F toggles fog · N adds a note · right-click removes last item · middle-drag pans.
             </p>
           </div>
         </aside>

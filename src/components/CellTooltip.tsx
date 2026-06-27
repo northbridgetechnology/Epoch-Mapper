@@ -1,10 +1,28 @@
 'use client'
 
 import type { CellData, EdgeDir, MarkerDef } from '@/lib/types'
-import type { BoundaryData } from '@/lib/engine-types'
+import type { BoundaryData, CellEntity } from '@/lib/engine-types'
 import { baseDef, edgeDef, overlayDef } from '@/lib/constants'
 
 const DIR_LABELS: Record<EdgeDir, string> = { N: 'North', S: 'South', E: 'East', W: 'West' }
+
+const ENTITY_ICONS: Record<CellEntity['t'], string> = {
+  encounter: '⚔️',
+  partyStart: '🏁',
+  mapLink: '🚪',
+  object: '📦',
+  event: '⚡',
+}
+
+function entityLabel(ent: CellEntity): string {
+  switch (ent.t) {
+    case 'encounter': return `Encounter Zone`
+    case 'partyStart': return 'Party Start'
+    case 'mapLink': return 'Map Link'
+    case 'object': return ent.object.kind.charAt(0).toUpperCase() + ent.object.kind.slice(1)
+    case 'event': return `Event (${ent.event.trigger})`
+  }
+}
 
 function boundaryLabel(b: BoundaryData): string {
   if (b.door) return `Door (${b.door.state})`
@@ -43,7 +61,8 @@ export function CellTooltip({
     (cell.base ?? 0) !== 0 ||
     cell.overlays.length > 0 ||
     hasBoundaries ||
-    !!cell.note
+    !!cell.note ||
+    !!cell.entities?.length
 
   if (!hasContent) return null
 
@@ -103,6 +122,17 @@ export function CellTooltip({
                 </div>
               )
             })}
+          </div>
+        )}
+
+        {cell.entities && cell.entities.length > 0 && (
+          <div className="space-y-0.5">
+            {cell.entities.map((ent, i) => (
+              <div key={i} className="flex items-center gap-1.5 text-white/60">
+                <span className="shrink-0">{ENTITY_ICONS[ent.t]}</span>
+                {entityLabel(ent)}
+              </div>
+            ))}
           </div>
         )}
 

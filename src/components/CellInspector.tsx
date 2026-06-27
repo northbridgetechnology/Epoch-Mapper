@@ -535,22 +535,24 @@ export function CellInspector({ x, y, cell, maps, ruleset, onChange, onClose }: 
       </div>
 
       {/* Add entity */}
-      <div className="p-2 border-t border-white/10 relative">
-        <button
-          onClick={() => setShowAddMenu(v => !v)}
-          className="w-full flex items-center justify-center gap-1.5 py-1.5 rounded-md text-xs font-medium text-amber-300/80 hover:text-amber-200 hover:bg-amber-500/10 border border-white/10 hover:border-amber-500/30 transition-colors"
-        >
-          <Plus className="w-3.5 h-3.5" />
-          Add Entity
-        </button>
+      <div className="border-t border-white/10">
+        <div className="p-2">
+          <button
+            onClick={() => setShowAddMenu(v => !v)}
+            className="w-full flex items-center justify-center gap-1.5 py-1.5 rounded-md text-xs font-medium text-amber-300/80 hover:text-amber-200 hover:bg-amber-500/10 border border-white/10 hover:border-amber-500/30 transition-colors"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            Add Entity
+          </button>
+        </div>
 
         {showAddMenu && (
-          <div className="absolute bottom-full left-2 right-2 mb-1 rounded-lg border border-white/15 bg-zinc-900 shadow-xl overflow-hidden z-10">
+          <div className="px-2 pb-2 flex flex-col gap-0.5">
             {(['encounter', 'partyStart', 'mapLink', 'object', 'event'] as CellEntity['t'][]).map(t => (
               <button
                 key={t}
                 onClick={() => addEntity(t)}
-                className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-xs text-white/70 hover:bg-white/8 hover:text-white transition-colors"
+                className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-xs text-white/70 hover:bg-white/8 hover:text-white transition-colors rounded-md"
               >
                 <span className="text-base">{ENTITY_ICONS[t]}</span>
                 {ENTITY_LABELS[t]}
