@@ -21,7 +21,7 @@ import { MarkerPalette } from './MarkerPalette'
 import { PartyWorkspace } from './workspaces/PartyWorkspace'
 import { DatabaseWorkspace } from './workspaces/DatabaseWorkspace'
 import { PlayWorkspace } from './workspaces/PlayWorkspace'
-import type { Character, CellEntity, Formation, ItemInstance, ResolvedEncounter, Ruleset } from '@/lib/engine-types'
+import type { Character, CellEntity, Facing, Formation, ItemInstance, ResolvedEncounter, Ruleset } from '@/lib/engine-types'
 import { makeDefaultRuleset } from '@/lib/default-ruleset'
 import { savePartyTemplate, loadPartyTemplate } from '@/lib/save-state'
 import { checkCellForEncounter, resolveEncounterTable, visitedFlagKey } from '@/lib/encounter-engine'
@@ -186,6 +186,9 @@ export function DungeonMapper({
   const handleCombatAction = useCallback((next: CombatState) => setCombatState(next), [])
   const [inspectedCell, setInspectedCell] = useState<{ x: number; y: number } | null>(null)
   const [shopId, setShopId] = useState<string | null>(null)
+  const [facing, setFacing] = useState<Facing>('N')
+  const facingRef = useRef<Facing>('N')
+  facingRef.current = facing
 
   // Load persisted party template on mount
   useEffect(() => {
@@ -425,6 +428,23 @@ export function DungeonMapper({
     },
     [activeMap, updateActiveMap, revealAround, ruleset, flags, makeEventContext, applyExploreEffect],
   )
+
+  // ── Blobber movement ──────────────────────────────────────────────────────────
+
+  const TURN_LEFT: Record<Facing, Facing> = { N: 'W', W: 'S', S: 'E', E: 'N' }
+  const TURN_RIGHT: Record<Facing, Facing> = { N: 'E', E: 'S', S: 'W', W: 'N' }
+  const FORWARD_DXY: Record<Facing, [number, number]> = { N: [0, -1], S: [0, 1], E: [1, 0], W: [-1, 0] }
+
+  const turnLeft = useCallback(() => setFacing(f => TURN_LEFT[f]), [])
+  const turnRight = useCallback(() => setFacing(f => TURN_RIGHT[f]), [])
+  const stepForward = useCallback(() => {
+    const [dx, dy] = FORWARD_DXY[facingRef.current]
+    movePlayer(dx, dy)
+  }, [movePlayer])
+  const stepBack = useCallback(() => {
+    const [dx, dy] = FORWARD_DXY[facingRef.current]
+    movePlayer(-dx, -dy)
+  }, [movePlayer])
 
   const handleInteract = useCallback(() => {
     if (!activeMap) return
@@ -841,6 +861,18 @@ export function DungeonMapper({
       }
 
       if (!mapperHoveredRef.current && workspaceRef.current !== 'play') return
+
+      if (workspaceRef.current === 'play') {
+        // Blobber controls: W=forward, S=back, A=turn-left, D=turn-right
+        if (e.key === 'w' || e.key === 'W' || e.key === 'ArrowUp') { e.preventDefault(); stepForward(); return }
+        if (e.key === 's' || e.key === 'S' || e.key === 'ArrowDown') { e.preventDefault(); stepBack(); return }
+        if (e.key === 'a' || e.key === 'A' || e.key === 'ArrowLeft') { e.preventDefault(); turnLeft(); return }
+        if (e.key === 'd' || e.key === 'D' || e.key === 'ArrowRight') { e.preventDefault(); turnRight(); return }
+        if (e.key === 'e' || e.key === 'E') { e.preventDefault(); handleInteract(); return }
+        return
+      }
+
+      // Map-mode absolute WASD / arrow keys
       const moves: Record<string, [number, number]> = {
         ArrowUp: [0, -1], ArrowDown: [0, 1], ArrowLeft: [-1, 0], ArrowRight: [1, 0],
         w: [0, -1], s: [0, 1], a: [-1, 0], d: [1, 0],
@@ -879,7 +911,7 @@ export function DungeonMapper({
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
-  }, [activeMap, movePlayer, toggleReveal, handleInteract, openNoteForPlayer, undo, saveEpochmap, exportPdf])
+  }, [activeMap, movePlayer, stepForward, stepBack, turnLeft, turnRight, toggleReveal, handleInteract, openNoteForPlayer, undo, saveEpochmap, exportPdf])
 
   function closeWelcome() {
     setShowWelcome(false)
@@ -982,10 +1014,15 @@ export function DungeonMapper({
             activeMap={activeMap}
             party={party}
             gold={gold}
+            facing={facing}
             customBase={customBase}
             customOverlay={customOverlay}
             isCellRevealed={isCellRevealed}
-            onMovePlayer={movePlayer}
+            onMoveForward={stepForward}
+            onMoveBack={stepBack}
+            onTurnLeft={turnLeft}
+            onTurnRight={turnRight}
+            onInteract={handleInteract}
           />
         </div>
       )}

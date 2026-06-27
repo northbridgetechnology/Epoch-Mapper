@@ -1,11 +1,11 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ArrowUp, ArrowDown, ArrowLeft, ArrowRight, ZoomIn, ZoomOut, Coins } from 'lucide-react'
+import { ArrowUp, ArrowDown, ArrowLeft, ArrowRight, ZoomIn, ZoomOut, Coins, Map, Eye } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { baseDef, overlayDef, edgeDef, DEFAULT_CELL, MIN_CELL, MAX_CELL } from '@/lib/constants'
 import type { CellData, MapData, MarkerDef, EdgeDir } from '@/lib/types'
-import type { Character } from '@/lib/engine-types'
+import type { Character, Facing } from '@/lib/engine-types'
 
 // ── Props ─────────────────────────────────────────────────────────────────────
 
@@ -13,10 +13,15 @@ interface PlayWorkspaceProps {
   activeMap: MapData | null
   party: Character[]
   gold: number
+  facing: Facing
   customBase: Record<number, MarkerDef>
   customOverlay: Record<number, MarkerDef>
   isCellRevealed: (x: number, y: number) => boolean
-  onMovePlayer: (dx: number, dy: number) => void
+  onMoveForward: () => void
+  onMoveBack: () => void
+  onTurnLeft: () => void
+  onTurnRight: () => void
+  onInteract: () => void
 }
 
 // ── Small helpers ─────────────────────────────────────────────────────────────
@@ -109,12 +114,226 @@ function PartyHud({ party, gold }: { party: Character[]; gold: number }) {
   )
 }
 
-// ── D-pad ─────────────────────────────────────────────────────────────────────
+// ── First-person blobber view ─────────────────────────────────────────────────
 
-function DPad({ onMove }: { onMove: (dx: number, dy: number) => void }) {
-  const btn = (dx: number, dy: number, icon: React.ReactNode) => (
+const VW = 320
+const VH = 240
+const MAX_D = 5
+
+type FacingDir = Facing
+
+function facingDelta(f: FacingDir): [number, number] {
+  if (f === 'N') return [0, -1]
+  if (f === 'S') return [0, 1]
+  if (f === 'E') return [1, 0]
+  return [-1, 0]
+}
+
+function rightDelta(f: FacingDir): [number, number] {
+  if (f === 'N') return [1, 0]
+  if (f === 'S') return [-1, 0]
+  if (f === 'E') return [0, 1]
+  return [0, -1]
+}
+
+function leftOf(f: FacingDir): EdgeDir {
+  if (f === 'N') return 'W'
+  if (f === 'S') return 'E'
+  if (f === 'E') return 'N'
+  return 'S'
+}
+
+function rightOf(f: FacingDir): EdgeDir {
+  if (f === 'N') return 'E'
+  if (f === 'S') return 'W'
+  if (f === 'E') return 'S'
+  return 'N'
+}
+
+function frontOf(f: FacingDir): EdgeDir {
+  return f as unknown as EdgeDir
+}
+
+function sliceRect(d: number) {
+  if (d === 0) return { x1: 0, y1: 0, x2: VW, y2: VH }
+  const f = Math.pow(0.7, d)
+  const mx = VW * (1 - f) / 2
+  const my = VH * (1 - f) / 2
+  return { x1: mx, y1: my, x2: VW - mx, y2: VH - my }
+}
+
+function frontColor(d: number): string {
+  const l = Math.max(8, 38 - (d - 1) * 7)
+  return `hsl(220 10% ${l}%)`
+}
+
+function sideColor(d: number): string {
+  const l = Math.max(5, 26 - (d - 1) * 6)
+  return `hsl(220 8% ${l}%)`
+}
+
+function ceilColor(): string {
+  return 'hsl(220 12% 6%)'
+}
+
+function floorColor(): string {
+  return 'hsl(220 8% 11%)'
+}
+
+interface FirstPersonViewProps {
+  map: MapData
+  facing: Facing
+  customBase: Record<number, MarkerDef>
+  customOverlay: Record<number, MarkerDef>
+  isCellRevealed: (x: number, y: number) => boolean
+}
+
+function isWall(map: MapData, x: number, y: number, customBase: Record<number, MarkerDef>): boolean {
+  const cell = map.cells[`${x},${y}`]
+  if (!cell) return true
+  const def = baseDef(cell.base ?? 0, customBase)
+  return (cell.base ?? 0) === 0 || def.label.toLowerCase().includes('wall')
+}
+
+function hasEdgeWall(map: MapData, x: number, y: number, dir: EdgeDir): boolean {
+  const cell = map.cells[`${x},${y}`]
+  if (!cell) return false
+  return (cell.edges[dir] ?? 0) !== 0
+}
+
+function FirstPersonView({ map, facing, customBase, customOverlay, isCellRevealed }: FirstPersonViewProps) {
+  const [fd0, fd1] = facingDelta(facing)
+  const [rd0, rd1] = rightDelta(facing)
+  const px = map.playerX
+  const py = map.playerY
+
+  function cellAt(ahead: number, side: number): [number, number] {
+    return [px + fd0 * ahead + rd0 * side, py + fd1 * ahead + rd1 * side]
+  }
+
+  function hasFrontWall(ahead: number): boolean {
+    const [cx, cy] = cellAt(ahead, 0)
+    // Check edge marker on current cell facing forward
+    if (hasEdgeWall(map, cx, cy, frontOf(facing))) return true
+    const [nx, ny] = cellAt(ahead + 1, 0)
+    return isWall(map, nx, ny, customBase) || !isCellRevealed(nx, ny)
+  }
+
+  function hasSideWall(ahead: number, side: 'left' | 'right'): boolean {
+    const s = side === 'right' ? 1 : -1
+    const [cx, cy] = cellAt(ahead, 0)
+    const dir = side === 'right' ? rightOf(facing) : leftOf(facing)
+    if (hasEdgeWall(map, cx, cy, dir)) return true
+    const [sx, sy] = cellAt(ahead, s)
+    return isWall(map, sx, sy, customBase) || !isCellRevealed(sx, sy)
+  }
+
+  // Build SVG paths — painter's algorithm: farthest first
+  const rects: React.ReactNode[] = []
+
+  // Sky / floor gradient slabs (full-width, constant across all depths)
+  rects.push(
+    <rect key="ceil" x={0} y={0} width={VW} height={VH / 2} fill={ceilColor()} />,
+    <rect key="floor" x={0} y={VH / 2} width={VW} height={VH / 2} fill={floorColor()} />,
+  )
+
+  for (let d = MAX_D; d >= 1; d--) {
+    const cur = sliceRect(d - 1)
+    const far = sliceRect(d)
+
+    // Front wall at distance d
+    if (hasFrontWall(d - 1)) {
+      rects.push(
+        <rect
+          key={`front-${d}`}
+          x={far.x1} y={far.y1}
+          width={far.x2 - far.x1} height={far.y2 - far.y1}
+          fill={frontColor(d)}
+          stroke="hsl(220 10% 4%)" strokeWidth={0.5}
+        />,
+      )
+    }
+
+    // Left wall side face
+    if (hasSideWall(d - 1, 'left')) {
+      // Trapezoid: connects current depth slice left edge to far depth slice left edge
+      const points = [
+        `${cur.x1},${cur.y1}`,
+        `${far.x1},${far.y1}`,
+        `${far.x1},${far.y2}`,
+        `${cur.x1},${cur.y2}`,
+      ].join(' ')
+      rects.push(
+        <polygon key={`left-${d}`} points={points} fill={sideColor(d)} stroke="hsl(220 10% 4%)" strokeWidth={0.5} />,
+      )
+    }
+
+    // Right wall side face
+    if (hasSideWall(d - 1, 'right')) {
+      const points = [
+        `${cur.x2},${cur.y1}`,
+        `${far.x2},${far.y1}`,
+        `${far.x2},${far.y2}`,
+        `${cur.x2},${cur.y2}`,
+      ].join(' ')
+      rects.push(
+        <polygon key={`right-${d}`} points={points} fill={sideColor(d)} stroke="hsl(220 10% 4%)" strokeWidth={0.5} />,
+      )
+    }
+  }
+
+  // Entity icons on the nearest front face (depth 1)
+  const [fx, fy] = cellAt(1, 0)
+  const frontCell = map.cells[`${fx},${fy}`]
+  const overlayIcons = frontCell?.overlays?.map(o => overlayDef(o, customOverlay)?.icon).filter(Boolean) ?? []
+  if (overlayIcons.length > 0 && !hasFrontWall(0)) {
+    const near = sliceRect(0)
+    const cx = (near.x1 + near.x2) / 2
+    const cy = (near.y1 + near.y2) / 2
+    const fontSize = Math.max(10, (near.x2 - near.x1) * 0.22)
+    rects.push(
+      <text key="entity" x={cx} y={cy} textAnchor="middle" dominantBaseline="middle"
+        fontSize={fontSize} fill="rgba(255,255,255,0.85)">
+        {overlayIcons[0]}
+      </text>,
+    )
+  }
+
+  // Compass (top-right corner)
+  const compassLabels: Record<Facing, string> = { N: '↑N', S: '↓S', E: '→E', W: '←W' }
+  rects.push(
+    <rect key="compass-bg" x={VW - 30} y={4} width={26} height={14} rx={3} fill="rgba(0,0,0,0.55)" />,
+    <text key="compass" x={VW - 17} y={14} textAnchor="middle" fontSize={9}
+      fontFamily="monospace" fill="hsl(45 100% 70%)">{compassLabels[facing]}</text>,
+  )
+
+  return (
+    <svg
+      viewBox={`0 0 ${VW} ${VH}`}
+      width="100%" height="100%"
+      style={{ display: 'block', imageRendering: 'pixelated' }}
+      xmlns="http://www.w3.org/2000/svg"
+    >
+      {rects}
+    </svg>
+  )
+}
+
+// ── Blobber D-pad ─────────────────────────────────────────────────────────────
+
+function BlobberDPad({
+  onForward, onBack, onLeft, onRight, onInteract,
+}: {
+  onForward: () => void
+  onBack: () => void
+  onLeft: () => void
+  onRight: () => void
+  onInteract: () => void
+}) {
+  const btn = (onClick: () => void, icon: React.ReactNode, label: string) => (
     <button
-      onClick={() => onMove(dx, dy)}
+      onClick={onClick}
+      title={label}
       className="w-9 h-9 grid place-items-center rounded-lg bg-zinc-800 hover:bg-zinc-700 active:bg-zinc-600 border border-white/10 text-white/60 hover:text-white transition-colors"
     >
       {icon}
@@ -122,26 +341,38 @@ function DPad({ onMove }: { onMove: (dx: number, dy: number) => void }) {
   )
   return (
     <div className="grid grid-cols-3 grid-rows-3 gap-1 flex-shrink-0">
-      <div />{btn(0, -1, <ArrowUp className="w-4 h-4" />)}<div />
-      {btn(-1, 0, <ArrowLeft className="w-4 h-4" />)}
-      <div className="w-9 h-9 grid place-items-center text-white/15 text-xs">⊕</div>
-      {btn(1, 0, <ArrowRight className="w-4 h-4" />)}
-      <div />{btn(0, 1, <ArrowDown className="w-4 h-4" />)}<div />
+      <div />
+      {btn(onForward, <ArrowUp className="w-4 h-4" />, 'Forward (W)')}
+      <div />
+      {btn(onLeft, <ArrowLeft className="w-4 h-4" />, 'Turn Left (A)')}
+      <button
+        onClick={onInteract}
+        title="Interact (E)"
+        className="w-9 h-9 grid place-items-center rounded-lg bg-amber-800/60 hover:bg-amber-700/60 active:bg-amber-600/60 border border-amber-500/30 text-amber-300 hover:text-amber-200 transition-colors text-xs font-bold"
+      >
+        E
+      </button>
+      {btn(onRight, <ArrowRight className="w-4 h-4" />, 'Turn Right (D)')}
+      <div />
+      {btn(onBack, <ArrowDown className="w-4 h-4" />, 'Back (S)')}
+      <div />
     </div>
   )
 }
 
-// ── Dungeon viewport ──────────────────────────────────────────────────────────
+// ── Dungeon viewport (map mode) ───────────────────────────────────────────────
 
 function DungeonViewport({
   map,
   cellSize,
+  facing,
   customBase,
   customOverlay,
   isCellRevealed,
 }: {
   map: MapData
   cellSize: number
+  facing: Facing
   customBase: Record<number, MarkerDef>
   customOverlay: Record<number, MarkerDef>
   isCellRevealed: (x: number, y: number) => boolean
@@ -174,6 +405,9 @@ function DungeonViewport({
   const minY = py - Math.floor(rows / 2)
   const gridW = cols * step - 1
   const gridH = rows * step - 1
+
+  // Direction arrow for facing indicator
+  const facingArrow: Record<Facing, string> = { N: '↑', S: '↓', E: '→', W: '←' }
 
   return (
     <div ref={containerRef} className="flex-1 min-h-0 grid place-items-center bg-zinc-900/40 overflow-hidden">
@@ -233,9 +467,11 @@ function DungeonViewport({
                         {isPlayer && (
                           <div className="absolute inset-0 grid place-items-center pointer-events-none z-20">
                             <div
-                              className="rounded-full bg-amber-300 shadow shadow-amber-400"
-                              style={{ width: Math.max(6, cellSize * 0.35), height: Math.max(6, cellSize * 0.35) }}
-                            />
+                              className="rounded-full bg-amber-300 shadow shadow-amber-400 grid place-items-center"
+                              style={{ width: Math.max(6, cellSize * 0.5), height: Math.max(6, cellSize * 0.5), fontSize: Math.max(6, cellSize * 0.3) }}
+                            >
+                              <span style={{ lineHeight: 1, color: '#1a1005' }}>{facingArrow[facing]}</span>
+                            </div>
                           </div>
                         )}
 
@@ -278,12 +514,18 @@ export function PlayWorkspace({
   activeMap,
   party,
   gold,
+  facing,
   customBase,
   customOverlay,
   isCellRevealed,
-  onMovePlayer,
+  onMoveForward,
+  onMoveBack,
+  onTurnLeft,
+  onTurnRight,
+  onInteract,
 }: PlayWorkspaceProps) {
   const [cellSize, setCellSize] = useState(DEFAULT_CELL + 6)
+  const [view, setView] = useState<'3d' | 'map'>('3d')
 
   const zoom = useCallback((delta: number) => {
     setCellSize(s => Math.max(MIN_CELL, Math.min(MAX_CELL, s + delta)))
@@ -309,32 +551,71 @@ export function PlayWorkspace({
           <span className="font-semibold text-white/70">{activeMap.name}</span>
           <span className="text-white/25">·</span>
           <span className="font-mono">({px}, {py})</span>
+          <span className="text-white/25">·</span>
+          <span className="text-amber-400/70 font-mono">{facing}</span>
         </div>
         <div className="flex items-center gap-1">
-          <button onClick={() => zoom(-2)} className="w-6 h-6 grid place-items-center rounded text-white/30 hover:text-white hover:bg-white/10">
-            <ZoomOut className="w-3.5 h-3.5" />
+          {/* View toggle */}
+          <button
+            onClick={() => setView(v => v === '3d' ? 'map' : '3d')}
+            title={view === '3d' ? 'Switch to map view' : 'Switch to 3D view'}
+            className={cn(
+              'flex items-center gap-1 px-2 h-6 rounded text-xs transition-colors',
+              'text-white/40 hover:text-white hover:bg-white/10',
+            )}
+          >
+            {view === '3d' ? <Map className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+            {view === '3d' ? 'Map' : '3D'}
           </button>
-          <button onClick={() => zoom(2)} className="w-6 h-6 grid place-items-center rounded text-white/30 hover:text-white hover:bg-white/10">
-            <ZoomIn className="w-3.5 h-3.5" />
-          </button>
+          {view === 'map' && (
+            <>
+              <button onClick={() => zoom(-2)} className="w-6 h-6 grid place-items-center rounded text-white/30 hover:text-white hover:bg-white/10">
+                <ZoomOut className="w-3.5 h-3.5" />
+              </button>
+              <button onClick={() => zoom(2)} className="w-6 h-6 grid place-items-center rounded text-white/30 hover:text-white hover:bg-white/10">
+                <ZoomIn className="w-3.5 h-3.5" />
+              </button>
+            </>
+          )}
         </div>
       </div>
 
-      {/* Dungeon viewport */}
-      <DungeonViewport
-        map={activeMap}
-        cellSize={cellSize}
-        customBase={customBase}
-        customOverlay={customOverlay}
-        isCellRevealed={isCellRevealed}
-      />
+      {/* Main viewport */}
+      {view === '3d' ? (
+        <div className="flex-1 min-h-0 grid place-items-center bg-zinc-950 overflow-hidden p-4">
+          <div className="w-full max-w-md aspect-[4/3] rounded-lg overflow-hidden border border-white/10 shadow-2xl">
+            <FirstPersonView
+              map={activeMap}
+              facing={facing}
+              customBase={customBase}
+              customOverlay={customOverlay}
+              isCellRevealed={isCellRevealed}
+            />
+          </div>
+        </div>
+      ) : (
+        <DungeonViewport
+          map={activeMap}
+          cellSize={cellSize}
+          facing={facing}
+          customBase={customBase}
+          customOverlay={customOverlay}
+          isCellRevealed={isCellRevealed}
+        />
+      )}
 
-      {/* Bottom bar: party HUD + D-pad */}
+      {/* Bottom bar: party HUD + blobber D-pad */}
       <div className="flex items-end gap-3 px-3 py-2 border-t border-white/10 bg-zinc-950/60 flex-shrink-0">
         <div className="flex-1 min-w-0">
           <PartyHud party={party} gold={gold} />
         </div>
-        <DPad onMove={onMovePlayer} />
+        <BlobberDPad
+          onForward={onMoveForward}
+          onBack={onMoveBack}
+          onLeft={onTurnLeft}
+          onRight={onTurnRight}
+          onInteract={onInteract}
+        />
       </div>
 
     </div>
