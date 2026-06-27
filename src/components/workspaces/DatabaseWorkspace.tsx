@@ -1,16 +1,17 @@
 'use client'
 
 import { useState } from 'react'
-import { Plus, Trash2, Package, List, Skull, Swords, Sparkles, Zap } from 'lucide-react'
+import { Plus, Trash2, Package, List, Skull, Swords, Sparkles, Zap, Store } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import type { Effect, EnemyDef, EncounterTableDef, ItemDef, LootTableDef, SpellDef, StatusEffectDef, Ruleset } from '@/lib/engine-types'
+import type { Effect, EnemyDef, EncounterTableDef, ItemDef, LootTableDef, ShopDef, SpellDef, StatusEffectDef, Ruleset } from '@/lib/engine-types'
 import { SchemaForm } from '../forms/SchemaForm'
 import { EffectBuilder } from '../forms/EffectBuilder'
 import { ITEM_SCHEMA, LOOT_TABLE_SCHEMA, blankItem } from '@/lib/item-schema'
 import { ENEMY_SCHEMA, ENCOUNTER_TABLE_SCHEMA, blankEnemy } from '@/lib/enemy-schema'
 import { SPELL_SCHEMA, STATUS_SCHEMA, blankSpell, blankStatusEffect } from '@/lib/spell-schema'
+import { SHOP_SCHEMA, blankShop } from '@/lib/shop-schema'
 
-type Category = 'items' | 'loot_tables' | 'bestiary' | 'encounters' | 'spells' | 'status_effects'
+type Category = 'items' | 'loot_tables' | 'bestiary' | 'encounters' | 'spells' | 'status_effects' | 'shops'
 
 const CATEGORIES: { id: Category; icon: React.ReactNode; label: string }[] = [
   { id: 'items',          icon: <Package className="w-4 h-4" />,  label: 'Items' },
@@ -19,6 +20,7 @@ const CATEGORIES: { id: Category; icon: React.ReactNode; label: string }[] = [
   { id: 'encounters',     icon: <Swords className="w-4 h-4" />,   label: 'Encounter Tables' },
   { id: 'spells',         icon: <Sparkles className="w-4 h-4" />, label: 'Spells' },
   { id: 'status_effects', icon: <Zap className="w-4 h-4" />,      label: 'Status Effects' },
+  { id: 'shops',          icon: <Store className="w-4 h-4" />,    label: 'Shops' },
 ]
 
 // ── Item entry list ───────────────────────────────────────────────────────────
@@ -686,6 +688,149 @@ function StatusEditor({ status, onChange }: { status: StatusEffectDef; onChange:
   )
 }
 
+// ── Shop list ─────────────────────────────────────────────────────────────────
+
+function ShopList({
+  shops,
+  selectedId,
+  onSelect,
+  onAdd,
+  onDelete,
+}: {
+  shops: ShopDef[]
+  selectedId: string | null
+  onSelect: (id: string) => void
+  onAdd: () => void
+  onDelete: (id: string) => void
+}) {
+  return (
+    <div className="flex flex-col h-full min-h-0">
+      <div className="flex items-center justify-between px-3 py-2 border-b border-white/10">
+        <span className="text-xs font-semibold text-white/60 uppercase tracking-wide">
+          Shops ({shops.length})
+        </span>
+        <button onClick={onAdd} className="flex items-center gap-1 px-2 py-0.5 rounded text-xs text-amber-300/80 hover:text-amber-200 hover:bg-amber-500/10">
+          <Plus className="w-3 h-3" /> New
+        </button>
+      </div>
+      <div className="flex-1 overflow-y-auto p-1.5 space-y-0.5 min-h-0">
+        {shops.length === 0 && (
+          <div className="text-center text-white/25 text-xs py-6">No shops yet — click New</div>
+        )}
+        {shops.map(s => (
+          <div
+            key={s.id}
+            className={cn(
+              'flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer group',
+              selectedId === s.id ? 'bg-amber-950/40 text-white' : 'text-white/70 hover:bg-white/5',
+            )}
+            onClick={() => onSelect(s.id)}
+          >
+            <span className="text-base w-6 text-center flex-shrink-0">{s.icon ?? '🏪'}</span>
+            <div className="flex-1 min-w-0">
+              <div className="text-sm truncate">{s.name}</div>
+              <div className="text-xs text-white/35">{s.stock.length} item{s.stock.length !== 1 ? 's' : ''} · {s.buys ? 'buys' : 'no buy'}</div>
+            </div>
+            <button onClick={ev => { ev.stopPropagation(); onDelete(s.id) }} className="opacity-0 group-hover:opacity-100 p-0.5 rounded text-white/30 hover:text-red-400">
+              <Trash2 className="w-3 h-3" />
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// ── Shop editor ───────────────────────────────────────────────────────────────
+
+function ShopEditor({
+  shop,
+  ruleset,
+  onChange,
+}: {
+  shop: ShopDef
+  ruleset: Ruleset
+  onChange: (s: ShopDef) => void
+}) {
+  function addStockEntry() {
+    const def = ruleset.items[0]
+    if (!def) return
+    onChange({ ...shop, stock: [...shop.stock, { item: def.id }] })
+  }
+
+  function updateStockEntry(idx: number, field: string, value: unknown) {
+    const stock = shop.stock.map((e, i) => i === idx ? { ...e, [field]: value } : e)
+    onChange({ ...shop, stock })
+  }
+
+  function removeStockEntry(idx: number) {
+    onChange({ ...shop, stock: shop.stock.filter((_, i) => i !== idx) })
+  }
+
+  return (
+    <div className="p-4 space-y-4 overflow-y-auto h-full">
+      <div className="flex items-center gap-2 mb-1">
+        <span className="text-2xl">{shop.icon ?? '🏪'}</span>
+        <div>
+          <div className="text-base font-bold text-white/90">{shop.name}</div>
+          <div className="text-xs text-white/40 font-mono">{shop.id}</div>
+        </div>
+      </div>
+
+      <SchemaForm
+        schema={SHOP_SCHEMA}
+        value={shop as unknown as Record<string, unknown>}
+        onChange={v => onChange({ ...shop, ...(v as Partial<ShopDef>) })}
+      />
+
+      {/* Stock */}
+      <div className="pt-2 border-t border-white/10">
+        <div className="flex items-center justify-between mb-1.5">
+          <span className="text-xs font-medium text-white/50 uppercase tracking-wide">Stock</span>
+          <button onClick={addStockEntry} disabled={ruleset.items.length === 0} className="flex items-center gap-1 px-2 py-0.5 rounded text-xs text-amber-300/80 hover:text-amber-200 hover:bg-amber-500/10 disabled:opacity-30">
+            <Plus className="w-3 h-3" /> Add
+          </button>
+        </div>
+
+        {ruleset.items.length === 0 && (
+          <div className="text-xs text-white/25 text-center py-2">Define some items first</div>
+        )}
+
+        <div className="space-y-1.5">
+          {shop.stock.map((entry, idx) => {
+            const def = ruleset.items.find(i => i.id === entry.item)
+            return (
+              <div key={idx} className="flex items-center gap-2 rounded bg-zinc-800 border border-white/10 p-2">
+                <select
+                  value={entry.item}
+                  onChange={e => updateStockEntry(idx, 'item', e.target.value)}
+                  className="flex-1 px-1.5 py-0.5 rounded bg-zinc-700 border border-white/10 text-xs text-white/90 focus:outline-none"
+                >
+                  {ruleset.items.map(i => <option key={i.id} value={i.id}>{i.icon} {i.name}</option>)}
+                </select>
+                <div className="flex items-center gap-1">
+                  <span className="text-xs text-white/30">Price</span>
+                  <input
+                    type="number" min={0}
+                    value={entry.price ?? def?.value ?? 0}
+                    onChange={e => updateStockEntry(idx, 'price', e.target.valueAsNumber || 0)}
+                    placeholder={String(def?.value ?? 0)}
+                    className="w-16 px-1 py-0.5 rounded bg-zinc-700 border border-white/10 text-xs font-mono text-white/90 focus:outline-none"
+                  />
+                  <span className="text-xs text-white/30">g</span>
+                </div>
+                <button onClick={() => removeStockEntry(idx)} className="p-0.5 rounded text-white/30 hover:text-red-400">
+                  <Trash2 className="w-3 h-3" />
+                </button>
+              </div>
+            )
+          })}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── Main workspace ─────────────────────────────────────────────────────────────
 
 interface DatabaseWorkspaceProps {
@@ -699,6 +844,7 @@ let _enemySeq = 1
 let _encSeq = 1
 let _spellSeq = 1
 let _statusSeq = 1
+let _shopSeq = 1
 
 export function DatabaseWorkspace({ ruleset, onRulesetChange }: DatabaseWorkspaceProps) {
   const [category, setCategory] = useState<Category>('items')
@@ -861,6 +1007,28 @@ export function DatabaseWorkspace({ ruleset, onRulesetChange }: DatabaseWorkspac
     if (selectedId === id) setSelectedId(next[0]?.id ?? null)
   }
 
+  // ── shops ──
+
+  const selectedShop = ruleset.shops.find(s => s.id === selectedId) ?? null
+
+  function addShop() {
+    const id = `shop.shop_${_shopSeq++}`
+    const shop: ShopDef = blankShop(id)
+    onRulesetChange({ ...ruleset, shops: [...ruleset.shops, shop] })
+    setSelectedId(id)
+    setCategory('shops')
+  }
+
+  function updateShop(shop: ShopDef) {
+    onRulesetChange({ ...ruleset, shops: ruleset.shops.map(s => s.id === shop.id ? shop : s) })
+  }
+
+  function deleteShop(id: string) {
+    const next = ruleset.shops.filter(s => s.id !== id)
+    onRulesetChange({ ...ruleset, shops: next })
+    if (selectedId === id) setSelectedId(next[0]?.id ?? null)
+  }
+
   function handleCategoryChange(cat: Category) {
     setCategory(cat)
     if (cat === 'items')          setSelectedId(ruleset.items[0]?.id ?? null)
@@ -869,6 +1037,7 @@ export function DatabaseWorkspace({ ruleset, onRulesetChange }: DatabaseWorkspac
     if (cat === 'encounters')     setSelectedId(ruleset.encounterTables[0]?.id ?? null)
     if (cat === 'spells')         setSelectedId(ruleset.spells[0]?.id ?? null)
     if (cat === 'status_effects') setSelectedId(ruleset.statusEffects[0]?.id ?? null)
+    if (cat === 'shops')          setSelectedId(ruleset.shops[0]?.id ?? null)
   }
 
   return (
@@ -912,6 +1081,9 @@ export function DatabaseWorkspace({ ruleset, onRulesetChange }: DatabaseWorkspac
         {category === 'status_effects' && (
           <StatusList statuses={ruleset.statusEffects} selectedId={selectedId} onSelect={setSelectedId} onAdd={addStatus} onDelete={deleteStatus} />
         )}
+        {category === 'shops' && (
+          <ShopList shops={ruleset.shops} selectedId={selectedId} onSelect={setSelectedId} onAdd={addShop} onDelete={deleteShop} />
+        )}
       </div>
 
       {/* Detail editor */}
@@ -928,6 +1100,8 @@ export function DatabaseWorkspace({ ruleset, onRulesetChange }: DatabaseWorkspac
           <SpellEditor spell={selectedSpell} onChange={updateSpell} />
         ) : category === 'status_effects' && selectedStatus ? (
           <StatusEditor status={selectedStatus} onChange={updateStatus} />
+        ) : category === 'shops' && selectedShop ? (
+          <ShopEditor shop={selectedShop} ruleset={ruleset} onChange={updateShop} />
         ) : (
           <div className="h-full flex items-center justify-center text-white/20 text-sm flex-col gap-2">
             <Package className="w-8 h-8 opacity-30" />

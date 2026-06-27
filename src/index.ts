@@ -138,7 +138,7 @@ export { applyEffectToChar, applyConsumable } from './lib/apply-effects'
 
 // Encounter engine (Phase E3)
 export { resolveEncounterTable, checkCellForEncounter, visitedFlagKey } from './lib/encounter-engine'
-export type { ResolvedEncounter, EnemyInstance, CellEntity } from './lib/engine-types'
+export type { ResolvedEncounter, EnemyInstance, CellEntity, ObjectInstance, Condition, CellEvent } from './lib/engine-types'
 
 // Encounter modal (Phase E3)
 export { EncounterModal } from './components/EncounterModal'
@@ -156,3 +156,22 @@ export type { CombatActor, CombatLogEntry, CombatPhase, CombatState } from './li
 
 // Combat screen (Phase E4)
 export { CombatScreen } from './components/CombatScreen'
+
+// Event engine (Phase E6)
+export {
+  checkConditions,
+  resolveExploreEffects,
+  getTriggeredEvents,
+  getInteractableObjects,
+  visitedEventFlagKey,
+  objectUsedFlagKey,
+  resolveLootTable,
+} from './lib/event-engine'
+export type { EventContext, ExploreEffect } from './lib/event-engine'
+
+// Shop schema helpers (Phase E6)
+export { SHOP_SCHEMA, blankShop } from './lib/shop-schema'
+
+// Cell inspector + shop modal (Phase E6)
+export { CellInspector } from './components/CellInspector'
+export { ShopModal } from './components/ShopModal'

@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Plus, Trash2, MapPin, Eraser, X } from 'lucide-react'
+import { Plus, Trash2, MapPin, Eraser, X, Search } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn, uid } from '@/lib/utils'
 import {
@@ -21,13 +21,16 @@ import { MarkerPalette } from './MarkerPalette'
 import { PartyWorkspace } from './workspaces/PartyWorkspace'
 import { DatabaseWorkspace } from './workspaces/DatabaseWorkspace'
 import { PlayWorkspace } from './workspaces/PlayWorkspace'
-import type { Character, Formation, ItemInstance, ResolvedEncounter, Ruleset } from '@/lib/engine-types'
+import type { Character, CellEntity, Formation, ItemInstance, ResolvedEncounter, Ruleset } from '@/lib/engine-types'
 import { makeDefaultRuleset } from '@/lib/default-ruleset'
 import { savePartyTemplate, loadPartyTemplate } from '@/lib/save-state'
-import { checkCellForEncounter, visitedFlagKey } from '@/lib/encounter-engine'
+import { checkCellForEncounter, resolveEncounterTable, visitedFlagKey } from '@/lib/encounter-engine'
 import { EncounterModal } from './EncounterModal'
 import { CombatScreen } from './CombatScreen'
 import { initCombat, applyCombatOutcome, type CombatState } from '@/lib/combat-engine'
+import { CellInspector } from './CellInspector'
+import { ShopModal } from './ShopModal'
+import { getTriggeredEvents, resolveExploreEffects, getInteractableObjects, type ExploreEffect, type EventContext } from '@/lib/event-engine'
 
 const DRAFT_KEY = 'epochmapper.draft'
 const WELCOME_KEY = 'epochmapper.welcomed'
@@ -42,9 +45,11 @@ type Tool =
   | { kind: 'edge'; value: number }
   | { kind: 'erase' }
   | { kind: 'player' }
+  | { kind: 'inspect' }
 
 function toolId(t: Tool): string {
-  return t.kind === 'erase' || t.kind === 'player' ? t.kind : `${t.kind}:${t.value}`
+  if (t.kind === 'erase' || t.kind === 'player' || t.kind === 'inspect') return t.kind
+  return `${t.kind}:${t.value}`
 }
 
 // ── Cell helpers ───────────────────────────────────────────────────────────────
@@ -52,7 +57,7 @@ function toolId(t: Tool): string {
 const EMPTY_CELL: CellData = { base: 0, overlays: [], edges: {} }
 
 function isCellEmpty(c: CellData) {
-  return (c.base ?? 0) === 0 && c.overlays.length === 0 && Object.keys(c.edges).length === 0 && !c.note
+  return (c.base ?? 0) === 0 && c.overlays.length === 0 && Object.keys(c.edges).length === 0 && !c.note && !c.entities?.length
 }
 
 function getEdgeDir(relX: number, relY: number): EdgeDir | null {
@@ -179,6 +184,8 @@ export function DungeonMapper({
   const [activeEncounter, setActiveEncounter] = useState<ResolvedEncounter | null>(null)
   const [combatState, setCombatState] = useState<CombatState | null>(null)
   const handleCombatAction = useCallback((next: CombatState) => setCombatState(next), [])
+  const [inspectedCell, setInspectedCell] = useState<{ x: number; y: number } | null>(null)
+  const [shopId, setShopId] = useState<string | null>(null)
 
   // Load persisted party template on mount
   useEffect(() => {
@@ -223,6 +230,7 @@ export function DungeonMapper({
     setRomHash(session.romHash ?? '')
     setCustomMarkers(session.customMarkers ?? [])
     setMaps(session.maps)
+    if (session.ruleset) setRuleset(session.ruleset)
     setActiveIdx(0)
     // Custom marker IDs are monotonic within a session and never reused (§5.3).
     // Recover the counter from a persisted value, falling back to max(used)+1.
@@ -255,7 +263,7 @@ export function DungeonMapper({
     if (!hydrated) return
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
     saveTimerRef.current = setTimeout(() => {
-      const session: EpochmapFile = { version: 1, gameTitle, romHash, customMarkers, maps }
+      const session: EpochmapFile = { version: 2, gameTitle, romHash, customMarkers, maps, ruleset }
       if (onSessionChange) {
         onSessionChange(session)
         return
@@ -269,7 +277,7 @@ export function DungeonMapper({
     return () => {
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
     }
-  }, [maps, gameTitle, romHash, customMarkers, hydrated, onSessionChange])
+  }, [maps, gameTitle, romHash, customMarkers, ruleset, hydrated, onSessionChange])
 
   // ── Map mutation helpers ──────────────────────────────────────────────────────
 
@@ -317,6 +325,68 @@ export function DungeonMapper({
     return changed ? [...set] : (map.revealedChunks ?? [])
   }, [])
 
+  const applyExploreEffect = useCallback((result: ExploreEffect) => {
+    if (Object.keys(result.flagSets).length > 0) {
+      setFlags(prev => ({ ...prev, ...result.flagSets }))
+    }
+    result.messages.forEach(msg => toast(msg))
+    if (result.goldDelta !== 0) {
+      setGold(g => g + result.goldDelta)
+    }
+    if (result.itemsGained.length > 0) {
+      setInventory(prev => {
+        let inv = [...prev]
+        for (const { item, qty } of result.itemsGained) {
+          const idx = inv.findIndex(i => i.def === item)
+          if (idx >= 0) inv[idx] = { ...inv[idx], qty: inv[idx].qty + qty }
+          else inv = [...inv, { def: item, qty }]
+        }
+        return inv
+      })
+    }
+    if (result.itemsLost.length > 0) {
+      setInventory(prev =>
+        prev
+          .map(i => {
+            const lost = result.itemsLost.find(l => l.item === i.def)
+            return lost ? { ...i, qty: i.qty - lost.qty } : i
+          })
+          .filter(i => i.qty > 0),
+      )
+    }
+    if (result.teleportTo) {
+      const { x, y } = result.teleportTo
+      updateActiveMap((m) => ({ playerX: x, playerY: y, revealedChunks: revealAround(m, x, y) }))
+      setCameraOffset({ x: 0, y: 0 })
+    }
+    if (result.openShop) {
+      setShopId(result.openShop)
+    }
+    if (result.startCombat) {
+      const tableId = result.startCombat
+      const table = ruleset.encounterTables.find(t => t.id === tableId)
+      if (table) {
+        const enemies = resolveEncounterTable(table, ruleset, Math.random)
+        if (enemies.length > 0) {
+          setActiveEncounter({
+            tableId: table.id,
+            tableName: table.name,
+            enemies,
+            xpReward: enemies.reduce((s, e) => s + e.xp, 0),
+            goldReward: enemies.reduce((s, e) => s + e.gold, 0),
+          })
+        }
+      }
+    }
+  }, [updateActiveMap, revealAround, ruleset, setInventory, setGold, setFlags, setShopId, setActiveEncounter])
+
+  const makeEventContext = useCallback((): EventContext => ({
+    flags,
+    party,
+    inventory,
+    gold,
+  }), [flags, party, inventory, gold])
+
   const movePlayer = useCallback(
     (dx: number, dy: number) => {
       if (!activeMap) return
@@ -325,20 +395,74 @@ export function DungeonMapper({
       updateActiveMap((m) => ({ playerX: nx, playerY: ny, revealedChunks: revealAround(m, nx, ny) }))
       setCameraOffset({ x: 0, y: 0 })
 
-      // Encounter check
       const cellKey = `${nx},${ny}`
       const cell = activeMap.cells[cellKey]
       if (cell) {
+        // Encounter check
         const encounter = checkCellForEncounter(cell, flags, ruleset, Math.random)
         if (encounter) {
           setActiveEncounter(encounter)
           const visitedKey = visitedFlagKey(encounter.tableId, nx, ny)
           setFlags(prev => ({ ...prev, [visitedKey]: true }))
         }
+
+        // onEnter events
+        const ctx = makeEventContext()
+        const triggered = getTriggeredEvents(cell, 'onEnter', ctx)
+        if (triggered.length > 0) {
+          const allEffects = triggered.flatMap(({ event }) => event.effects)
+          const result = resolveExploreEffects(allEffects, ctx)
+          const newFlags: Record<string, boolean | number | string> = {}
+          for (const { event, flagKey } of triggered) {
+            if (event.once) newFlags[flagKey] = true
+          }
+          if (Object.keys(newFlags).length > 0) {
+            setFlags(prev => ({ ...prev, ...newFlags }))
+          }
+          applyExploreEffect(result)
+        }
       }
     },
-    [activeMap, updateActiveMap, revealAround, ruleset, flags],
+    [activeMap, updateActiveMap, revealAround, ruleset, flags, makeEventContext, applyExploreEffect],
   )
+
+  const handleInteract = useCallback(() => {
+    if (!activeMap) return
+    const cellKey = `${activeMap.playerX},${activeMap.playerY}`
+    const cell = activeMap.cells[cellKey]
+    if (!cell) return
+    const ctx = makeEventContext()
+
+    // onInteract events
+    const triggered = getTriggeredEvents(cell, 'onInteract', ctx)
+    if (triggered.length > 0) {
+      const allEffects = triggered.flatMap(({ event }) => event.effects)
+      const result = resolveExploreEffects(allEffects, ctx)
+      const newFlags: Record<string, boolean | number | string> = {}
+      for (const { event, flagKey } of triggered) {
+        if (event.once) newFlags[flagKey] = true
+      }
+      if (Object.keys(newFlags).length > 0) {
+        setFlags(prev => ({ ...prev, ...newFlags }))
+      }
+      applyExploreEffect(result)
+      return
+    }
+
+    // Object interactions
+    const objects = getInteractableObjects(cell)
+    for (const obj of objects) {
+      if (obj.onInteract?.length) {
+        const result = resolveExploreEffects(obj.onInteract, ctx)
+        applyExploreEffect(result)
+      } else if (obj.shop) {
+        setShopId(obj.shop)
+      } else if (obj.dialogue) {
+        toast(obj.dialogue)
+      }
+      break
+    }
+  }, [activeMap, makeEventContext, applyExploreEffect])
 
   const isCellRevealed = useCallback(
     (x: number, y: number) => {
@@ -385,6 +509,11 @@ export function DungeonMapper({
     if (activeTool.kind === 'player') {
       updateActiveMap((m) => ({ playerX: x, playerY: y, revealedChunks: revealAround(m, x, y) }))
       setCameraOffset({ x: 0, y: 0 })
+      return
+    }
+
+    if (activeTool.kind === 'inspect') {
+      setInspectedCell({ x, y })
       return
     }
 
@@ -657,7 +786,7 @@ export function DungeonMapper({
   }
 
   const saveEpochmap = useCallback(() => {
-    const file: EpochmapFile = { version: 1, gameTitle, romHash, customMarkers, maps }
+    const file: EpochmapFile = { version: 2, gameTitle, romHash, customMarkers, maps, ruleset }
     const bytes = serializeDotEpochmap(file)
     const blob = new Blob([bytes as BlobPart], { type: 'application/octet-stream' })
     const url = URL.createObjectURL(blob)
@@ -725,6 +854,11 @@ export function DungeonMapper({
         if (activeMap) toggleReveal(activeMap.playerX, activeMap.playerY)
         return
       }
+      if (e.key === 'e' || e.key === 'E') {
+        e.preventDefault()
+        handleInteract()
+        return
+      }
       if (e.key === 'n' || e.key === 'N') {
         e.preventDefault()
         openNoteForPlayer()
@@ -745,7 +879,7 @@ export function DungeonMapper({
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
-  }, [activeMap, movePlayer, toggleReveal, openNoteForPlayer, undo, saveEpochmap, exportPdf])
+  }, [activeMap, movePlayer, toggleReveal, handleInteract, openNoteForPlayer, undo, saveEpochmap, exportPdf])
 
   function closeWelcome() {
     setShowWelcome(false)
@@ -1037,11 +1171,42 @@ export function DungeonMapper({
               </button>
             </div>
 
+            <button
+              onClick={() => setActiveTool({ kind: 'inspect' })}
+              className={cn(
+                'w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded text-sm font-medium border transition',
+                activeToolId === 'inspect'
+                  ? 'bg-violet-500/20 border-violet-500/50 text-violet-300'
+                  : 'border-white/10 text-white/50 hover:border-white/30 hover:text-white/80',
+              )}
+            >
+              <Search className="h-3.5 w-3.5" /> Inspect Cell
+            </button>
+
             <p className="text-xs text-white/45 leading-relaxed">
-              Arrow keys / WASD move ⊕ · F toggles fog · N adds a note · right-click erases · middle-drag pans.
+              Arrow keys / WASD move ⊕ · E interacts · F toggles fog · N adds a note · right-click erases · middle-drag pans.
             </p>
           </div>
         </aside>
+
+        {/* Right: Cell Inspector panel */}
+        {inspectedCell && activeMap && (
+          <aside className="w-80 shrink-0 border-l border-white/10 flex flex-col bg-zinc-950 overflow-y-auto">
+            <CellInspector
+              x={inspectedCell.x}
+              y={inspectedCell.y}
+              cell={activeMap.cells[`${inspectedCell.x},${inspectedCell.y}`] ?? { base: 0, overlays: [], edges: {} }}
+              maps={maps}
+              ruleset={ruleset}
+              onChange={(entities: CellEntity[]) => {
+                const key = `${inspectedCell.x},${inspectedCell.y}`
+                const cur = activeMap.cells[key] ?? { base: 0, overlays: [], edges: {} }
+                writeCell(key, { ...cur, entities: entities.length ? entities : undefined })
+              }}
+              onClose={() => setInspectedCell(null)}
+            />
+          </aside>
+        )}
 
         {/* Center: viewport */}
         <main
@@ -1168,6 +1333,25 @@ export function DungeonMapper({
           }}
         />
       )}
+
+      {/* Shop modal */}
+      {shopId && (() => {
+        const shop = ruleset.shops.find(s => s.id === shopId)
+        if (!shop) return null
+        return (
+          <ShopModal
+            shop={shop}
+            ruleset={ruleset}
+            inventory={inventory}
+            gold={gold}
+            onClose={() => setShopId(null)}
+            onTransaction={(inv, g) => {
+              setInventory(inv)
+              setGold(g)
+            }}
+          />
+        )
+      })()}
     </div>
   )
 }

@@ -205,6 +205,34 @@ export interface Ruleset {
 
 // ── L2: Cell entities (world placement) ──────────────────────────────────────
 
+/** An interactive object placed on a cell (chest, door, NPC, shop, lever, etc.). */
+export interface ObjectInstance {
+  kind: 'chest' | 'door' | 'lever' | 'sign' | 'npc' | 'shop' | 'trap' | 'teleporter'
+  id: string
+  locked?: { key: DefRef<ItemDef> }
+  loot?: DefRef<LootTableDef>
+  shop?: DefRef<ShopDef>
+  dialogue?: string
+  trapEffects?: Effect[]
+  onInteract?: Effect[]
+}
+
+/** A condition gate for CellEvent.conditions — ALL must pass for the event to fire. */
+export type Condition =
+  | { c: 'flag'; flag: string; equals: boolean | number | string }
+  | { c: 'hasItem'; item: DefRef<ItemDef>; qty?: number }
+  | { c: 'partyLevel'; min: number }
+  | { c: 'random'; chance: number }
+
+/** A trigger + conditions + effects triple placed on a cell. */
+export interface CellEvent {
+  id: string
+  trigger: 'onEnter' | 'onInteract' | 'onFlag'
+  conditions?: Condition[]
+  effects: Effect[]
+  once?: boolean
+}
+
 /**
  * Entities placed on a map cell by the author.
  * Stored in CellData.entities[]. Evaluated by the engine on step.
@@ -220,7 +248,9 @@ export type CellEntity =
       oncePerVisit?: boolean
     }
   | { t: 'partyStart' }
-  | { t: 'mapLink'; mapId: string; x: number; y: number; facing?: 'N' | 'S' | 'E' | 'W' }
+  | { t: 'mapLink'; mapId: string; x: number; y: number; facing?: Facing }
+  | { t: 'object'; object: ObjectInstance }
+  | { t: 'event'; event: CellEvent }
 
 // ── Runtime encounter instances ────────────────────────────────────────────────
 

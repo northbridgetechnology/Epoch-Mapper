@@ -64,6 +64,8 @@ export interface EpochmapFile {
   romHash: string // hex SHA-256, '' if unknown
   customMarkers: CustomMarker[]
   maps: MapData[]
+  /** L1 ruleset — present in v2 files and in localStorage drafts. */
+  ruleset?: import('./engine-types').Ruleset
 }
 
 /** Built-in marker definition (base / overlay / edge tables). */

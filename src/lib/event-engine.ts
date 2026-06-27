@@ -1,0 +1,223 @@
+/**
+ * Pure exploration event + effect resolver (Phase E6).
+ *
+ * No DOM, no React. Given cell entities and a context (flags, party,
+ * inventory, gold), determines which events fire and what effects to apply.
+ */
+
+import type { CellData } from './types'
+import type {
+  CellEvent, Condition, ObjectInstance, Effect, ItemInstance,
+  Character, Ruleset, Facing,
+} from './engine-types'
+
+// ── Context ───────────────────────────────────────────────────────────────────
+
+export interface EventContext {
+  flags: Record<string, boolean | number | string>
+  party: Character[]
+  inventory: ItemInstance[]
+  gold: number
+}
+
+// ── Exploration effect result ─────────────────────────────────────────────────
+
+/**
+ * Mutations that the runtime should apply after resolving a set of effects
+ * outside of combat (on-enter, on-interact, object interaction).
+ */
+export interface ExploreEffect {
+  flagSets: Record<string, boolean | number | string>
+  messages: string[]
+  goldDelta: number
+  itemsGained: { item: string; qty: number }[]
+  itemsLost: { item: string; qty: number }[]
+  teleportTo?: { mapId: string; x: number; y: number; facing?: Facing }
+  openShop?: string
+  startCombat?: string
+  revealRadius?: number
+}
+
+function emptyExploreEffect(): ExploreEffect {
+  return { flagSets: {}, messages: [], goldDelta: 0, itemsGained: [], itemsLost: [] }
+}
+
+// ── Condition evaluation ──────────────────────────────────────────────────────
+
+export function checkConditions(
+  conditions: Condition[] | undefined,
+  ctx: EventContext,
+  rng: () => number = Math.random,
+): boolean {
+  if (!conditions?.length) return true
+  return conditions.every(cond => {
+    switch (cond.c) {
+      case 'flag':
+        return ctx.flags[cond.flag] === cond.equals
+      case 'hasItem': {
+        const total = ctx.inventory.reduce(
+          (sum, inst) => inst.def === cond.item ? sum + inst.qty : sum,
+          0,
+        )
+        return total >= (cond.qty ?? 1)
+      }
+      case 'partyLevel':
+        return ctx.party.some(c => c.alive && c.level >= cond.min)
+      case 'random':
+        return rng() < cond.chance
+    }
+  })
+}
+
+// ── Effect resolution ─────────────────────────────────────────────────────────
+
+/**
+ * Resolves an Effect[] in the exploration context (out of combat).
+ * Combat-only effects (damage, status, cure, reviveRandom) are ignored here.
+ */
+export function resolveExploreEffects(
+  effects: Effect[],
+  ctx: EventContext,
+  _rng: () => number = Math.random,
+): ExploreEffect {
+  const result = emptyExploreEffect()
+
+  for (const eff of effects) {
+    switch (eff.t) {
+      case 'message':
+        result.messages.push(eff.text)
+        break
+      case 'gold':
+        result.goldDelta += eff.amount
+        break
+      case 'giveItem':
+        result.itemsGained.push({ item: eff.item, qty: eff.qty ?? 1 })
+        break
+      case 'takeItem':
+        result.itemsLost.push({ item: eff.item, qty: eff.qty ?? 1 })
+        break
+      case 'setFlag':
+        result.flagSets[eff.flag] = eff.value
+        break
+      case 'teleport':
+        result.teleportTo = { mapId: eff.mapId, x: eff.x, y: eff.y, facing: eff.facing }
+        break
+      case 'openShop':
+        result.openShop = eff.shop
+        break
+      case 'startCombat':
+        result.startCombat = eff.encounter
+        break
+      case 'reveal':
+        result.revealRadius = Math.max(result.revealRadius ?? 0, eff.radius)
+        break
+      case 'fullHeal':
+        // Handled by DungeonMapper — signal via special message flag
+        result.flagSets['_fullHeal'] = true
+        break
+      case 'heal':
+      case 'restoreMp':
+        // Out-of-combat healing applied by DungeonMapper
+        result.flagSets[`_${eff.t}`] = String(eff.amount)
+        break
+      default:
+        break
+    }
+  }
+
+  return result
+}
+
+// ── Triggered events ──────────────────────────────────────────────────────────
+
+/**
+ * Returns all CellEvents on a cell that should fire for the given trigger,
+ * whose conditions pass, and that haven't been fired (once flag not set).
+ */
+export function getTriggeredEvents(
+  cell: CellData,
+  trigger: 'onEnter' | 'onInteract',
+  ctx: EventContext,
+  rng: () => number = Math.random,
+): Array<{ event: CellEvent; flagKey: string }> {
+  const results: Array<{ event: CellEvent; flagKey: string }> = []
+  if (!cell.entities?.length) return results
+
+  for (const entity of cell.entities) {
+    if (entity.t !== 'event') continue
+    const ev = entity.event
+    if (ev.trigger !== trigger) continue
+
+    const flagKey = visitedEventFlagKey(ev.id)
+    if (ev.once && ctx.flags[flagKey]) continue
+
+    if (!checkConditions(ev.conditions, ctx, rng)) continue
+
+    results.push({ event: ev, flagKey })
+  }
+
+  return results
+}
+
+/**
+ * Returns all interactive objects on a cell.
+ */
+export function getInteractableObjects(cell: CellData): ObjectInstance[] {
+  if (!cell.entities?.length) return []
+  return cell.entities
+    .filter(e => e.t === 'object')
+    .map(e => (e as { t: 'object'; object: ObjectInstance }).object)
+}
+
+// ── Flag key helpers ──────────────────────────────────────────────────────────
+
+export function visitedEventFlagKey(eventId: string): string {
+  return `event.fired.${eventId}`
+}
+
+export function objectUsedFlagKey(objectId: string): string {
+  return `object.used.${objectId}`
+}
+
+// ── Shop helpers ──────────────────────────────────────────────────────────────
+
+/**
+ * Resolves a loot table roll to items + gold gained.
+ * Used when the party opens a chest or interacts with a loot entity.
+ */
+export function resolveLootTable(
+  lootTableId: string,
+  ruleset: Ruleset,
+  rng: () => number = Math.random,
+): { items: { item: string; qty: number }[]; gold: number } {
+  const table = ruleset.lootTables.find(t => t.id === lootTableId)
+  if (!table) return { items: [], gold: 0 }
+
+  const items: { item: string; qty: number }[] = []
+  for (const drop of table.drops) {
+    if (rng() < drop.chance) {
+      const qty = typeof drop.qty === 'string'
+        ? rollDice(drop.qty, rng)
+        : (drop.qty ?? 1)
+      items.push({ item: drop.item, qty })
+    }
+  }
+
+  const gold = table.gold
+    ? table.gold.min + Math.floor(rng() * (table.gold.max - table.gold.min + 1))
+    : 0
+
+  return { items, gold }
+}
+
+function rollDice(dice: string | number, rng: () => number): number {
+  if (typeof dice === 'number') return dice
+  const m = /^(\d+)d(\d+)([+-]\d+)?$/.exec(dice.trim())
+  if (!m) return parseInt(dice) || 1
+  const count = parseInt(m[1])
+  const sides = parseInt(m[2])
+  const bonus = parseInt(m[3] ?? '0') || 0
+  let total = bonus
+  for (let i = 0; i < count; i++) total += 1 + Math.floor(rng() * sides)
+  return total
+}

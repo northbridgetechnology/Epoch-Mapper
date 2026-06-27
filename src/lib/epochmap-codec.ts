@@ -18,9 +18,10 @@
 
 import { gzipSync, gunzipSync } from 'fflate'
 import type { CellData, CellMap, CustomMarker, EdgeDir, EpochmapFile, MapData } from './types'
+import type { CellEntity, Ruleset } from './engine-types'
 
 export const EPOCHMAP_MAGIC = 'EPKM'
-export const EPOCHMAP_VERSION = 1
+export const EPOCHMAP_VERSION = 2  // v1 = visual-only; v2 adds ruleset + entities JSON block
 const ROM_HASH_BYTES = 64
 const EDGE_DIRS: EdgeDir[] = ['N', 'S', 'E', 'W'] // bit order: N=0, S=1, E=2, W=3
 
@@ -275,6 +276,21 @@ export function serializeDotEpochmap(file: EpochmapFile): Uint8Array {
     }
   }
 
+  // ----- v2 JSON extension block: ruleset + per-map cell entities -----
+  const v2ext: { ruleset?: Ruleset; mapEntities?: Array<Record<string, CellEntity[]>> } = {}
+  if (file.ruleset) v2ext.ruleset = file.ruleset
+  const mapEntities: Array<Record<string, CellEntity[]>> = maps.map(map => {
+    const ent: Record<string, CellEntity[]> = {}
+    for (const [key, cell] of Object.entries(map.cells)) {
+      if (cell.entities?.length) ent[key] = cell.entities
+    }
+    return ent
+  })
+  if (mapEntities.some(m => Object.keys(m).length > 0)) v2ext.mapEntities = mapEntities
+  const jsonBytes = new TextEncoder().encode(JSON.stringify(v2ext))
+  body.u32(jsonBytes.length)
+  body.bytes(jsonBytes)
+
   const gzipped = gzipSync(body.done())
 
   // ----- header (never gzipped) -----
@@ -305,8 +321,8 @@ export function parseDotEpochmap(buffer: ArrayBuffer | Uint8Array): EpochmapFile
   }
 
   const version = head.u8()
-  if (version !== EPOCHMAP_VERSION) {
-    throw new EpochmapParseError(`Unsupported .epochmap version ${version} (expected ${EPOCHMAP_VERSION})`)
+  if (version !== 1 && version !== 2) {
+    throw new EpochmapParseError(`Unsupported .epochmap version ${version}`)
   }
 
   const gameTitleLen = head.u16()
@@ -384,7 +400,35 @@ export function parseDotEpochmap(buffer: ArrayBuffer | Uint8Array): EpochmapFile
     maps.push({ id: `imported-${mi}`, name, cells, playerX, playerY, revealedChunks })
   }
 
-  return { version, gameTitle, romHash, customMarkers, maps }
+  const result: EpochmapFile = { version, gameTitle, romHash, customMarkers, maps }
+
+  // v2: read JSON extension block (ruleset + entities)
+  if (version === 2 && r.remaining >= 4) {
+    try {
+      const jsonLen = r.u32()
+      if (jsonLen > 0 && r.remaining >= jsonLen) {
+        const jsonStr = r.str(jsonLen)
+        const ext = JSON.parse(jsonStr) as { ruleset?: Ruleset; mapEntities?: Array<Record<string, CellEntity[]>> }
+        if (ext.ruleset) result.ruleset = ext.ruleset
+        if (ext.mapEntities) {
+          ext.mapEntities.forEach((mapEnt, mi) => {
+            const map = maps[mi]
+            if (!map || !mapEnt) return
+            for (const [key, entities] of Object.entries(mapEnt)) {
+              if (!entities?.length) continue
+              const cell = map.cells[key] ?? { base: 0, overlays: [], edges: {} }
+              cell.entities = entities
+              map.cells[key] = cell
+            }
+          })
+        }
+      }
+    } catch {
+      // ignore malformed extension — degrade gracefully
+    }
+  }
+
+  return result
 }
 
 // ── Colour helpers ─────────────────────────────────────────────────────────────
