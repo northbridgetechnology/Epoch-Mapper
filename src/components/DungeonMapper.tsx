@@ -48,7 +48,7 @@ type Tool =
   | { kind: 'erase' }
   | { kind: 'player' }
   | { kind: 'inspect' }
-  | { kind: 'eyedropper'; sample: CellData | null }
+  | { kind: 'eyedropper'; sample: CellData | null; sourceKey: string | null }
 
 function toolId(t: Tool): string {
   if (t.kind === 'erase' || t.kind === 'player' || t.kind === 'inspect' || t.kind === 'eyedropper') return t.kind
@@ -752,6 +752,20 @@ export function DungeonMapper({
     [recordHistory, updateActiveMap],
   )
 
+  // ── Eyedropper flash cells ────────────────────────────────────────────────────
+  const [flashCells, setFlashCells] = useState<Set<string>>(new Set())
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const flashTimersRef = useRef<any>({})
+
+  function addFlash(key: string) {
+    if (flashTimersRef.current[key]) clearTimeout(flashTimersRef.current[key])
+    setFlashCells(prev => new Set([...prev, key]))
+    flashTimersRef.current[key] = setTimeout(() => {
+      setFlashCells(prev => { const next = new Set(prev); next.delete(key); return next })
+      delete flashTimersRef.current[key]
+    }, 650)
+  }
+
   // ── Drag-paint support (base / overlay / erase / eyedropper) ─────────────────
   const isPaintingRef     = useRef(false)
   const paintedCellsRef   = useRef(new Set<string>())
@@ -795,6 +809,7 @@ export function DungeonMapper({
     if (paintedCellsRef.current.has(key)) return
     paintedCellsRef.current.add(key)
     if (!dragHistoryRef.current) { dragHistoryRef.current = true; recordHistory() }
+    addFlash(key)
     updateActiveMap((m) => {
       const cells = { ...m.cells }
       const stamped = stampCell(sample)
@@ -814,7 +829,7 @@ export function DungeonMapper({
       if (tool.sample === null) {
         const key = `${x},${y}`
         const cell = activeMap.cells[key] ?? EMPTY_CELL
-        setActiveTool({ kind: 'eyedropper', sample: cell })
+        setActiveTool({ kind: 'eyedropper', sample: cell, sourceKey: key })
         toast('Cell sampled — click or drag to stamp')
         return
       }
@@ -1571,7 +1586,7 @@ export function DungeonMapper({
                 <Search className="h-3.5 w-3.5" /> Inspect Cell
               </button>
               <button
-                onClick={() => setActiveTool({ kind: 'eyedropper', sample: null })}
+                onClick={() => setActiveTool({ kind: 'eyedropper', sample: null, sourceKey: null })}
                 title={activeTool.kind === 'eyedropper' && activeTool.sample ? 'Eyedropper (sample loaded — click to stamp)' : 'Eyedropper (click cell to sample)'}
                 className={cn(
                   'flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded text-sm font-medium border transition',
@@ -1656,6 +1671,8 @@ export function DungeonMapper({
               customBase={customBase}
               customOverlay={customOverlay}
               isCellRevealed={isCellRevealed}
+              eyedropperSource={activeTool.kind === 'eyedropper' ? activeTool.sourceKey : null}
+              flashCells={flashCells}
               onCellClick={handleCellClick}
               onCellRightClick={handleCellRightClick}
               onCellMouseDown={handleCellMouseDown}
@@ -1790,6 +1807,26 @@ export function DungeonMapper({
   )
 }
 
+// ── Eyedropper stamp flash overlay ───────────────────────────────────────────────
+
+function FlashOverlay() {
+  const [faded, setFaded] = useState(false)
+  useEffect(() => {
+    const t = setTimeout(() => setFaded(true), 30)
+    return () => clearTimeout(t)
+  }, [])
+  return (
+    <div
+      className="absolute inset-0 pointer-events-none z-40"
+      style={{
+        background: 'rgba(34,211,238,0.50)',
+        opacity: faded ? 0 : 1,
+        transition: faded ? 'opacity 0.55s ease-out' : 'none',
+      }}
+    />
+  )
+}
+
 // ── Viewport (camera window) ────────────────────────────────────────────────────
 
 interface ViewportProps {
@@ -1806,6 +1843,8 @@ interface ViewportProps {
   customBase: Record<number, MarkerDef>
   customOverlay: Record<number, MarkerDef>
   isCellRevealed: (x: number, y: number) => boolean
+  eyedropperSource: string | null
+  flashCells: Set<string>
   onCellClick: (e: React.MouseEvent<HTMLDivElement>, x: number, y: number) => void
   onCellRightClick: (e: React.MouseEvent<HTMLDivElement>, x: number, y: number) => void
   onCellMouseDown: (e: React.MouseEvent<HTMLDivElement>, x: number, y: number) => void
@@ -2000,6 +2039,8 @@ function Viewport(props: ViewportProps) {
                 const revealed = props.isCellRevealed(x, y)
                 const cell = map.cells[key] ?? EMPTY_CELL
                 const isHovered = props.hoverInfo?.x === x && props.hoverInfo?.y === y
+                const isEyedropSource = props.eyedropperSource === key
+                const isFlashing = props.flashCells.has(key)
 
                 if (!revealed) {
                   return <div key={key} style={{ width: cellSize, height: cellSize, background: '#0a0a0c' }} />
@@ -2014,6 +2055,7 @@ function Viewport(props: ViewportProps) {
                       'relative overflow-hidden',
                       props.isPlayerTool ? 'cursor-cell' : 'cursor-crosshair',
                       isPlayer ? 'ring-1 ring-inset ring-amber-300 z-10' : '',
+                      isEyedropSource ? 'ring-2 ring-inset ring-cyan-400 z-10' : '',
                     )}
                     style={{ width: cellSize, height: cellSize, background: bg }}
                     onClick={(e) => props.onCellClick(e, x, y)}
@@ -2068,6 +2110,14 @@ function Viewport(props: ViewportProps) {
                     {props.isEdgeTool && isHovered && props.hoverInfo?.zone && (
                       <div className="absolute pointer-events-none z-30 bg-white/20" style={edgeZoneStyle(props.hoverInfo.zone)} />
                     )}
+
+                    {/* eyedropper source pulse */}
+                    {isEyedropSource && (
+                      <div className="absolute inset-0 pointer-events-none z-30 bg-cyan-400/25" />
+                    )}
+
+                    {/* stamp flash — mounts at full opacity, fades out */}
+                    {isFlashing && <FlashOverlay key={key} />}
                   </div>
                 )
               })
