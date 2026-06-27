@@ -1,21 +1,24 @@
 'use client'
 
 import { useState } from 'react'
-import { Plus, Trash2, Package, List, Skull, Swords } from 'lucide-react'
+import { Plus, Trash2, Package, List, Skull, Swords, Sparkles, Zap } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import type { Effect, EnemyDef, EncounterTableDef, ItemDef, LootTableDef, Ruleset } from '@/lib/engine-types'
+import type { Effect, EnemyDef, EncounterTableDef, ItemDef, LootTableDef, SpellDef, StatusEffectDef, Ruleset } from '@/lib/engine-types'
 import { SchemaForm } from '../forms/SchemaForm'
 import { EffectBuilder } from '../forms/EffectBuilder'
 import { ITEM_SCHEMA, LOOT_TABLE_SCHEMA, blankItem } from '@/lib/item-schema'
 import { ENEMY_SCHEMA, ENCOUNTER_TABLE_SCHEMA, blankEnemy } from '@/lib/enemy-schema'
+import { SPELL_SCHEMA, STATUS_SCHEMA, blankSpell, blankStatusEffect } from '@/lib/spell-schema'
 
-type Category = 'items' | 'loot_tables' | 'bestiary' | 'encounters'
+type Category = 'items' | 'loot_tables' | 'bestiary' | 'encounters' | 'spells' | 'status_effects'
 
 const CATEGORIES: { id: Category; icon: React.ReactNode; label: string }[] = [
-  { id: 'items',       icon: <Package className="w-4 h-4" />, label: 'Items' },
-  { id: 'loot_tables', icon: <List className="w-4 h-4" />,    label: 'Loot Tables' },
-  { id: 'bestiary',    icon: <Skull className="w-4 h-4" />,   label: 'Bestiary' },
-  { id: 'encounters',  icon: <Swords className="w-4 h-4" />,  label: 'Encounter Tables' },
+  { id: 'items',          icon: <Package className="w-4 h-4" />,  label: 'Items' },
+  { id: 'loot_tables',    icon: <List className="w-4 h-4" />,     label: 'Loot Tables' },
+  { id: 'bestiary',       icon: <Skull className="w-4 h-4" />,    label: 'Bestiary' },
+  { id: 'encounters',     icon: <Swords className="w-4 h-4" />,   label: 'Encounter Tables' },
+  { id: 'spells',         icon: <Sparkles className="w-4 h-4" />, label: 'Spells' },
+  { id: 'status_effects', icon: <Zap className="w-4 h-4" />,      label: 'Status Effects' },
 ]
 
 // ── Item entry list ───────────────────────────────────────────────────────────
@@ -535,6 +538,154 @@ function EncounterTableEditor({
   )
 }
 
+// ── Spell list ────────────────────────────────────────────────────────────────
+
+function SpellList({
+  spells,
+  selectedId,
+  onSelect,
+  onAdd,
+  onDelete,
+}: {
+  spells: SpellDef[]
+  selectedId: string | null
+  onSelect: (id: string) => void
+  onAdd: () => void
+  onDelete: (id: string) => void
+}) {
+  return (
+    <div className="flex flex-col h-full min-h-0">
+      <div className="flex items-center justify-between px-3 py-2 border-b border-white/10">
+        <span className="text-xs font-semibold text-white/60 uppercase tracking-wide">
+          Spells ({spells.length})
+        </span>
+        <button onClick={onAdd} className="flex items-center gap-1 px-2 py-0.5 rounded text-xs text-amber-300/80 hover:text-amber-200 hover:bg-amber-500/10">
+          <Plus className="w-3 h-3" /> New
+        </button>
+      </div>
+      <div className="flex-1 overflow-y-auto p-1.5 space-y-0.5 min-h-0">
+        {spells.length === 0 && (
+          <div className="text-center text-white/25 text-xs py-6">No spells yet — click New</div>
+        )}
+        {spells.map(s => (
+          <div
+            key={s.id}
+            className={cn(
+              'flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer group',
+              selectedId === s.id ? 'bg-amber-950/40 text-white' : 'text-white/70 hover:bg-white/5',
+            )}
+            onClick={() => onSelect(s.id)}
+          >
+            <span className="text-base w-6 text-center flex-shrink-0">{s.icon ?? '✨'}</span>
+            <div className="flex-1 min-w-0">
+              <div className="text-sm truncate">{s.name}</div>
+              <div className="text-xs text-white/35 capitalize">{s.school} · Lv {s.level} · {s.mpCost} MP</div>
+            </div>
+            <button onClick={ev => { ev.stopPropagation(); onDelete(s.id) }} className="opacity-0 group-hover:opacity-100 p-0.5 rounded text-white/30 hover:text-red-400">
+              <Trash2 className="w-3 h-3" />
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// ── Spell editor ──────────────────────────────────────────────────────────────
+
+function SpellEditor({ spell, onChange }: { spell: SpellDef; onChange: (s: SpellDef) => void }) {
+  return (
+    <div className="p-4 space-y-4 overflow-y-auto h-full">
+      <div className="flex items-center gap-2 mb-1">
+        <span className="text-2xl">{spell.icon ?? '✨'}</span>
+        <div>
+          <div className="text-base font-bold text-white/90">{spell.name}</div>
+          <div className="text-xs text-white/40 font-mono">{spell.id}</div>
+        </div>
+      </div>
+      <SchemaForm
+        schema={SPELL_SCHEMA}
+        value={spell as unknown as Record<string, unknown>}
+        onChange={v => onChange({ ...spell, ...(v as Partial<SpellDef>) })}
+      />
+    </div>
+  )
+}
+
+// ── Status effect list ────────────────────────────────────────────────────────
+
+function StatusList({
+  statuses,
+  selectedId,
+  onSelect,
+  onAdd,
+  onDelete,
+}: {
+  statuses: StatusEffectDef[]
+  selectedId: string | null
+  onSelect: (id: string) => void
+  onAdd: () => void
+  onDelete: (id: string) => void
+}) {
+  return (
+    <div className="flex flex-col h-full min-h-0">
+      <div className="flex items-center justify-between px-3 py-2 border-b border-white/10">
+        <span className="text-xs font-semibold text-white/60 uppercase tracking-wide">
+          Status Effects ({statuses.length})
+        </span>
+        <button onClick={onAdd} className="flex items-center gap-1 px-2 py-0.5 rounded text-xs text-amber-300/80 hover:text-amber-200 hover:bg-amber-500/10">
+          <Plus className="w-3 h-3" /> New
+        </button>
+      </div>
+      <div className="flex-1 overflow-y-auto p-1.5 space-y-0.5 min-h-0">
+        {statuses.length === 0 && (
+          <div className="text-center text-white/25 text-xs py-6">No status effects yet — click New</div>
+        )}
+        {statuses.map(s => (
+          <div
+            key={s.id}
+            className={cn(
+              'flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer group',
+              selectedId === s.id ? 'bg-amber-950/40 text-white' : 'text-white/70 hover:bg-white/5',
+            )}
+            onClick={() => onSelect(s.id)}
+          >
+            <span className="text-base w-6 text-center flex-shrink-0">{s.icon ?? '⚡'}</span>
+            <div className="flex-1 min-w-0">
+              <div className="text-sm truncate">{s.name}</div>
+              <div className="text-xs text-white/35 capitalize">{s.kind} · {s.durationTurns === 0 ? 'permanent' : `${s.durationTurns} turns`}</div>
+            </div>
+            <button onClick={ev => { ev.stopPropagation(); onDelete(s.id) }} className="opacity-0 group-hover:opacity-100 p-0.5 rounded text-white/30 hover:text-red-400">
+              <Trash2 className="w-3 h-3" />
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// ── Status effect editor ──────────────────────────────────────────────────────
+
+function StatusEditor({ status, onChange }: { status: StatusEffectDef; onChange: (s: StatusEffectDef) => void }) {
+  return (
+    <div className="p-4 space-y-4 overflow-y-auto h-full">
+      <div className="flex items-center gap-2 mb-1">
+        <span className="text-2xl">{status.icon ?? '⚡'}</span>
+        <div>
+          <div className="text-base font-bold text-white/90">{status.name}</div>
+          <div className="text-xs text-white/40 font-mono">{status.id}</div>
+        </div>
+      </div>
+      <SchemaForm
+        schema={STATUS_SCHEMA}
+        value={status as unknown as Record<string, unknown>}
+        onChange={v => onChange({ ...status, ...(v as Partial<StatusEffectDef>) })}
+      />
+    </div>
+  )
+}
+
 // ── Main workspace ─────────────────────────────────────────────────────────────
 
 interface DatabaseWorkspaceProps {
@@ -546,6 +697,8 @@ let _itemSeq = 1
 let _lootSeq = 1
 let _enemySeq = 1
 let _encSeq = 1
+let _spellSeq = 1
+let _statusSeq = 1
 
 export function DatabaseWorkspace({ ruleset, onRulesetChange }: DatabaseWorkspaceProps) {
   const [category, setCategory] = useState<Category>('items')
@@ -664,12 +817,58 @@ export function DatabaseWorkspace({ ruleset, onRulesetChange }: DatabaseWorkspac
     if (selectedId === id) setSelectedId(next[0]?.id ?? null)
   }
 
+  // ── spells ──
+
+  const selectedSpell = ruleset.spells.find(s => s.id === selectedId) ?? null
+
+  function addSpell() {
+    const id = `spell.spell_${_spellSeq++}`
+    const spell: SpellDef = blankSpell(id)
+    onRulesetChange({ ...ruleset, spells: [...ruleset.spells, spell] })
+    setSelectedId(id)
+    setCategory('spells')
+  }
+
+  function updateSpell(spell: SpellDef) {
+    onRulesetChange({ ...ruleset, spells: ruleset.spells.map(s => s.id === spell.id ? spell : s) })
+  }
+
+  function deleteSpell(id: string) {
+    const next = ruleset.spells.filter(s => s.id !== id)
+    onRulesetChange({ ...ruleset, spells: next })
+    if (selectedId === id) setSelectedId(next[0]?.id ?? null)
+  }
+
+  // ── status effects ──
+
+  const selectedStatus = ruleset.statusEffects.find(s => s.id === selectedId) ?? null
+
+  function addStatus() {
+    const id = `status.status_${_statusSeq++}`
+    const status: StatusEffectDef = blankStatusEffect(id)
+    onRulesetChange({ ...ruleset, statusEffects: [...ruleset.statusEffects, status] })
+    setSelectedId(id)
+    setCategory('status_effects')
+  }
+
+  function updateStatus(status: StatusEffectDef) {
+    onRulesetChange({ ...ruleset, statusEffects: ruleset.statusEffects.map(s => s.id === status.id ? status : s) })
+  }
+
+  function deleteStatus(id: string) {
+    const next = ruleset.statusEffects.filter(s => s.id !== id)
+    onRulesetChange({ ...ruleset, statusEffects: next })
+    if (selectedId === id) setSelectedId(next[0]?.id ?? null)
+  }
+
   function handleCategoryChange(cat: Category) {
     setCategory(cat)
-    if (cat === 'items')       setSelectedId(ruleset.items[0]?.id ?? null)
-    if (cat === 'loot_tables') setSelectedId(ruleset.lootTables[0]?.id ?? null)
-    if (cat === 'bestiary')    setSelectedId(ruleset.enemies[0]?.id ?? null)
-    if (cat === 'encounters')  setSelectedId(ruleset.encounterTables[0]?.id ?? null)
+    if (cat === 'items')          setSelectedId(ruleset.items[0]?.id ?? null)
+    if (cat === 'loot_tables')    setSelectedId(ruleset.lootTables[0]?.id ?? null)
+    if (cat === 'bestiary')       setSelectedId(ruleset.enemies[0]?.id ?? null)
+    if (cat === 'encounters')     setSelectedId(ruleset.encounterTables[0]?.id ?? null)
+    if (cat === 'spells')         setSelectedId(ruleset.spells[0]?.id ?? null)
+    if (cat === 'status_effects') setSelectedId(ruleset.statusEffects[0]?.id ?? null)
   }
 
   return (
@@ -707,6 +906,12 @@ export function DatabaseWorkspace({ ruleset, onRulesetChange }: DatabaseWorkspac
         {category === 'encounters' && (
           <EncounterTableList tables={ruleset.encounterTables} selectedId={selectedId} onSelect={setSelectedId} onAdd={addEncounterTable} onDelete={deleteEncounterTable} />
         )}
+        {category === 'spells' && (
+          <SpellList spells={ruleset.spells} selectedId={selectedId} onSelect={setSelectedId} onAdd={addSpell} onDelete={deleteSpell} />
+        )}
+        {category === 'status_effects' && (
+          <StatusList statuses={ruleset.statusEffects} selectedId={selectedId} onSelect={setSelectedId} onAdd={addStatus} onDelete={deleteStatus} />
+        )}
       </div>
 
       {/* Detail editor */}
@@ -719,6 +924,10 @@ export function DatabaseWorkspace({ ruleset, onRulesetChange }: DatabaseWorkspac
           <EnemyEditor enemy={selectedEnemy} onChange={updateEnemy} />
         ) : category === 'encounters' && selectedEncTable ? (
           <EncounterTableEditor table={selectedEncTable} ruleset={ruleset} onChange={updateEncounterTable} />
+        ) : category === 'spells' && selectedSpell ? (
+          <SpellEditor spell={selectedSpell} onChange={updateSpell} />
+        ) : category === 'status_effects' && selectedStatus ? (
+          <StatusEditor status={selectedStatus} onChange={updateStatus} />
         ) : (
           <div className="h-full flex items-center justify-center text-white/20 text-sm flex-col gap-2">
             <Package className="w-8 h-8 opacity-30" />

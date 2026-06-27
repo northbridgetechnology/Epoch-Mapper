@@ -1,9 +1,9 @@
 /**
- * Pure turn-based combat engine (Phase E4).
+ * Pure turn-based combat engine (Phase E5).
  * No DOM, no React. All mutations return new state objects.
  */
 
-import type { Character, Ruleset } from './engine-types'
+import type { Character, ActiveStatus, EnemyAbility, Effect, Ruleset } from './engine-types'
 import { deriveMaxHp, deriveMaxMp, xpToNextLevel } from './engine-types'
 import type { ResolvedEncounter } from './engine-types'
 
@@ -19,17 +19,21 @@ export interface CombatActor {
   icon?: string
   hp: number
   maxHp: number
+  mp: number
+  maxMp: number
   attack: number
   defense: number
   speed: number
   xp: number    // enemies only; 0 for party
   gold: number  // enemies only; 0 for party
   alive: boolean
+  statuses: ActiveStatus[]
+  defId?: string   // enemies only — links back to EnemyDef for ability lookup
 }
 
 export interface CombatLogEntry {
   text: string
-  kind: 'damage' | 'crit' | 'miss' | 'info' | 'flee' | 'flee_fail'
+  kind: 'damage' | 'crit' | 'miss' | 'info' | 'flee' | 'flee_fail' | 'spell'
 }
 
 export interface CombatState {
@@ -42,7 +46,21 @@ export interface CombatState {
   goldReward: number
 }
 
-// ── Stat derivation ───────────────────────────────────────────────────────────
+// ── Dice ──────────────────────────────────────────────────────────────────────
+
+function rollDice(dice: number | string, rng: () => number): number {
+  if (typeof dice === 'number') return dice
+  const m = String(dice).match(/^(\d+)d(\d+)([+-]\d+)?$/)
+  if (!m) { const n = parseInt(dice, 10); return isNaN(n) ? 0 : n }
+  let total = 0
+  const count = parseInt(m[1], 10)
+  const sides = parseInt(m[2], 10)
+  for (let i = 0; i < count; i++) total += Math.floor(rng() * sides) + 1
+  if (m[3]) total += parseInt(m[3], 10)
+  return Math.max(0, total)
+}
+
+// ── Actor construction ────────────────────────────────────────────────────────
 
 function partyActorFromChar(char: Character, originalIdx: number): CombatActor {
   return {
@@ -52,16 +70,158 @@ function partyActorFromChar(char: Character, originalIdx: number): CombatActor {
     icon: char.portrait,
     hp: char.hp,
     maxHp: char.maxHp,
+    mp: char.mp,
+    maxMp: char.maxMp,
     attack: (char.attributes['might'] ?? 10) + Math.floor(char.level * 0.5),
     defense: Math.floor((char.attributes['endurance'] ?? 10) / 2),
     speed: char.attributes['agility'] ?? 10,
     xp: 0,
     gold: 0,
     alive: char.alive && char.hp > 0,
+    statuses: char.statuses ?? [],
   }
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// ── Shared in-combat effect resolver ─────────────────────────────────────────
+
+function resolveCombatEffects(
+  effects: Effect[],
+  casterIdx: number,
+  targetIdxs: number[],
+  actors: CombatActor[],
+  ruleset: Ruleset,
+  rng: () => number,
+): { actors: CombatActor[]; log: CombatLogEntry[] } {
+  let cur = [...actors]
+  const log: CombatLogEntry[] = []
+  const casterName = cur[casterIdx]?.name ?? '?'
+
+  for (const eff of effects) {
+    const idxs = targetIdxs.length > 0 ? targetIdxs : [casterIdx]
+
+    for (const tIdx of idxs) {
+      const target = cur[tIdx]
+      if (!target) continue
+
+      if (eff.t === 'damage') {
+        if (!target.alive) continue
+        const base = rollDice(eff.amount, rng)
+        const crit = eff.canCrit !== false && rng() < 0.1
+        const dmg = Math.max(1, Math.round(base * (crit ? 1.5 : 1)))
+        const newHp = Math.max(0, target.hp - dmg)
+        cur = cur.map((a, i) => i === tIdx ? { ...a, hp: newHp, alive: newHp > 0 } : a)
+        log.push({
+          text: crit
+            ? `${casterName} critically hits ${target.name} for ${dmg}!`
+            : `${casterName} hits ${target.name} for ${dmg}.`,
+          kind: crit ? 'crit' : 'damage',
+        })
+        if (newHp === 0) log.push({ text: `${target.name} was defeated!`, kind: 'info' })
+
+      } else if (eff.t === 'heal') {
+        if (!target.alive) continue
+        const amount = rollDice(eff.amount, rng)
+        const newHp = Math.min(target.maxHp, target.hp + amount)
+        const gained = newHp - target.hp
+        cur = cur.map((a, i) => i === tIdx ? { ...a, hp: newHp } : a)
+        log.push({ text: `${target.name} recovers ${gained} HP.`, kind: 'info' })
+
+      } else if (eff.t === 'restoreMp') {
+        if (!target.alive) continue
+        const amount = rollDice(eff.amount, rng)
+        const newMp = Math.min(target.maxMp, target.mp + amount)
+        const gained = newMp - target.mp
+        cur = cur.map((a, i) => i === tIdx ? { ...a, mp: newMp } : a)
+        log.push({ text: `${target.name} recovers ${gained} MP.`, kind: 'info' })
+
+      } else if (eff.t === 'status') {
+        if (!target.alive) continue
+        const chance = eff.chance ?? 1
+        if (rng() > chance) {
+          log.push({ text: `${target.name} resisted!`, kind: 'miss' })
+          continue
+        }
+        const def = ruleset.statusEffects.find(s => s.id === eff.status)
+        if (!def) continue
+        if (!target.statuses.some(s => s.def === eff.status)) {
+          const remaining = def.durationTurns > 0 ? def.durationTurns : 999
+          cur = cur.map((a, i) =>
+            i === tIdx
+              ? { ...a, statuses: [...a.statuses, { def: eff.status, remaining }] }
+              : a,
+          )
+          log.push({ text: `${target.name} is ${def.name}!`, kind: 'info' })
+        }
+
+      } else if (eff.t === 'cure') {
+        if (!target.alive) continue
+        const newStatuses = eff.status === 'all'
+          ? []
+          : target.statuses.filter(s => s.def !== eff.status)
+        cur = cur.map((a, i) => i === tIdx ? { ...a, statuses: newStatuses } : a)
+        const statusName = eff.status === 'all'
+          ? 'all ailments'
+          : (ruleset.statusEffects.find(s => s.id === eff.status)?.name ?? String(eff.status))
+        log.push({ text: `${target.name} is cured of ${statusName}.`, kind: 'info' })
+
+      } else if (eff.t === 'fullHeal') {
+        cur = cur.map((a, i) =>
+          i === tIdx ? { ...a, hp: a.maxHp, mp: a.maxMp, statuses: [], alive: true } : a,
+        )
+        log.push({ text: `${target.name} is fully restored!`, kind: 'info' })
+
+      } else if (eff.t === 'reviveRandom') {
+        const dead = cur.map((a, i) => ({ a, i })).filter(({ a }) => a.kind === 'party' && !a.alive)
+        if (dead.length === 0) continue
+        const { a: revived, i: ri } = dead[Math.floor(rng() * dead.length)]
+        cur = cur.map((a, i) => i === ri ? { ...a, hp: Math.max(1, Math.floor(a.maxHp * 0.25)), alive: true } : a)
+        log.push({ text: `${revived.name} is revived!`, kind: 'info' })
+      }
+    }
+  }
+
+  return { actors: cur, log }
+}
+
+// ── Status ticking ────────────────────────────────────────────────────────────
+
+function tickStatuses(
+  actorIdx: number,
+  actors: CombatActor[],
+  ruleset: Ruleset,
+  rng: () => number,
+): { actors: CombatActor[]; log: CombatLogEntry[]; blocked: boolean } {
+  const actor = actors[actorIdx]
+  if (!actor.alive || !actor.statuses.length) return { actors, log: [], blocked: false }
+
+  let cur = actors
+  const log: CombatLogEntry[] = []
+  let blocked = false
+
+  for (const status of actor.statuses) {
+    const def = ruleset.statusEffects.find(s => s.id === status.def)
+    if (!def) continue
+    if (def.blocksAction) blocked = true
+    if (def.tickEffects?.length) {
+      const res = resolveCombatEffects(def.tickEffects, actorIdx, [actorIdx], cur, ruleset, rng)
+      cur = res.actors
+      log.push(...res.log)
+    }
+  }
+
+  // Decrement and expire
+  cur = cur.map((a, i) => {
+    if (i !== actorIdx) return a
+    const newStatuses = a.statuses
+      .map(s => ({ ...s, remaining: s.remaining - 1 }))
+      .filter(s => s.remaining > 0)
+    return { ...a, statuses: newStatuses }
+  })
+
+  return { actors: cur, log, blocked }
+}
+
+// ── Turn flow ─────────────────────────────────────────────────────────────────
 
 function checkEndConditions(actors: CombatActor[]): CombatPhase | null {
   if (!actors.some(a => a.kind === 'enemy' && a.alive)) return 'victory'
@@ -78,13 +238,26 @@ function nextAliveTurn(actors: CombatActor[], fromIdx: number): number {
   return fromIdx
 }
 
-function advanceTurn(state: CombatState): CombatState {
+function advanceTurn(state: CombatState, ruleset: Ruleset, rng: () => number): CombatState {
   const endPhase = checkEndConditions(state.actors)
   if (endPhase) return { ...state, phase: endPhase }
+
   const nextIdx = nextAliveTurn(state.actors, state.turnIdx)
   const phase: CombatPhase = state.actors[nextIdx].kind === 'party' ? 'player_action' : 'enemy_turn'
-  return { ...state, turnIdx: nextIdx, phase }
+
+  const { actors: tickedActors, log: tickLog, blocked } = tickStatuses(nextIdx, state.actors, ruleset, rng)
+  const newLog = [...state.log, ...tickLog]
+
+  if (blocked) {
+    const blockedEntry: CombatLogEntry = { text: `${tickedActors[nextIdx].name} cannot act.`, kind: 'info' }
+    // Recursively advance past the blocked actor
+    return advanceTurn({ ...state, actors: tickedActors, log: [...newLog, blockedEntry], turnIdx: nextIdx, phase }, ruleset, rng)
+  }
+
+  return { ...state, actors: tickedActors, log: newLog, turnIdx: nextIdx, phase }
 }
+
+// ── Hit calculation (physical) ────────────────────────────────────────────────
 
 interface HitResult { damage: number; crit: boolean; miss: boolean }
 
@@ -112,15 +285,18 @@ export function initCombat(party: Character[], encounter: ResolvedEncounter): Co
     icon: e.icon,
     hp: e.hp,
     maxHp: e.maxHp,
+    mp: 0,
+    maxMp: 0,
     attack: e.attack,
     defense: e.defense,
     speed: e.speed,
     xp: e.xp,
     gold: e.gold,
     alive: true,
+    statuses: [],
+    defId: e.defId,
   }))
 
-  // Sort by speed desc; ties: party acts before enemies
   const actors = [...partyActors, ...enemyActors].sort(
     (a, b) => b.speed - a.speed || (a.kind === 'party' ? -1 : 1),
   )
@@ -144,6 +320,7 @@ export function initCombat(party: Character[], encounter: ResolvedEncounter): Co
 export function resolvePlayerAttack(
   state: CombatState,
   targetActorIdx: number,
+  ruleset: Ruleset,
   rng: () => number,
 ): CombatState {
   const attacker = state.actors[state.turnIdx]
@@ -167,12 +344,53 @@ export function resolvePlayerAttack(
   const newLog = [...state.log, entry]
   if (died) newLog.push({ text: `${defender.name} was defeated!`, kind: 'info' })
 
-  return advanceTurn({ ...state, actors: newActors, log: newLog })
+  return advanceTurn({ ...state, actors: newActors, log: newLog }, ruleset, rng)
+}
+
+// ── Player: cast spell ────────────────────────────────────────────────────────
+
+export function resolvePlayerCast(
+  state: CombatState,
+  spellId: string,
+  targetActorIdxs: number[],
+  ruleset: Ruleset,
+  rng: () => number,
+): CombatState {
+  const caster = state.actors[state.turnIdx]
+  if (!caster || !caster.alive) return state
+
+  const spell = ruleset.spells.find(s => s.id === spellId)
+  if (!spell || caster.mp < spell.mpCost) return state
+
+  const actorsAfterMp = state.actors.map((a, i) =>
+    i === state.turnIdx ? { ...a, mp: a.mp - spell.mpCost } : a,
+  )
+
+  const castEntry: CombatLogEntry = { text: `${caster.name} casts ${spell.name}!`, kind: 'spell' }
+
+  const { actors: newActors, log: effectLog } = resolveCombatEffects(
+    spell.effects,
+    state.turnIdx,
+    targetActorIdxs,
+    actorsAfterMp,
+    ruleset,
+    rng,
+  )
+
+  return advanceTurn(
+    { ...state, actors: newActors, log: [...state.log, castEntry, ...effectLog] },
+    ruleset,
+    rng,
+  )
 }
 
 // ── Player: flee ──────────────────────────────────────────────────────────────
 
-export function resolvePlayerFlee(state: CombatState, rng: () => number): CombatState {
+export function resolvePlayerFlee(
+  state: CombatState,
+  ruleset: Ruleset,
+  rng: () => number,
+): CombatState {
   const attempts = state.fleeAttempts + 1
   const success = attempts >= 2 || rng() < 0.5
   if (success) {
@@ -184,20 +402,62 @@ export function resolvePlayerFlee(state: CombatState, rng: () => number): Combat
     }
   }
   const failEntry: CombatLogEntry = { text: 'Failed to escape!', kind: 'flee_fail' }
-  const base: CombatState = { ...state, fleeAttempts: attempts, log: [...state.log, failEntry] }
-  return advanceTurn(base)
+  return advanceTurn({ ...state, fleeAttempts: attempts, log: [...state.log, failEntry] }, ruleset, rng)
 }
 
 // ── Enemy turn (auto) ─────────────────────────────────────────────────────────
 
-export function resolveEnemyTurn(state: CombatState, rng: () => number): CombatState {
+export function resolveEnemyTurn(
+  state: CombatState,
+  ruleset: Ruleset,
+  rng: () => number,
+): CombatState {
   const enemy = state.actors[state.turnIdx]
-  if (!enemy || enemy.kind !== 'enemy' || !enemy.alive) return advanceTurn(state)
+  if (!enemy || enemy.kind !== 'enemy' || !enemy.alive) return advanceTurn(state, ruleset, rng)
 
-  const targets = state.actors.map((a, i) => ({ a, i })).filter(({ a }) => a.kind === 'party' && a.alive)
-  if (targets.length === 0) return { ...state, phase: 'defeat' }
+  const partyTargets = state.actors.map((a, i) => ({ a, i })).filter(({ a }) => a.kind === 'party' && a.alive)
+  if (partyTargets.length === 0) return { ...state, phase: 'defeat' }
 
-  const { a: defender, i: targetIdx } = targets[Math.floor(rng() * targets.length)]
+  // Try to use an enemy ability
+  const enemyDef = enemy.defId ? ruleset.enemies.find(e => e.id === enemy.defId) : null
+  const abilities: EnemyAbility[] | undefined = enemyDef?.abilities
+
+  if (abilities?.length) {
+    const totalWeight = abilities.reduce((s, a) => s + a.weight, 0)
+    let pick = rng() * totalWeight
+    let chosen = abilities[abilities.length - 1]
+    for (const ab of abilities) {
+      pick -= ab.weight
+      if (pick <= 0) { chosen = ab; break }
+    }
+
+    // Resolve target list from the ability's target type (from enemy perspective)
+    let targetIdxs: number[]
+    switch (chosen.target) {
+      case 'self':
+        targetIdxs = [state.turnIdx]
+        break
+      case 'allEnemies': // enemy's "enemies" = party
+      case 'allAllies':  // enemy's "allies" = also party in simplified model
+      case 'enemyRow':
+        targetIdxs = partyTargets.map(t => t.i)
+        break
+      default: // 'enemy', 'ally', 'none'
+        targetIdxs = [partyTargets[Math.floor(rng() * partyTargets.length)].i]
+    }
+
+    const abilityEntry: CombatLogEntry = { text: `${enemy.name} uses an ability!`, kind: 'spell' }
+    const { actors: newActors, log: effectLog } = resolveCombatEffects(
+      chosen.effects, state.turnIdx, targetIdxs, state.actors, ruleset, rng,
+    )
+    return advanceTurn(
+      { ...state, actors: newActors, log: [...state.log, abilityEntry, ...effectLog] },
+      ruleset, rng,
+    )
+  }
+
+  // Default: physical attack
+  const { a: defender, i: targetIdx } = partyTargets[Math.floor(rng() * partyTargets.length)]
   const result = calcHit(enemy, defender, rng)
   const newHp = Math.max(0, defender.hp - result.damage)
   const died = newHp === 0
@@ -215,7 +475,7 @@ export function resolveEnemyTurn(state: CombatState, rng: () => number): CombatS
   const newLog = [...state.log, entry]
   if (died) newLog.push({ text: `${defender.name} has fallen!`, kind: 'info' })
 
-  return advanceTurn({ ...state, actors: newActors, log: newLog })
+  return advanceTurn({ ...state, actors: newActors, log: newLog }, ruleset, rng)
 }
 
 // ── Post-combat: apply outcome to party ───────────────────────────────────────
@@ -225,11 +485,10 @@ export function applyCombatOutcome(
   state: CombatState,
   ruleset: Ruleset,
 ): { party: Character[]; levelUps: string[] } {
-  // Sync HP/alive from actors back to party members
   let updated = party.map((char, i) => {
     const actor = state.actors.find(a => a.kind === 'party' && a.idx === i)
     if (!actor) return char
-    return { ...char, hp: actor.hp, alive: actor.alive && actor.hp > 0 }
+    return { ...char, hp: actor.hp, alive: actor.alive && actor.hp > 0, mp: actor.mp, statuses: actor.statuses }
   })
 
   const levelUps: string[] = []

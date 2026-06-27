@@ -96,7 +96,7 @@ export type {
 export { deriveMaxHp, deriveMaxMp, xpToNextLevel } from './lib/engine-types'
 
 // Default ruleset
-export { makeDefaultRuleset, DEFAULT_ATTRIBUTES, DEFAULT_CLASSES, DEFAULT_RACES } from './lib/default-ruleset'
+export { makeDefaultRuleset, DEFAULT_ATTRIBUTES, DEFAULT_CLASSES, DEFAULT_RACES, DEFAULT_SPELLS, DEFAULT_STATUS_EFFECTS } from './lib/default-ruleset'
 
 // .epochsave codec + party persistence
 export {
@@ -130,6 +130,9 @@ export { ITEM_SCHEMA, LOOT_TABLE_SCHEMA, blankItem, blankLootTable } from './lib
 // Enemy + encounter-table schema helpers (Phase E3)
 export { ENEMY_SCHEMA, ENCOUNTER_TABLE_SCHEMA, blankEnemy, blankEncounterTable } from './lib/enemy-schema'
 
+// Spell + status-effect schema helpers (Phase E5)
+export { SPELL_SCHEMA, STATUS_SCHEMA, blankSpell, blankStatusEffect } from './lib/spell-schema'
+
 // Out-of-combat effect resolver
 export { applyEffectToChar, applyConsumable } from './lib/apply-effects'
 
@@ -140,10 +143,11 @@ export type { ResolvedEncounter, EnemyInstance, CellEntity } from './lib/engine-
 // Encounter modal (Phase E3)
 export { EncounterModal } from './components/EncounterModal'
 
-// Combat engine (Phase E4)
+// Combat engine (Phase E4 + E5)
 export {
   initCombat,
   resolvePlayerAttack,
+  resolvePlayerCast,
   resolvePlayerFlee,
   resolveEnemyTurn,
   applyCombatOutcome,

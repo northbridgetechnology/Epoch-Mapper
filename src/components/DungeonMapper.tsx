@@ -1153,6 +1153,8 @@ export function DungeonMapper({
       {combatState && (
         <CombatScreen
           state={combatState}
+          ruleset={ruleset}
+          party={party}
           onAction={handleCombatAction}
           onClose={() => {
             const { party: updatedParty, levelUps } = applyCombatOutcome(party, combatState, ruleset)
