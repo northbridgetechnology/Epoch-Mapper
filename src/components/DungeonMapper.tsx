@@ -30,7 +30,7 @@ import { CombatScreen } from './CombatScreen'
 import { initCombat, applyCombatOutcome, type CombatState } from '@/lib/combat-engine'
 import { CellInspector } from './CellInspector'
 import { ShopModal } from './ShopModal'
-import { getTriggeredEvents, resolveExploreEffects, getInteractableObjects, type ExploreEffect, type EventContext } from '@/lib/event-engine'
+import { getTriggeredEvents, resolveExploreEffects, getInteractableObjects, objectUsedFlagKey, resolveLootTable, type ExploreEffect, type EventContext } from '@/lib/event-engine'
 
 const DRAFT_KEY = 'epochmapper.draft'
 const WELCOME_KEY = 'epochmapper.welcomed'
@@ -189,6 +189,10 @@ export function DungeonMapper({
   const [facing, setFacing] = useState<Facing>('N')
   const facingRef = useRef<Facing>('N')
   facingRef.current = facing
+
+  const [revealedBoundaries, setRevealedBoundaries] = useState<Set<string>>(() => new Set())
+  const revealedBoundariesRef = useRef<Set<string>>(new Set())
+  revealedBoundariesRef.current = revealedBoundaries
 
   // Load persisted party template on mount
   useEffect(() => {
@@ -434,9 +438,11 @@ export function DungeonMapper({
         const bk = boundaryKey(activeMap.playerX, activeMap.playerY, moveDir)
         const b = activeMap.boundaries[bk]
         if (b) {
-          const wallBlocked = b.wall !== undefined && b.wall !== 3  // 3 = illusory
+          const illusoryRevealed = b.wall === 3 && revealedBoundariesRef.current.has(bk)
+          const wallBlocked = b.wall !== undefined && b.wall !== 3 // solid, non-illusory
+          const illusoryBlocked = b.wall === 3 && !illusoryRevealed  // unrevealed illusory blocks
           const doorBlocked = b.door !== undefined && b.door.state !== 'open'
-          if (wallBlocked || doorBlocked) return
+          if (wallBlocked || illusoryBlocked || doorBlocked) return
         }
       }
 
@@ -512,36 +518,98 @@ export function DungeonMapper({
   const handleInteract = useCallback(() => {
     if (!activeMap) return
 
-    // Check boundary in facing direction for doors
     const facingDir = facingRef.current as EdgeDir
     const bk = boundaryKey(activeMap.playerX, activeMap.playerY, facingDir)
     const boundary = activeMap.boundaries?.[bk]
-    if (boundary?.door) {
-      const door = boundary.door
-      if (door.state === 'closed') {
-        updateActiveMap(m => ({
-          boundaries: { ...(m.boundaries ?? {}), [bk]: { ...boundary, door: { ...door, state: 'open' as const } } }
-        }))
+
+    // ── Priority 1: facing boundary ───────────────────────────────────────────
+    if (boundary) {
+      // Illusory wall reveal
+      if (boundary.wall === 3 && !revealedBoundariesRef.current.has(bk)) {
+        setRevealedBoundaries(prev => { const s = new Set(prev); s.add(bk); return s })
+        toast('The wall shimmers and fades...')
         return
-      } else if (door.state === 'locked') {
-        if (door.keyItem && inventory.some(item => item.def === door.keyItem)) {
+      }
+      // Door interaction
+      if (boundary.door) {
+        const door = boundary.door
+        if (door.state === 'closed') {
           updateActiveMap(m => ({
             boundaries: { ...(m.boundaries ?? {}), [bk]: { ...boundary, door: { ...door, state: 'open' as const } } }
           }))
-          toast('Door unlocked!')
-        } else {
-          toast('This door is locked.')
+          return
+        } else if (door.state === 'locked') {
+          if (door.keyItem && inventory.some(item => item.def === door.keyItem)) {
+            updateActiveMap(m => ({
+              boundaries: { ...(m.boundaries ?? {}), [bk]: { ...boundary, door: { ...door, state: 'open' as const } } }
+            }))
+            toast('Door unlocked!')
+          } else {
+            toast('This door is locked.')
+          }
+          return
         }
-        return
+        // open doors: fall through so cell-ahead objects can still be reached
       }
     }
 
+    const [fdx, fdy] = FORWARD_DXY[facingRef.current]
+    const aheadX = activeMap.playerX + fdx
+    const aheadY = activeMap.playerY + fdy
+    const aheadKey = `${aheadX},${aheadY}`
+    const aheadCell = activeMap.cells[aheadKey]
+    const ctx = makeEventContext()
+
+    // ── Priority 2: cell one step ahead — objects (chests, NPCs, shops, levers) ─
+    if (aheadCell) {
+      const aheadObjects = getInteractableObjects(aheadCell)
+      for (const obj of aheadObjects) {
+        // Chest with loot table
+        if (obj.kind === 'chest' && obj.loot) {
+          const flagKey = objectUsedFlagKey(obj.id)
+          if (flags[flagKey]) {
+            toast('The chest is empty.')
+            return
+          }
+          const result = resolveLootTable(obj.loot, ruleset)
+          setFlags(prev => ({ ...prev, [flagKey]: true }))
+          if (result.gold > 0) setGold(g => g + result.gold)
+          if (result.items.length > 0) {
+            setInventory(prev => {
+              let inv = [...prev]
+              for (const { item, qty } of result.items) {
+                const idx = inv.findIndex(i => i.def === item)
+                if (idx >= 0) inv[idx] = { ...inv[idx], qty: inv[idx].qty + qty }
+                else inv = [...inv, { def: item, qty }]
+              }
+              return inv
+            })
+          }
+          const parts: string[] = []
+          for (const { item, qty } of result.items) {
+            const def = ruleset.items.find(i => i.id === item)
+            parts.push(`${qty > 1 ? `${qty}× ` : ''}${def?.name ?? item}`)
+          }
+          if (result.gold > 0) parts.push(`${result.gold} gold`)
+          toast(parts.length > 0 ? `Found: ${parts.join(', ')}!` : 'The chest is empty.')
+          return
+        }
+        // Generic onInteract effects
+        if (obj.onInteract?.length) {
+          const result = resolveExploreEffects(obj.onInteract, ctx)
+          applyExploreEffect(result)
+          return
+        }
+        if (obj.shop) { setShopId(obj.shop); return }
+        if (obj.dialogue) { toast(obj.dialogue); return }
+      }
+    }
+
+    // ── Priority 3: current cell — onInteract events ──────────────────────────
     const cellKey = `${activeMap.playerX},${activeMap.playerY}`
     const cell = activeMap.cells[cellKey]
     if (!cell) return
-    const ctx = makeEventContext()
 
-    // onInteract events
     const triggered = getTriggeredEvents(cell, 'onInteract', ctx)
     if (triggered.length > 0) {
       const allEffects = triggered.flatMap(({ event }) => event.effects)
@@ -557,7 +625,7 @@ export function DungeonMapper({
       return
     }
 
-    // Object interactions
+    // Current cell objects (fallback)
     const objects = getInteractableObjects(cell)
     for (const obj of objects) {
       if (obj.onInteract?.length) {
@@ -570,7 +638,7 @@ export function DungeonMapper({
       }
       break
     }
-  }, [activeMap, makeEventContext, applyExploreEffect, updateActiveMap, inventory])
+  }, [activeMap, makeEventContext, applyExploreEffect, updateActiveMap, inventory, flags, ruleset, setGold, setInventory, setFlags])
 
   const isCellRevealed = useCallback(
     (x: number, y: number) => {
@@ -1117,6 +1185,7 @@ export function DungeonMapper({
             customBase={customBase}
             customOverlay={customOverlay}
             isCellRevealed={isCellRevealed}
+            revealedBoundaries={revealedBoundaries}
             onMoveForward={stepForward}
             onMoveBack={stepBack}
             onTurnLeft={turnLeft}

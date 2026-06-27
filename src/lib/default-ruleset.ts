@@ -286,7 +286,35 @@ export function makeDefaultRuleset(startMapId = 'map1'): Ruleset {
     statusEffects: DEFAULT_STATUS_EFFECTS,
     enemies: [],
     encounterTables: [],
-    lootTables: [],
+    lootTables: [
+      {
+        id: 'loot.chest_t1',
+        name: 'Chest (Tier 1)',
+        icon: '📦',
+        color: '#a0522d',
+        description: 'A simple wooden chest containing a modest amount of gold.',
+        gold: { min: 10, max: 50 },
+        drops: [],
+      },
+      {
+        id: 'loot.chest_t2',
+        name: 'Chest (Tier 2)',
+        icon: '🗃️',
+        color: '#b8860b',
+        description: 'A reinforced chest with a fair reward of gold.',
+        gold: { min: 50, max: 200 },
+        drops: [],
+      },
+      {
+        id: 'loot.chest_t3',
+        name: 'Chest (Tier 3)',
+        icon: '💎',
+        color: '#4169e1',
+        description: 'A heavily locked chest containing rare treasure.',
+        gold: { min: 100, max: 500 },
+        drops: [],
+      },
+    ],
     shops: [],
   }
 }

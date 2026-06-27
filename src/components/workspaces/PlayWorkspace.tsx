@@ -17,6 +17,7 @@ interface PlayWorkspaceProps {
   customBase: Record<number, MarkerDef>
   customOverlay: Record<number, MarkerDef>
   isCellRevealed: (x: number, y: number) => boolean
+  revealedBoundaries?: Set<string>
   onMoveForward: () => void
   onMoveBack: () => void
   onTurnLeft: () => void
@@ -196,10 +197,18 @@ function isWall(map: MapData, x: number, y: number, customBase: Record<number, M
   const def = baseDef(cell.base ?? 0, customBase)
   return (cell.base ?? 0) === 0 || def.label.toLowerCase().includes('wall')
 }
-function hasBoundaryWall(map: MapData, x: number, y: number, dir: EdgeDir): boolean {
-  const b = map.boundaries?.[boundaryKey(x, y, dir)]
+function hasBoundaryWall(
+  map: MapData, x: number, y: number, dir: EdgeDir,
+  revealedBoundaries?: Set<string>,
+): boolean {
+  const bk = boundaryKey(x, y, dir)
+  const b = map.boundaries?.[bk]
   if (!b) return false
-  return (b.wall !== undefined && b.wall !== 3) || (b.door !== undefined && b.door.state !== 'open')
+  if (b.wall !== undefined) {
+    if (b.wall === 3) return revealedBoundaries ? !revealedBoundaries.has(bk) : true
+    return true
+  }
+  return b.door !== undefined && b.door.state !== 'open'
 }
 
 // ── SVG component ──────────────────────────────────────────────────────────────
@@ -210,9 +219,10 @@ interface FirstPersonViewProps {
   customBase: Record<number, MarkerDef>
   customOverlay: Record<number, MarkerDef>
   isCellRevealed: (x: number, y: number) => boolean
+  revealedBoundaries?: Set<string>
 }
 
-function FirstPersonView({ map, facing, customBase, customOverlay, isCellRevealed }: FirstPersonViewProps) {
+function FirstPersonView({ map, facing, customBase, customOverlay, isCellRevealed, revealedBoundaries }: FirstPersonViewProps) {
   const [fd0, fd1] = facingDelta(facing)
   const [rd0, rd1] = rightDelta(facing)
   const px = map.playerX
@@ -223,7 +233,7 @@ function FirstPersonView({ map, facing, customBase, customOverlay, isCellReveale
   }
   function hasFrontWall(ahead: number): boolean {
     const [cx, cy] = cellAt(ahead, 0)
-    if (hasBoundaryWall(map, cx, cy, frontOf(facing))) return true
+    if (hasBoundaryWall(map, cx, cy, frontOf(facing), revealedBoundaries)) return true
     const [nx, ny] = cellAt(ahead + 1, 0)
     return isWall(map, nx, ny, customBase) || !isCellRevealed(nx, ny)
   }
@@ -231,9 +241,15 @@ function FirstPersonView({ map, facing, customBase, customOverlay, isCellReveale
     const s = side === 'right' ? 1 : -1
     const [cx, cy] = cellAt(ahead, 0)
     const dir = side === 'right' ? rightOf(facing) : leftOf(facing)
-    if (hasBoundaryWall(map, cx, cy, dir)) return true
+    if (hasBoundaryWall(map, cx, cy, dir, revealedBoundaries)) return true
     const [sx, sy] = cellAt(ahead, s)
     return isWall(map, sx, sy, customBase) || !isCellRevealed(sx, sy)
+  }
+  function isRevealedIllusoryFront(ahead: number): boolean {
+    const [cx, cy] = cellAt(ahead, 0)
+    const bk = boundaryKey(cx, cy, frontOf(facing))
+    const b = map.boundaries?.[bk]
+    return b?.wall === 3 && (revealedBoundaries?.has(bk) ?? false)
   }
 
   const nodes: React.ReactNode[] = []
@@ -317,30 +333,42 @@ function FirstPersonView({ map, facing, customBase, customOverlay, isCellReveale
     const far = sliceRect(d)
     const fog = depthFog(d)
 
-    // Front wall
-    if (hasFrontWall(d - 1)) {
+    const frontExists = hasFrontWall(d - 1)
+    const leftExists  = hasSideWall(d - 1, 'left')
+    const rightExists = hasSideWall(d - 1, 'right')
+
+    // Front wall (solid) — or ghost if it's a revealed illusory wall
+    if (frontExists || isRevealedIllusoryFront(d - 1)) {
       const fw = far.x2 - far.x1
       const fh = far.y2 - far.y1
-      nodes.push(
-        // Base fill
-        <rect key={`fw${d}`} x={far.x1} y={far.y1} width={fw} height={fh}
-          fill={frontWallColor(d)} />,
-        // Subtle vertical panel lines (Phantasy Star stonework)
-        <line key={`fwl${d}`} x1={far.x1 + fw * 0.33} y1={far.y1} x2={far.x1 + fw * 0.33} y2={far.y2}
-          stroke="rgba(0,0,0,0.18)" strokeWidth={0.6} />,
-        <line key={`fwr${d}`} x1={far.x1 + fw * 0.67} y1={far.y1} x2={far.x1 + fw * 0.67} y2={far.y2}
-          stroke="rgba(0,0,0,0.18)" strokeWidth={0.6} />,
-        // Top highlight edge
-        <line key={`fwt${d}`} x1={far.x1} y1={far.y1} x2={far.x2} y2={far.y1}
-          stroke={`hsl(215 30% ${Math.min(72, 72 - (d - 1) * 12)}%)`} strokeWidth={1} />,
-        // Depth fog overlay
-        fog > 0 && <rect key={`fwf${d}`} x={far.x1} y={far.y1} width={fw} height={fh}
-          fill={`rgba(0,0,0,${fog})`} />,
-      )
+      if (frontExists) {
+        nodes.push(
+          <rect key={`fw${d}`} x={far.x1} y={far.y1} width={fw} height={fh}
+            fill={frontWallColor(d)} />,
+          <line key={`fwl${d}`} x1={far.x1 + fw * 0.33} y1={far.y1} x2={far.x1 + fw * 0.33} y2={far.y2}
+            stroke="rgba(0,0,0,0.18)" strokeWidth={0.6} />,
+          <line key={`fwr${d}`} x1={far.x1 + fw * 0.67} y1={far.y1} x2={far.x1 + fw * 0.67} y2={far.y2}
+            stroke="rgba(0,0,0,0.18)" strokeWidth={0.6} />,
+          <line key={`fwt${d}`} x1={far.x1} y1={far.y1} x2={far.x2} y2={far.y1}
+            stroke={`hsl(215 30% ${Math.min(72, 72 - (d - 1) * 12)}%)`} strokeWidth={1} />,
+          fog > 0 && <rect key={`fwf${d}`} x={far.x1} y={far.y1} width={fw} height={fh}
+            fill={`rgba(0,0,0,${fog})`} />,
+        )
+      } else {
+        // Ghost: revealed illusory wall — faint shimmer
+        nodes.push(
+          <rect key={`fwg${d}`} x={far.x1} y={far.y1} width={fw} height={fh}
+            fill="rgba(160,200,255,0.12)" />,
+          <line key={`fwg1${d}`} x1={far.x1} y1={far.y1} x2={far.x2} y2={far.y2}
+            stroke="rgba(160,210,255,0.20)" strokeWidth={0.8} />,
+          <line key={`fwg2${d}`} x1={far.x2} y1={far.y1} x2={far.x1} y2={far.y2}
+            stroke="rgba(160,210,255,0.20)" strokeWidth={0.8} />,
+        )
+      }
     }
 
-    // Left side wall (trapezoid connecting cur-left to far-left edges)
-    if (hasSideWall(d - 1, 'left')) {
+    // Left side wall trapezoid
+    if (leftExists) {
       const pts = [
         `${cur.x1},${cur.y1}`,
         `${far.x1},${far.y1}`,
@@ -349,15 +377,14 @@ function FirstPersonView({ map, facing, customBase, customOverlay, isCellReveale
       ].join(' ')
       nodes.push(
         <polygon key={`lw${d}`} points={pts} fill={sideWallColor(d)} />,
-        // Outer bright edge (left column seam)
         <line key={`lwe${d}`} x1={cur.x1} y1={cur.y1} x2={cur.x1} y2={cur.y2}
           stroke={`hsl(215 25% ${Math.min(55, 55 - (d - 1) * 10)}%)`} strokeWidth={1} />,
         fog > 0 && <polygon key={`lwf${d}`} points={pts} fill={`rgba(0,0,0,${fog * 0.8})`} />,
       )
     }
 
-    // Right side wall
-    if (hasSideWall(d - 1, 'right')) {
+    // Right side wall trapezoid
+    if (rightExists) {
       const pts = [
         `${cur.x2},${cur.y1}`,
         `${far.x2},${far.y1}`,
@@ -371,10 +398,40 @@ function FirstPersonView({ map, facing, customBase, customOverlay, isCellReveale
         fog > 0 && <polygon key={`rwf${d}`} points={pts} fill={`rgba(0,0,0,${fog * 0.8})`} />,
       )
     }
+
+    // ── Corner / return-wall geometry ─────────────────────────────────────────
+    // When the right side is OPEN at depth d, draw a return strip at far.x2 when:
+    //   (a) there's a front wall (side face of the front wall), OR
+    //   (b) there's a wall to the right at the NEXT depth (peek return)
+    if (!rightExists) {
+      const needReturn = frontExists || hasSideWall(d, 'right')
+      if (needReturn) {
+        const sw = cur.x2 - far.x2
+        nodes.push(
+          <rect key={`rrw${d}`} x={far.x2} y={far.y1} width={sw} height={far.y2 - far.y1}
+            fill={sideWallColor(d)} />,
+          fog > 0 && <rect key={`rrwf${d}`} x={far.x2} y={far.y1} width={sw} height={far.y2 - far.y1}
+            fill={`rgba(0,0,0,${fog * 0.7})`} />,
+        )
+      }
+    }
+    if (!leftExists) {
+      const needReturn = frontExists || hasSideWall(d, 'left')
+      if (needReturn) {
+        const sw = far.x1 - cur.x1
+        nodes.push(
+          <rect key={`lrw${d}`} x={cur.x1} y={far.y1} width={sw} height={far.y2 - far.y1}
+            fill={sideWallColor(d)} />,
+          fog > 0 && <rect key={`lrwf${d}`} x={cur.x1} y={far.y1} width={sw} height={far.y2 - far.y1}
+            fill={`rgba(0,0,0,${fog * 0.7})`} />,
+        )
+      }
+    }
   }
 
   // ── 4. Entities at visible depths ─────────────────────────────────────────────
-  // Show the first overlay icon/emoji we can see looking forward, at its correct depth
+  // Show the first overlay icon/emoji we can see looking forward, at its correct depth.
+  // face = sliceRect(d): entity at d steps ahead occupies the d-th projected face.
   for (let d = 1; d <= MAX_D; d++) {
     if (hasFrontWall(d - 1)) break   // wall blocks line of sight
     const [fx, fy] = cellAt(d, 0)
@@ -385,37 +442,30 @@ function FirstPersonView({ map, facing, customBase, customOverlay, isCellReveale
       .filter((x): x is string => Boolean(x))
     if (icons.length === 0) continue
 
-    const face = sliceRect(d - 1)
-    const face1 = sliceRect(d)
+    const face = sliceRect(d)   // entity lives at this depth face, not one closer
     const cx = VP_X
-    const cy = VP_Y
     const faceW = face.x2 - face.x1
     const faceH = face.y2 - face.y1
     const iconSize = Math.max(10, faceW * 0.26)
     const shadowH = Math.max(2, faceH * 0.06)
     const shadowW = Math.max(4, faceW * 0.18)
-    // Depth shadow ellipse under the sprite
-    nodes.push(
-      <ellipse key={`eshadow${d}`}
-        cx={cx} cy={face.y2 - faceH * 0.1}
-        rx={shadowW} ry={shadowH}
-        fill={`rgba(0,0,0,${0.4 + d * 0.08})`} />,
-    )
-    // Depth fog on entity matches wall fog
     const entFog = depthFog(d)
     nodes.push(
+      <ellipse key={`eshadow${d}`}
+        cx={cx} cy={face.y2 - faceH * 0.08}
+        rx={shadowW} ry={shadowH}
+        fill={`rgba(0,0,0,${0.4 + d * 0.08})`} />,
       <text key={`eicon${d}`}
-        x={cx} y={cy + faceH * 0.08}
+        x={cx} y={VP_Y + faceH * 0.04}
         textAnchor="middle" dominantBaseline="middle"
         fontSize={iconSize}
         opacity={1 - entFog * 0.6}
       >
         {icons[0]}
       </text>,
-      // Subtle dark drop-shadow effect
       entFog > 0 && <rect key={`efog${d}`}
-        x={face1.x1} y={face1.y1}
-        width={face1.x2 - face1.x1} height={face1.y2 - face1.y1}
+        x={face.x1} y={face.y1}
+        width={faceW} height={faceH}
         fill={`rgba(0,0,0,${entFog * 0.5})`} />,
     )
     break  // only render the nearest visible entity
@@ -608,7 +658,7 @@ function DungeonViewport({
 
 export function PlayWorkspace({
   activeMap, party, gold, facing,
-  customBase, customOverlay, isCellRevealed,
+  customBase, customOverlay, isCellRevealed, revealedBoundaries,
   onMoveForward, onMoveBack, onTurnLeft, onTurnRight, onInteract,
 }: PlayWorkspaceProps) {
   const [cellSize, setCellSize] = useState(DEFAULT_CELL + 6)
@@ -670,6 +720,7 @@ export function PlayWorkspace({
             customBase={customBase}
             customOverlay={customOverlay}
             isCellRevealed={isCellRevealed}
+            revealedBoundaries={revealedBoundaries}
           />
         </div>
       ) : (
