@@ -381,7 +381,41 @@ export function DungeonMapper({
         }
       }
     }
-  }, [updateActiveMap, revealAround, ruleset, setInventory, setGold, setFlags, setShopId, setActiveEncounter])
+    // Reveal a radius around the player (e.g. a "light" spell effect)
+    if (result.revealRadius && result.revealRadius > 0) {
+      updateActiveMap(m => {
+        let chunks = new Set(m.revealedChunks ?? [])
+        const r = result.revealRadius!
+        for (let dx = -r; dx <= r; dx++) {
+          for (let dy = -r; dy <= r; dy++) {
+            if (Math.abs(dx) + Math.abs(dy) <= r) {
+              const nx = m.playerX + dx; const ny = m.playerY + dy
+              const { cx, cy } = { cx: Math.floor(nx / CHUNK_SIZE), cy: Math.floor(ny / CHUNK_SIZE) }
+              chunks = new Set([...chunks, `${cx},${cy}`])
+            }
+          }
+        }
+        return { revealedChunks: [...chunks] }
+      })
+    }
+    // Out-of-combat healing effects: fullHeal / heal / restoreMp
+    if (result.flagSets['_fullHeal']) {
+      setParty(prev => prev.map(c => c.alive ? { ...c, hp: c.maxHp, mp: c.maxMp } : c))
+    } else {
+      const healAmt  = result.flagSets['_heal']    ? Number(result.flagSets['_heal'])    : 0
+      const mpAmt    = result.flagSets['_restoreMp'] ? Number(result.flagSets['_restoreMp']) : 0
+      if (healAmt > 0 || mpAmt > 0) {
+        setParty(prev => prev.map(c => {
+          if (!c.alive) return c
+          return {
+            ...c,
+            hp: healAmt  > 0 ? Math.min(c.maxHp, c.hp + healAmt)  : c.hp,
+            mp: mpAmt    > 0 ? Math.min(c.maxMp, c.mp + mpAmt)    : c.mp,
+          }
+        }))
+      }
+    }
+  }, [updateActiveMap, revealAround, ruleset, setInventory, setGold, setFlags, setShopId, setActiveEncounter, setParty])
 
   const makeEventContext = useCallback((): EventContext => ({
     flags,
@@ -409,6 +443,22 @@ export function DungeonMapper({
           setFlags(prev => ({ ...prev, [visitedKey]: true }))
         }
 
+        // mapLink: teleport to another map
+        const mapLink = cell.entities?.find(e => e.t === 'mapLink')
+        if (mapLink && mapLink.t === 'mapLink') {
+          const targetIdx = maps.findIndex(m => m.id === mapLink.mapId)
+          if (targetIdx >= 0) {
+            setActiveIdx(targetIdx)
+            setMaps(prev => prev.map((m, i) => {
+              if (i !== targetIdx) return m
+              return { ...m, playerX: mapLink.x, playerY: mapLink.y, revealedChunks: revealAround(m, mapLink.x, mapLink.y) }
+            }))
+            if (mapLink.facing) setFacing(mapLink.facing)
+            setCameraOffset({ x: 0, y: 0 })
+            return
+          }
+        }
+
         // onEnter events
         const ctx = makeEventContext()
         const triggered = getTriggeredEvents(cell, 'onEnter', ctx)
@@ -426,7 +476,7 @@ export function DungeonMapper({
         }
       }
     },
-    [activeMap, updateActiveMap, revealAround, ruleset, flags, makeEventContext, applyExploreEffect],
+    [activeMap, maps, updateActiveMap, revealAround, ruleset, flags, makeEventContext, applyExploreEffect, setActiveIdx, setFacing],
   )
 
   // ── Blobber movement ──────────────────────────────────────────────────────────
