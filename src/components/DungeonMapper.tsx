@@ -722,8 +722,68 @@ export function DungeonMapper({
     [recordHistory, updateActiveMap],
   )
 
+  // ── Drag-paint support (base / overlay / erase) ────────────────────────────
+  const isPaintingRef     = useRef(false)
+  const paintedCellsRef   = useRef(new Set<string>())
+  const dragHistoryRef    = useRef(false)
+
+  function applyPaintTool(x: number, y: number) {
+    if (!activeMap) return
+    const tool = activeTool
+    if (tool.kind !== 'base' && tool.kind !== 'overlay' && tool.kind !== 'erase') return
+    if (!isCellRevealed(x, y)) return
+    const key = `${x},${y}`
+    if (paintedCellsRef.current.has(key)) return
+    paintedCellsRef.current.add(key)
+    if (!dragHistoryRef.current) { dragHistoryRef.current = true; recordHistory() }
+    updateActiveMap((m) => {
+      const cells = { ...m.cells }
+      const cur = cells[key] ?? EMPTY_CELL
+      if (tool.kind === 'erase') {
+        delete cells[key]
+      } else if (tool.kind === 'base') {
+        const next = { ...cur, base: tool.value }
+        if (tool.value === 0 && cur.overlays.length === 0 && !cur.note && !cur.entities?.length) delete cells[key]
+        else cells[key] = next
+      } else {
+        const isFirstCell = paintedCellsRef.current.size === 0
+        const has = cur.overlays.includes(tool.value)
+        if (has && isFirstCell) {
+          // Single-click toggle: remove if already present
+          cells[key] = { ...cur, overlays: cur.overlays.filter(o => o !== tool.value) }
+        } else if (!has) {
+          cells[key] = { ...cur, overlays: [...cur.overlays, tool.value] }
+        }
+      }
+      return { cells }
+    })
+  }
+
+  function handleCellMouseDown(e: React.MouseEvent<HTMLDivElement>, x: number, y: number) {
+    if (e.button !== 0) return
+    const tool = activeTool
+    if (tool.kind !== 'base' && tool.kind !== 'overlay' && tool.kind !== 'erase') return
+    e.preventDefault()
+    isPaintingRef.current  = true
+    dragHistoryRef.current = false
+    paintedCellsRef.current = new Set()
+    applyPaintTool(x, y)
+  }
+
+  function handleCellMouseEnter(x: number, y: number) {
+    if (isPaintingRef.current) applyPaintTool(x, y)
+  }
+
+  function handlePaintEnd() {
+    isPaintingRef.current = false
+    paintedCellsRef.current.clear()
+    dragHistoryRef.current = false
+  }
+
   function handleCellClick(e: React.MouseEvent<HTMLDivElement>, x: number, y: number) {
     if (!activeMap || !isCellRevealed(x, y)) return
+    // Painting tools are handled by mousedown+drag; skip here to avoid double-history
+    if (activeTool.kind === 'base' || activeTool.kind === 'overlay' || activeTool.kind === 'erase') return
     const key = `${x},${y}`
     const cur = activeMap.cells[key] ?? EMPTY_CELL
 
@@ -760,20 +820,6 @@ export function DungeonMapper({
       return
     }
 
-    if (activeTool.kind === 'erase') {
-      writeCell(key, EMPTY_CELL)
-      return
-    }
-
-    if (activeTool.kind === 'base') {
-      writeCell(key, { ...cur, base: activeTool.value })
-      return
-    }
-
-    // overlay: toggle
-    const has = cur.overlays.includes(activeTool.value)
-    const overlays = has ? cur.overlays.filter((o) => o !== activeTool.value) : [...cur.overlays, activeTool.value]
-    writeCell(key, { ...cur, overlays })
   }
 
   function handleCellRightClick(e: React.MouseEvent<HTMLDivElement>, x: number, y: number) {
@@ -1505,6 +1551,8 @@ export function DungeonMapper({
               isCellRevealed={isCellRevealed}
               onCellClick={handleCellClick}
               onCellRightClick={handleCellRightClick}
+              onCellMouseDown={handleCellMouseDown}
+              onCellMouseEnter={handleCellMouseEnter}
               onCellMouseMove={handleCellMouseMove}
               onCellHoverEnd={() => setTooltip(null)}
               onTooltip={setTooltip}
@@ -1530,6 +1578,7 @@ export function DungeonMapper({
                 }
               }}
               onPanEnd={() => setIsPanning(false)}
+              onPaintEnd={handlePaintEnd}
             />
           )}
         </main>
@@ -1644,6 +1693,8 @@ interface ViewportProps {
   isCellRevealed: (x: number, y: number) => boolean
   onCellClick: (e: React.MouseEvent<HTMLDivElement>, x: number, y: number) => void
   onCellRightClick: (e: React.MouseEvent<HTMLDivElement>, x: number, y: number) => void
+  onCellMouseDown: (e: React.MouseEvent<HTMLDivElement>, x: number, y: number) => void
+  onCellMouseEnter: (x: number, y: number) => void
   onCellMouseMove: (e: React.MouseEvent<HTMLDivElement>, x: number, y: number) => void
   onCellHoverEnd: () => void
   onTooltip: (t: { x: number; y: number; cell: CellData; isPlayer: boolean; cellBoundaries?: Partial<Record<EdgeDir, BoundaryData>> }) => void
@@ -1651,6 +1702,7 @@ interface ViewportProps {
   onPanStart: (x: number, y: number) => void
   onPanMove: (x: number, y: number) => void
   onPanEnd: () => void
+  onPaintEnd: () => void
 }
 
 // ── Boundary Inspector (door configuration panel) ────────────────────────────
@@ -1784,8 +1836,9 @@ function Viewport(props: ViewportProps) {
       onMouseMove={(e) => props.onPanMove(e.clientX, e.clientY)}
       onMouseUp={(e) => {
         if (e.button === 1) props.onPanEnd()
+        if (e.button === 0) props.onPaintEnd()
       }}
-      onMouseLeave={props.onPanEnd}
+      onMouseLeave={() => { props.onPanEnd(); props.onPaintEnd() }}
       onWheel={(e) => props.onWheel(e.deltaY)}
       onContextMenu={(e) => e.preventDefault()}
     >
@@ -1849,6 +1902,8 @@ function Viewport(props: ViewportProps) {
                     )}
                     style={{ width: cellSize, height: cellSize, background: bg }}
                     onClick={(e) => props.onCellClick(e, x, y)}
+                    onMouseDown={(e) => props.onCellMouseDown(e, x, y)}
+                    onMouseEnter={() => props.onCellMouseEnter(x, y)}
                     onContextMenu={(e) => props.onCellRightClick(e, x, y)}
                     onMouseMove={(e) => {
                       props.onCellMouseMove(e, x, y)
