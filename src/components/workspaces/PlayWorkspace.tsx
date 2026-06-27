@@ -380,7 +380,76 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
     const leftK  = leftExists  ? 'wall' : getSideKind(d - 1, 'left')
     const rightK = rightExists ? 'wall' : getSideKind(d - 1, 'right')
 
-    // Front wall (solid) — ghost (revealed illusory) — or special terrain surface
+    // ── Special terrain floor surfaces (drawn BEFORE walls so walls occlude them) ──
+    // These render as perspective floor trapezoids, not vertical wall panels.
+    // The floor of cell at depth d occupies the trapezoid between slice(d) and slice(d+1).
+    const farFar = sliceRect(d + 1)
+    if (frontK === 'void' || frontK === 'water' || frontK === 'lava') {
+      // Perspective floor tile at depth d — trapezoid in the floor band
+      const floorPts = [
+        `${far.x1},${far.y2}`,
+        `${far.x2},${far.y2}`,
+        `${farFar.x2},${farFar.y2}`,
+        `${farFar.x1},${farFar.y2}`,
+      ].join(' ')
+      const ledgeH = Math.max(2, (far.x2 - far.x1) * 0.012)   // thin stone ledge at near edge
+      if (frontK === 'void') {
+        // Chasm — dark floor with converging depth lines
+        nodes.push(
+          <polygon key={`vfloor${d}`} points={floorPts} fill="url(#void-grad)" />,
+          <line key={`vfl1${d}`} x1={far.x1+(far.x2-far.x1)*.25} y1={far.y2}
+            x2={VP_X} y2={farFar.y2} stroke="rgba(50,50,80,.28)" strokeWidth={.5} />,
+          <line key={`vfl2${d}`} x1={far.x1+(far.x2-far.x1)*.75} y1={far.y2}
+            x2={VP_X} y2={farFar.y2} stroke="rgba(50,50,80,.28)" strokeWidth={.5} />,
+        )
+      } else {
+        const isWater = frontK === 'water'
+        nodes.push(
+          <polygon key={`tfloor${d}`} points={floorPts}
+            fill={isWater ? 'url(#water-grad)' : 'url(#lava-grad)'} />,
+          // Thin stone ledge at the near edge of the pool
+          <rect key={`tledge${d}`} x={far.x1} y={far.y2 - ledgeH} width={far.x2-far.x1} height={ledgeH}
+            fill={frontWallColor(d)} />,
+          // Surface shimmer / glow
+          <line key={`tsh${d}`} x1={far.x1} y1={far.y2 - ledgeH} x2={far.x2} y2={far.y2 - ledgeH}
+            stroke={isWater ? 'rgba(100,200,240,.6)' : 'rgba(255,140,30,.65)'} strokeWidth={1} />,
+          !isWater && <polygon key={`tglow${d}`} points={floorPts} fill="rgba(220,80,20,.10)" />,
+        )
+      }
+    }
+    // Side floor strips for special terrain (visible to left/right through open corridor walls)
+    if (leftK === 'void') {
+      // Entire left side area is dark abyss
+      const pts = [`${cur.x1},${cur.y1}`,`${far.x1},${far.y1}`,`${far.x1},${far.y2}`,`${cur.x1},${cur.y2}`].join(' ')
+      nodes.push(<polygon key={`vls${d}`} points={pts} fill="url(#void-grad)" />)
+    } else if (leftK === 'water' || leftK === 'lava') {
+      // Thin floor-level strip visible through the left opening
+      const isWater = leftK === 'water'
+      const nwY = cur.y2 - (cur.y2 - cur.y1) * 0.18  // bottom 18% of near side
+      const fwY = far.y2 - (far.y2 - far.y1) * 0.18  // bottom 18% of far side
+      const wPts = [`${cur.x1},${nwY}`,`${far.x1},${fwY}`,`${far.x1},${far.y2}`,`${cur.x1},${cur.y2}`].join(' ')
+      nodes.push(
+        <polygon key={`tls${d}`} points={wPts} fill={isWater ? 'url(#water-grad)' : 'url(#lava-grad)'} />,
+        <line key={`tlssh${d}`} x1={cur.x1} y1={nwY} x2={far.x1} y2={fwY}
+          stroke={isWater ? 'rgba(100,200,240,.5)' : 'rgba(255,140,30,.55)'} strokeWidth={.8} />,
+      )
+    }
+    if (rightK === 'void') {
+      const pts = [`${cur.x2},${cur.y1}`,`${far.x2},${far.y1}`,`${far.x2},${far.y2}`,`${cur.x2},${cur.y2}`].join(' ')
+      nodes.push(<polygon key={`vrs${d}`} points={pts} fill="url(#void-grad)" />)
+    } else if (rightK === 'water' || rightK === 'lava') {
+      const isWater = rightK === 'water'
+      const nwY = cur.y2 - (cur.y2 - cur.y1) * 0.18
+      const fwY = far.y2 - (far.y2 - far.y1) * 0.18
+      const wPts = [`${cur.x2},${nwY}`,`${far.x2},${fwY}`,`${far.x2},${far.y2}`,`${cur.x2},${cur.y2}`].join(' ')
+      nodes.push(
+        <polygon key={`trs${d}`} points={wPts} fill={isWater ? 'url(#water-grad)' : 'url(#lava-grad)'} />,
+        <line key={`trssh${d}`} x1={cur.x2} y1={nwY} x2={far.x2} y2={fwY}
+          stroke={isWater ? 'rgba(100,200,240,.5)' : 'rgba(255,140,30,.55)'} strokeWidth={.8} />,
+      )
+    }
+
+    // Front wall (solid) — ghost (revealed illusory) — no wall for special terrain
     if (frontExists || isRevealedIllusoryFront(d - 1)) {
       const fw = far.x2 - far.x1
       const fh = far.y2 - far.y1
@@ -408,39 +477,10 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
             stroke="rgba(160,210,255,0.20)" strokeWidth={0.8} />,
         )
       }
-    } else if (frontK === 'void') {
-      const fw = far.x2 - far.x1; const fh = far.y2 - far.y1
-      nodes.push(
-        <rect key={`vf${d}`} x={far.x1} y={far.y1} width={fw} height={fh} fill="url(#void-grad)" />,
-        <line key={`vf1${d}`} x1={far.x1} y1={far.y1+fh*.25} x2={far.x2} y2={far.y1+fh*.25}
-          stroke="rgba(50,50,80,.22)" strokeWidth={.5} />,
-        <line key={`vf2${d}`} x1={far.x1} y1={far.y1+fh*.5} x2={far.x2} y2={far.y1+fh*.5}
-          stroke="rgba(40,40,70,.18)" strokeWidth={.4} />,
-        <line key={`vf3${d}`} x1={far.x1} y1={far.y1+fh*.75} x2={far.x2} y2={far.y1+fh*.75}
-          stroke="rgba(30,30,60,.14)" strokeWidth={.3} />,
-      )
-    } else if (frontK === 'water' || frontK === 'lava') {
-      const fh = far.y2 - far.y1
-      const surfTop = far.y1 + fh * 0.72          // surface starts at 72% down
-      const cliffTop = far.y1 + fh * 0.68         // thin cliff ledge above surface
-      const isWater = frontK === 'water'
-      nodes.push(
-        // thin cliff ledge above water/lava surface
-        <rect key={`tf-cl${d}`} x={far.x1} y={cliffTop} width={far.x2-far.x1} height={surfTop-cliffTop}
-          fill={frontWallColor(d)} />,
-        // sunken surface pool
-        <rect key={`tf${d}`} x={far.x1} y={surfTop} width={far.x2-far.x1} height={far.y2-surfTop}
-          fill={isWater ? 'url(#water-grad)' : 'url(#lava-grad)'} />,
-        // surface shimmer / glow line
-        <line key={`tf-sh${d}`} x1={far.x1} y1={surfTop} x2={far.x2} y2={surfTop}
-          stroke={isWater ? 'rgba(100,200,240,.55)' : 'rgba(255,130,30,.6)'} strokeWidth={.8} />,
-        // lava: warm glow overlay
-        !isWater && <rect key={`tf-glow${d}`} x={far.x1} y={surfTop} width={far.x2-far.x1} height={far.y2-surfTop}
-          fill="rgba(220,80,20,.10)" />,
-      )
     }
+    // (Special terrain front surfaces were already drawn above as floor polygons — no vertical panel)
 
-    // Left side wall trapezoid — or special terrain
+    // Left side wall trapezoid
     if (leftExists) {
       const pts = [
         `${cur.x1},${cur.y1}`,
@@ -454,22 +494,9 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
           stroke={`hsl(215 25% ${Math.min(55, 55 - (d - 1) * 10)}%)`} strokeWidth={1} />,
         fog > 0 && <polygon key={`lwf${d}`} points={pts} fill={`rgba(0,0,0,${fog * 0.8})`} />,
       )
-    } else if (leftK === 'void') {
-      const pts = [`${cur.x1},${cur.y1}`,`${far.x1},${far.y1}`,`${far.x1},${far.y2}`,`${cur.x1},${cur.y2}`].join(' ')
-      nodes.push(<polygon key={`vls${d}`} points={pts} fill="url(#void-grad)" />)
-    } else if (leftK === 'water' || leftK === 'lava') {
-      const isWater = leftK === 'water'
-      const nwY = cur.y1 + (cur.y2 - cur.y1) * 0.72
-      const fwY = far.y1 + (far.y2 - far.y1) * 0.72
-      const wPts = [`${cur.x1},${nwY}`,`${far.x1},${fwY}`,`${far.x1},${far.y2}`,`${cur.x1},${cur.y2}`].join(' ')
-      nodes.push(
-        <polygon key={`tls${d}`} points={wPts} fill={isWater ? 'url(#water-grad)' : 'url(#lava-grad)'} />,
-        <line key={`tls-sh${d}`} x1={cur.x1} y1={nwY} x2={far.x1} y2={fwY}
-          stroke={isWater ? 'rgba(100,200,240,.42)' : 'rgba(255,130,30,.5)'} strokeWidth={.7} />,
-      )
     }
 
-    // Right side wall trapezoid — or special terrain
+    // Right side wall trapezoid
     if (rightExists) {
       const pts = [
         `${cur.x2},${cur.y1}`,
@@ -482,19 +509,6 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
         <line key={`rwe${d}`} x1={cur.x2} y1={cur.y1} x2={cur.x2} y2={cur.y2}
           stroke={`hsl(215 25% ${Math.min(55, 55 - (d - 1) * 10)}%)`} strokeWidth={1} />,
         fog > 0 && <polygon key={`rwf${d}`} points={pts} fill={`rgba(0,0,0,${fog * 0.8})`} />,
-      )
-    } else if (rightK === 'void') {
-      const pts = [`${cur.x2},${cur.y1}`,`${far.x2},${far.y1}`,`${far.x2},${far.y2}`,`${cur.x2},${cur.y2}`].join(' ')
-      nodes.push(<polygon key={`vrs${d}`} points={pts} fill="url(#void-grad)" />)
-    } else if (rightK === 'water' || rightK === 'lava') {
-      const isWater = rightK === 'water'
-      const nwY = cur.y1 + (cur.y2 - cur.y1) * 0.72
-      const fwY = far.y1 + (far.y2 - far.y1) * 0.72
-      const wPts = [`${cur.x2},${nwY}`,`${far.x2},${fwY}`,`${far.x2},${far.y2}`,`${cur.x2},${cur.y2}`].join(' ')
-      nodes.push(
-        <polygon key={`trs${d}`} points={wPts} fill={isWater ? 'url(#water-grad)' : 'url(#lava-grad)'} />,
-        <line key={`trs-sh${d}`} x1={cur.x2} y1={nwY} x2={far.x2} y2={fwY}
-          stroke={isWater ? 'rgba(100,200,240,.42)' : 'rgba(255,130,30,.5)'} strokeWidth={.7} />,
       )
     }
 
