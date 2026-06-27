@@ -753,10 +753,9 @@ export function DungeonMapper({
   )
 
   // ── Drag-paint support (base / overlay / erase / eyedropper) ─────────────────
-  const isPaintingRef        = useRef(false)
-  const paintedCellsRef      = useRef(new Set<string>())
-  const dragHistoryRef       = useRef(false)
-  const eyedropConfirmedRef  = useRef(false)
+  const isPaintingRef     = useRef(false)
+  const paintedCellsRef   = useRef(new Set<string>())
+  const dragHistoryRef    = useRef(false)
 
   function applyPaintTool(x: number, y: number) {
     if (!activeMap) return
@@ -819,9 +818,6 @@ export function DungeonMapper({
         toast('Cell sampled — click or drag to stamp')
         return
       }
-      eyedropConfirmedRef.current = false
-      if (!window.confirm('Replace cell contents with sampled data?')) return
-      eyedropConfirmedRef.current = true
       isPaintingRef.current  = true
       dragHistoryRef.current = false
       paintedCellsRef.current = new Set()
@@ -839,7 +835,7 @@ export function DungeonMapper({
 
   function handleCellMouseEnter(x: number, y: number) {
     if (!isPaintingRef.current) return
-    if (activeTool.kind === 'eyedropper' && activeTool.sample && eyedropConfirmedRef.current) {
+    if (activeTool.kind === 'eyedropper' && activeTool.sample) {
       applyStampTool(x, y, activeTool.sample)
     } else {
       applyPaintTool(x, y)
