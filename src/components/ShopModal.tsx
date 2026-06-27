@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { X, ShoppingCart, Package } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { ShopDef, ItemDef, ItemInstance, Ruleset } from '@/lib/engine-types'
@@ -35,17 +35,21 @@ function removeFromInventory(inventory: ItemInstance[], itemId: string, qty: num
 }
 
 export function ShopModal({
-  shop,
-  ruleset,
-  inventory,
-  gold,
-  onClose,
-  onTransaction,
+  shop, ruleset, inventory, gold, onClose, onTransaction,
 }: ShopModalProps) {
-  const [tab, setTab] = useState<'buy' | 'sell'>('buy')
+  const [tab, setTab]           = useState<'buy' | 'sell'>('buy')
   const [localInv, setLocalInv] = useState<ItemInstance[]>(inventory)
   const [localGold, setLocalGold] = useState(gold)
-  const [message, setMessage] = useState<string | null>(null)
+  const [message, setMessage]   = useState<string | null>(null)
+  const [cursor, setCursor]     = useState(0)
+
+  // Reset cursor when tab changes
+  useEffect(() => { setCursor(0) }, [tab])
+
+  const sellableItems = localInv.filter(inst => {
+    const def = findItemDef(ruleset, inst.def)
+    return def && (def.value ?? 0) > 0
+  })
 
   function flashMessage(msg: string) {
     setMessage(msg)
@@ -53,35 +57,68 @@ export function ShopModal({
   }
 
   function handleBuy(itemId: string, price: number) {
-    if (localGold < price) {
-      flashMessage('Not enough gold!')
-      return
-    }
-    const newInv = addToInventory(localInv, itemId, 1)
+    if (localGold < price) { flashMessage('Not enough gold!'); return }
+    const newInv  = addToInventory(localInv, itemId, 1)
     const newGold = localGold - price
-    setLocalInv(newInv)
-    setLocalGold(newGold)
+    setLocalInv(newInv); setLocalGold(newGold)
     onTransaction(newInv, newGold)
-    const def = findItemDef(ruleset, itemId)
-    flashMessage(`Bought ${def?.name ?? itemId}`)
+    flashMessage(`Bought ${findItemDef(ruleset, itemId)?.name ?? itemId}`)
   }
 
   function handleSell(itemId: string, qty: number) {
     const def = findItemDef(ruleset, itemId)
     if (!def) return
     const sellPrice = Math.max(1, Math.floor((def.value ?? 0) * shop.sellModifier))
-    const newInv = removeFromInventory(localInv, itemId, qty)
+    const newInv  = removeFromInventory(localInv, itemId, qty)
     const newGold = localGold + sellPrice * qty
-    setLocalInv(newInv)
-    setLocalGold(newGold)
+    setLocalInv(newInv); setLocalGold(newGold)
     onTransaction(newInv, newGold)
     flashMessage(`Sold ${def.name} for ${sellPrice}g`)
   }
 
-  const sellableItems = localInv.filter(inst => {
-    const def = findItemDef(ruleset, inst.def)
-    return def && (def.value ?? 0) > 0
-  })
+  // Keyboard navigation — ref pattern for always-fresh closures
+  const kbRef = useRef<((e: KeyboardEvent) => void) | null>(null)
+  kbRef.current = (e: KeyboardEvent) => {
+    const tag = (document.activeElement?.tagName ?? '').toUpperCase()
+    if (tag === 'INPUT' || tag === 'TEXTAREA') return
+
+    if (e.key === 'Escape') { e.preventDefault(); onClose(); return }
+
+    // Switch tabs
+    if ((e.key === 'Tab' || e.key === 'q' || e.key === 'Q') && shop.buys) {
+      e.preventDefault()
+      setTab(t => t === 'buy' ? 'sell' : 'buy')
+      return
+    }
+
+    const list = tab === 'buy' ? shop.stock : sellableItems
+    const listLen = list.length
+
+    if (e.key === 'ArrowDown' || e.key === 's' || e.key === 'S') {
+      e.preventDefault(); setCursor(c => Math.min(listLen - 1, c + 1))
+    } else if (e.key === 'ArrowUp' || e.key === 'w' || e.key === 'W') {
+      e.preventDefault(); setCursor(c => Math.max(0, c - 1))
+    } else if (e.key === 'Enter' || e.key === 'z' || e.key === 'Z') {
+      e.preventDefault()
+      const c = Math.min(cursor, listLen - 1)
+      if (tab === 'buy') {
+        const entry = shop.stock[c]
+        if (entry) {
+          const price = entry.price ?? (findItemDef(ruleset, entry.item)?.value ?? 0)
+          handleBuy(entry.item, price)
+        }
+      } else {
+        const inst = sellableItems[c]
+        if (inst) handleSell(inst.def, 1)
+      }
+    }
+  }
+
+  useEffect(() => {
+    const fn = (e: KeyboardEvent) => kbRef.current?.(e)
+    document.addEventListener('keydown', fn)
+    return () => document.removeEventListener('keydown', fn)
+  }, [])
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70">
@@ -138,12 +175,20 @@ export function ShopModal({
                 <div className="text-center text-white/25 text-sm py-8">This shop has no stock.</div>
               )}
               {shop.stock.map((entry, idx) => {
-                const def = findItemDef(ruleset, entry.item)
+                const def      = findItemDef(ruleset, entry.item)
                 if (!def) return null
-                const price = entry.price ?? def.value ?? 0
+                const price    = entry.price ?? def.value ?? 0
                 const canAfford = localGold >= price
+                const isSelected = idx === cursor
                 return (
-                  <div key={idx} className="flex items-center gap-3 px-3 py-2.5 rounded-lg bg-zinc-800/60 border border-white/5">
+                  <div
+                    key={idx}
+                    className={cn(
+                      'flex items-center gap-3 px-3 py-2.5 rounded-lg bg-zinc-800/60 border transition-colors',
+                      isSelected ? 'border-amber-500/50 bg-amber-950/20' : 'border-white/5',
+                    )}
+                  >
+                    {isSelected && <span className="text-amber-300 text-xs flex-shrink-0">▶</span>}
                     <span className="text-xl w-8 text-center flex-shrink-0">{def.icon ?? '📦'}</span>
                     <div className="flex-1 min-w-0">
                       <div className="text-sm font-medium text-white/90 truncate">{def.name}</div>
@@ -158,7 +203,7 @@ export function ShopModal({
                         disabled={!canAfford}
                         className="px-3 py-1 rounded text-xs font-medium bg-amber-600/20 text-amber-300 hover:bg-amber-600/40 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
                       >
-                        Buy
+                        Buy {isSelected && <span className="text-[9px] opacity-50">[↵]</span>}
                       </button>
                     </div>
                   </div>
@@ -176,11 +221,19 @@ export function ShopModal({
                 </div>
               )}
               {sellableItems.map((inst, idx) => {
-                const def = findItemDef(ruleset, inst.def)
+                const def       = findItemDef(ruleset, inst.def)
                 if (!def) return null
                 const sellPrice = Math.max(1, Math.floor((def.value ?? 0) * shop.sellModifier))
+                const isSelected = idx === cursor
                 return (
-                  <div key={idx} className="flex items-center gap-3 px-3 py-2.5 rounded-lg bg-zinc-800/60 border border-white/5">
+                  <div
+                    key={idx}
+                    className={cn(
+                      'flex items-center gap-3 px-3 py-2.5 rounded-lg bg-zinc-800/60 border transition-colors',
+                      isSelected ? 'border-amber-500/50 bg-amber-950/20' : 'border-white/5',
+                    )}
+                  >
+                    {isSelected && <span className="text-amber-300 text-xs flex-shrink-0">▶</span>}
                     <span className="text-xl w-8 text-center flex-shrink-0">{def.icon ?? '📦'}</span>
                     <div className="flex-1 min-w-0">
                       <div className="text-sm font-medium text-white/90 truncate">{def.name}</div>
@@ -192,7 +245,7 @@ export function ShopModal({
                         onClick={() => handleSell(inst.def, 1)}
                         className="px-3 py-1 rounded text-xs font-medium bg-green-600/20 text-green-300 hover:bg-green-600/40 transition-colors"
                       >
-                        Sell
+                        Sell {isSelected && <span className="text-[9px] opacity-50">[↵]</span>}
                       </button>
                     </div>
                   </div>
@@ -204,8 +257,8 @@ export function ShopModal({
 
         {/* Footer */}
         <div className="px-5 py-3 border-t border-white/10 bg-zinc-950/40 flex items-center justify-between">
-          <span className="text-xs text-white/30">
-            {shop.buys ? `Shop buys at ${Math.round(shop.sellModifier * 100)}% of item value` : 'This shop does not buy items'}
+          <span className="text-[9px] text-white/20 font-mono">
+            ↑↓ navigate · ↵ / Z confirm{shop.buys ? ' · Q / Tab switch tab' : ''} · Esc leave
           </span>
           <button
             onClick={onClose}

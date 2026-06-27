@@ -195,6 +195,14 @@ export function DungeonMapper({
   const revealedBoundariesRef = useRef<Set<string>>(new Set())
   revealedBoundariesRef.current = revealedBoundaries
 
+  // Refs so the keyboard handler can read current modal state without stale closures
+  const combatStateRef = useRef<CombatState | null>(null)
+  combatStateRef.current = combatState
+  const shopIdRef = useRef<string | null>(null)
+  shopIdRef.current = shopId
+  const activeEncounterRef = useRef<ResolvedEncounter | null>(null)
+  activeEncounterRef.current = activeEncounter
+
   // Load persisted party template on mount
   useEffect(() => {
     const saved = loadPartyTemplate()
@@ -1046,6 +1054,8 @@ export function DungeonMapper({
       if (!mapperHoveredRef.current && workspaceRef.current !== 'play') return
 
       if (workspaceRef.current === 'play') {
+        // Block movement while any overlay (combat/shop/encounter) is active — those handle keys themselves
+        if (combatStateRef.current || shopIdRef.current || activeEncounterRef.current) return
         // Blobber controls: W=forward, S=back, A=turn-left, D=turn-right
         if (e.key === 'w' || e.key === 'W' || e.key === 'ArrowUp') { e.preventDefault(); stepForward(); return }
         if (e.key === 's' || e.key === 'S' || e.key === 'ArrowDown') { e.preventDefault(); stepBack(); return }
