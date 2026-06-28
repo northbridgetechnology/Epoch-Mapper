@@ -251,19 +251,6 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
     const [sx, sy] = cellAt(ahead, s)
     return isWall(map, sx, sy) || !isCellRevealed(sx, sy)
   }
-  // Returns the terrain kind of the cell directly AHEAD at distance `ahead+1`.
-  // Only called when hasFrontWall(ahead) is false — the cell is revealed and non-wall.
-  function getFrontKind(ahead: number): CellKind {
-    const [nx, ny] = cellAt(ahead + 1, 0)
-    return getCellKind(map, nx, ny)
-  }
-  // Returns the terrain kind of the cell to the side at depth `ahead`.
-  // Only called when hasSideWall(ahead, side) is false — the cell is revealed and non-wall.
-  function getSideKind(ahead: number, side: 'left' | 'right'): CellKind {
-    const s = side === 'right' ? 1 : -1
-    const [sx, sy] = cellAt(ahead, s)
-    return getCellKind(map, sx, sy)
-  }
   function isRevealedIllusoryFront(ahead: number): boolean {
     const [cx, cy] = cellAt(ahead, 0)
     const bk = boundaryKey(cx, cy, frontOf(facing))
@@ -303,19 +290,6 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
         <stop offset="0%" stopColor="rgba(0,0,0,0)" />
         <stop offset="100%" stopColor="rgba(0,0,0,0.55)" />
       </linearGradient>
-      {/* Special terrain gradients */}
-      <linearGradient id="void-grad" x1="0" y1="0" x2="0" y2="1">
-        <stop offset="0%" stopColor="hsl(230 12% 6%)" />
-        <stop offset="100%" stopColor="hsl(230 8% 1%)" />
-      </linearGradient>
-      <linearGradient id="water-grad" x1="0" y1="0" x2="0" y2="1">
-        <stop offset="0%" stopColor="hsl(195 55% 22%)" />
-        <stop offset="100%" stopColor="hsl(195 60% 12%)" />
-      </linearGradient>
-      <linearGradient id="lava-grad" x1="0" y1="0" x2="0" y2="1">
-        <stop offset="0%" stopColor="hsl(15 75% 30%)" />
-        <stop offset="100%" stopColor="hsl(10 80% 20%)" />
-      </linearGradient>
     </defs>,
     <rect key="ceil-mortar" x={0} y={0} width={VW} height={VP_Y} fill="url(#stone-grid)" />,
     <rect key="ceil-fade"   x={0} y={0} width={VW} height={VP_Y} fill="url(#ceil-fade)"  />,
@@ -338,8 +312,16 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
     const y0 = d === MAX_D  ? VP_Y : floorBandY(d + 1)
     const y1 = d === 0      ? VH   : floorBandY(d)
     if (y1 <= y0) continue
+    let fill = pal.floorBand(d)
+    if (d > 0) {
+      const [cx, cy] = cellAt(d, 0)
+      const kind = getCellKind(map, cx, cy)
+      if (kind === 'water') fill = `hsl(210 60% ${Math.max(8, 20 - d * 2)}%)`
+      else if (kind === 'lava') fill = `hsl(12 72% ${Math.max(8, 24 - d * 3)}%)`
+      else if (kind === 'void') fill = `hsl(230 8% ${Math.max(1, 5 - d)}%)`
+    }
     nodes.push(
-      <rect key={`fb${d}`} x={0} y={y0} width={VW} height={y1 - y0} fill={pal.floorBand(d)} />,
+      <rect key={`fb${d}`} x={0} y={y0} width={VW} height={y1 - y0} fill={fill} />,
     )
   }
 
@@ -373,90 +355,6 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
     const frontExists = hasFrontWall(d - 1)
     const leftExists  = hasSideWall(d - 1, 'left')
     const rightExists = hasSideWall(d - 1, 'right')
-
-    // Terrain kinds — only queried when the slot isn't a solid wall
-    const frontK = frontExists ? 'wall' : getFrontKind(d - 1)
-    const leftK  = leftExists  ? 'wall' : getSideKind(d - 1, 'left')
-    const rightK = rightExists ? 'wall' : getSideKind(d - 1, 'right')
-
-    // ── Special terrain floor surfaces (drawn BEFORE walls so walls occlude them) ──
-    // Terrain is sunken below floor level: the surface trapezoid sits sinkNear pixels lower
-    // than the stone floor, and a vertical LIP face bridges the gap at the near edge.
-    const farFar = sliceRect(d + 1)
-    const sinkNear = (cur.y2 - far.y2) * 0.35     // sink at near edge (depth d)
-    const sinkFar  = (far.y2 - farFar.y2) * 0.35  // sink at far edge (depth d+1)
-    if (frontK === 'void' || frontK === 'water' || frontK === 'lava') {
-      // Sunken floor trapezoid — surface is below the stone floor plane
-      const floorPts = [
-        `${far.x1},${far.y2 + sinkNear}`,
-        `${far.x2},${far.y2 + sinkNear}`,
-        `${farFar.x2},${farFar.y2 + sinkFar}`,
-        `${farFar.x1},${farFar.y2 + sinkFar}`,
-      ].join(' ')
-      if (frontK === 'void') {
-        // Chasm — dark floor with converging depth lines + stone lip
-        nodes.push(
-          <polygon key={`vfloor${d}`} points={floorPts} fill="url(#void-grad)" />,
-          <rect key={`vlip${d}`} x={far.x1} y={far.y2} width={far.x2 - far.x1} height={sinkNear}
-            fill={pal.frontWall(d)} />,
-          <line key={`vfl1${d}`} x1={far.x1 + (far.x2 - far.x1) * .25} y1={far.y2 + sinkNear}
-            x2={VP_X} y2={farFar.y2 + sinkFar} stroke="rgba(50,50,80,.28)" strokeWidth={.5} />,
-          <line key={`vfl2${d}`} x1={far.x1 + (far.x2 - far.x1) * .75} y1={far.y2 + sinkNear}
-            x2={VP_X} y2={farFar.y2 + sinkFar} stroke="rgba(50,50,80,.28)" strokeWidth={.5} />,
-        )
-      } else {
-        const isWater = frontK === 'water'
-        nodes.push(
-          <polygon key={`tfloor${d}`} points={floorPts}
-            fill={isWater ? 'url(#water-grad)' : 'url(#lava-grad)'} />,
-          // Visible stone LIP from floor level down to water surface
-          <rect key={`tlip${d}`} x={far.x1} y={far.y2} width={far.x2 - far.x1} height={sinkNear}
-            fill={pal.frontWall(d)} />,
-          // Surface shimmer at water level
-          <line key={`tsh${d}`} x1={far.x1} y1={far.y2 + sinkNear} x2={far.x2} y2={far.y2 + sinkNear}
-            stroke={isWater ? 'rgba(100,200,240,.6)' : 'rgba(255,140,30,.65)'} strokeWidth={1} />,
-          !isWater && <polygon key={`tglow${d}`} points={floorPts} fill="rgba(220,80,20,.10)" />,
-        )
-      }
-    }
-    // Side terrain strips — visible through the left/right corridor openings.
-    // Void fills the full side face (open abyss). Water/lava show only a thin strip at the
-    // bottom of the opening, matching the lip/sink depth — not a large vertical panel.
-    if (leftK === 'void') {
-      const pts = [`${cur.x1},${cur.y1}`,`${far.x1},${far.y1}`,`${far.x1},${far.y2}`,`${cur.x1},${cur.y2}`].join(' ')
-      nodes.push(<polygon key={`vls${d}`} points={pts} fill="url(#void-grad)" />)
-    } else if (leftK === 'water' || leftK === 'lava') {
-      const isWater = leftK === 'water'
-      // Thin strip at the bottom of the side opening (height = sinkNear at near, sinkFar at far)
-      const wPts = [
-        `${cur.x1},${cur.y2 - sinkNear}`,
-        `${far.x1},${far.y2 - sinkFar}`,
-        `${far.x1},${far.y2}`,
-        `${cur.x1},${cur.y2}`,
-      ].join(' ')
-      nodes.push(
-        <polygon key={`tls${d}`} points={wPts} fill={isWater ? 'url(#water-grad)' : 'url(#lava-grad)'} />,
-        <line key={`tlssh${d}`} x1={cur.x1} y1={cur.y2 - sinkNear} x2={far.x1} y2={far.y2 - sinkFar}
-          stroke={isWater ? 'rgba(100,200,240,.5)' : 'rgba(255,140,30,.55)'} strokeWidth={.8} />,
-      )
-    }
-    if (rightK === 'void') {
-      const pts = [`${cur.x2},${cur.y1}`,`${far.x2},${far.y1}`,`${far.x2},${far.y2}`,`${cur.x2},${cur.y2}`].join(' ')
-      nodes.push(<polygon key={`vrs${d}`} points={pts} fill="url(#void-grad)" />)
-    } else if (rightK === 'water' || rightK === 'lava') {
-      const isWater = rightK === 'water'
-      const wPts = [
-        `${cur.x2},${cur.y2 - sinkNear}`,
-        `${far.x2},${far.y2 - sinkFar}`,
-        `${far.x2},${far.y2}`,
-        `${cur.x2},${cur.y2}`,
-      ].join(' ')
-      nodes.push(
-        <polygon key={`trs${d}`} points={wPts} fill={isWater ? 'url(#water-grad)' : 'url(#lava-grad)'} />,
-        <line key={`trssh${d}`} x1={cur.x2} y1={cur.y2 - sinkNear} x2={far.x2} y2={far.y2 - sinkFar}
-          stroke={isWater ? 'rgba(100,200,240,.5)' : 'rgba(255,140,30,.55)'} strokeWidth={.8} />,
-      )
-    }
 
     // Front wall (solid) — ghost (revealed illusory) — door — no wall for special terrain
     const frontBoundary = getFrontBoundary(d - 1)
@@ -609,6 +507,35 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
           <rect key={`lrw${d}`} x={cur.x1} y={far.y1} width={sw} height={far.y2 - far.y1}
             fill={pal.sideWall(d)} />,
           fog > 0 && <rect key={`lrwf${d}`} x={cur.x1} y={far.y1} width={sw} height={far.y2 - far.y1}
+            fill={`rgba(0,0,0,${fog * 0.7})`} />,
+        )
+      }
+    }
+
+    // ── Wide-view: show wall 2 cells off-axis when the immediate side is open ───
+    // This handles rooms wider than 1 cell — without it those walls are invisible.
+    if (!rightExists && far.x2 < VW) {
+      const [rx, ry] = cellAt(d - 1, 2)
+      if (isWall(map, rx, ry) || !isCellRevealed(rx, ry)) {
+        nodes.push(
+          <rect key={`srw2${d}`} x={far.x2} y={far.y1} width={VW - far.x2} height={far.y2 - far.y1}
+            fill={pal.sideWall(d)} />,
+          <line key={`srw2e${d}`} x1={far.x2} y1={far.y1} x2={far.x2} y2={far.y2}
+            stroke={pal.sideEdge(d)} strokeWidth={1} />,
+          fog > 0 && <rect key={`srw2f${d}`} x={far.x2} y={far.y1} width={VW - far.x2} height={far.y2 - far.y1}
+            fill={`rgba(0,0,0,${fog * 0.7})`} />,
+        )
+      }
+    }
+    if (!leftExists && far.x1 > 0) {
+      const [lx, ly] = cellAt(d - 1, -2)
+      if (isWall(map, lx, ly) || !isCellRevealed(lx, ly)) {
+        nodes.push(
+          <rect key={`slw2${d}`} x={0} y={far.y1} width={far.x1} height={far.y2 - far.y1}
+            fill={pal.sideWall(d)} />,
+          <line key={`slw2e${d}`} x1={far.x1} y1={far.y1} x2={far.x1} y2={far.y2}
+            stroke={pal.sideEdge(d)} strokeWidth={1} />,
+          fog > 0 && <rect key={`slw2f${d}`} x={0} y={far.y1} width={far.x1} height={far.y2 - far.y1}
             fill={`rgba(0,0,0,${fog * 0.7})`} />,
         )
       }
