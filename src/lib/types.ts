@@ -53,6 +53,8 @@ export interface MapData {
   boundaries?: Record<string, import('./engine-types').BoundaryData>
   /** Seed used when procedurally generating this map. Stored for reference/reproduction. */
   seed?: number
+  /** Visual theme ID — keys into THEMES in @/lib/themes. Defaults to 'stone_dungeon'. */
+  theme?: string
 }
 
 /** A user-defined cell type or overlay icon. IDs are 128–255. */

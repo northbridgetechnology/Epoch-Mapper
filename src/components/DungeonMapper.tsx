@@ -10,6 +10,7 @@ import {
   baseDef, boundaryKey, edgeDef, overlayDef,
 } from '@/lib/constants'
 import type { CellData, CellMap, CustomMarker, EdgeDir, EpochmapFile, MapData, MarkerDef } from '@/lib/types'
+import { getTheme } from '@/lib/themes'
 import { parseDotEpochmap, serializeDotEpochmap } from '@/lib/epochmap-codec'
 import { resolveMarkerImport, remapMapMarkers } from '@/lib/markers'
 import { exportMapsAsPdf } from '@/lib/dungeon-export'
@@ -23,6 +24,7 @@ import { MarkerPalette } from './MarkerPalette'
 import { PartyWorkspace } from './workspaces/PartyWorkspace'
 import { DatabaseWorkspace } from './workspaces/DatabaseWorkspace'
 import { PlayWorkspace } from './workspaces/PlayWorkspace'
+import { SettingsWorkspace } from './workspaces/SettingsWorkspace'
 import type { BoundaryData, Character, CellEntity, DoorDef, DoorState, Facing, Formation, ItemInstance, ResolvedEncounter, Ruleset } from '@/lib/engine-types'
 import { makeDefaultRuleset } from '@/lib/default-ruleset'
 import { savePartyTemplate, loadPartyTemplate } from '@/lib/save-state'
@@ -1392,12 +1394,14 @@ export function DungeonMapper({
         </div>
       )}
 
-      {/* Settings workspace (stub) */}
+      {/* Settings workspace */}
       {workspace === 'settings' && (
-        <div className="flex-1 flex items-center justify-center text-white/20 text-sm flex-col gap-2">
-          <Settings className="w-8 h-8 opacity-30" />
-          <span>Settings — coming soon</span>
-        </div>
+        <SettingsWorkspace
+          maps={maps}
+          onThemeChange={(idx, themeId) =>
+            setMaps(prev => prev.map((m, i) => i === idx ? { ...m, theme: themeId } : m))
+          }
+        />
       )}
 
       {/* Map workspace (the existing editor) */}
@@ -1961,6 +1965,7 @@ function BoundaryInspector({ bk, x, y, dir, boundary, ruleset, onChange, onClose
 
 function Viewport(props: ViewportProps) {
   const { map, cellSize, cameraOffset, layout, availW, availH } = props
+  const theme = getTheme(map.theme)
   const rulerSize = 18
   const step = cellSize + 1
 
@@ -2027,7 +2032,7 @@ function Viewport(props: ViewportProps) {
               gridTemplateColumns: `repeat(${cols}, ${cellSize}px)`,
               gridTemplateRows: `repeat(${rows}, ${cellSize}px)`,
               gap: '1px',
-              backgroundColor: '#0a0a0c',
+              backgroundColor: theme.gapColor,
             }}
           >
             {Array.from({ length: rows }, (_, ri) => {
@@ -2043,10 +2048,10 @@ function Viewport(props: ViewportProps) {
                 const isFlashing = props.flashCells.has(key)
 
                 if (!revealed) {
-                  return <div key={key} style={{ width: cellSize, height: cellSize, background: '#0a0a0c' }} />
+                  return <div key={key} style={{ width: cellSize, height: cellSize, background: theme.fogColor }} />
                 }
 
-                const bg = (cell.base ?? 0) !== 0 ? baseDef(cell.base, props.customBase).color : '#18181b'
+                const bg = (cell.base ?? 0) !== 0 ? baseDef(cell.base, props.customBase).color : theme.emptyColor
 
                 return (
                   <div
@@ -2073,6 +2078,9 @@ function Viewport(props: ViewportProps) {
                     }}
                     onMouseLeave={props.onCellHoverEnd}
                   >
+                    {theme.floorTint && (cell.base ?? 0) !== 0 && (
+                      <div className="absolute inset-0 pointer-events-none" style={{ background: theme.floorTint }} />
+                    )}
                     {isPlayer && (
                       <div className="absolute inset-0 grid place-items-center pointer-events-none z-20">
                         <div className="rounded-full bg-amber-300 shadow shadow-amber-400" style={{ width: Math.max(6, cellSize * 0.3), height: Math.max(6, cellSize * 0.3) }} />

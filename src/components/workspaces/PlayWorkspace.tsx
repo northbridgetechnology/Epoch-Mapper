@@ -5,6 +5,7 @@ import { ArrowUp, ArrowDown, ArrowLeft, ArrowRight, ZoomIn, ZoomOut, Coins, Map,
 import { cn } from '@/lib/utils'
 import { baseDef, overlayDef, edgeDef, boundaryKey, DEFAULT_CELL, MIN_CELL, MAX_CELL, BASE, EDGE } from '@/lib/constants'
 import type { CellData, MapData, MarkerDef, EdgeDir } from '@/lib/types'
+import { getTheme, type MapThemeDef } from '@/lib/themes'
 import type { BoundaryData, CellEntity, Character, Facing } from '@/lib/engine-types'
 import { objectUsedFlagKey } from '@/lib/event-engine'
 
@@ -144,40 +145,24 @@ function depthFog(d: number): number {
   return Math.min(0.72, Math.max(0, (d - 1) * 0.18))
 }
 
-// ── Wall colours (Phantasy Star II blue-stone palette) ─────────────────────────
-function frontWallColor(d: number): string {
-  const l = Math.max(10, 58 - (d - 1) * 11)
-  return `hsl(215 18% ${l}%)`
-}
-function sideWallColor(d: number): string {
-  const l = Math.max(7, 42 - (d - 1) * 9)
-  return `hsl(215 14% ${l}%)`
+// ── Theme-driven colour palette ────────────────────────────────────────────────
+function makeFpPalette(t: MapThemeDef) {
+  return {
+    frontWall: (d: number) => `hsl(${t.wallHue} ${t.wallSat}% ${Math.max(10, t.wallLBase - (d - 1) * t.wallLStep)}%)`,
+    sideWall:  (d: number) => `hsl(${t.sideHue} ${t.sideSat}% ${Math.max(7,  t.sideLBase - (d - 1) * t.sideLStep)}%)`,
+    wallEdge:  (d: number) => `hsl(${t.wallHue} ${Math.min(60, t.wallSat + 12)}% ${Math.min(72, 72 - (d - 1) * 12)}%)`,
+    sideEdge:  (d: number) => `hsl(${t.sideHue} ${Math.min(55, t.sideSat + 11)}% ${Math.min(55, 55 - (d - 1) * 10)}%)`,
+    floorBand: (d: number) => { const base = Math.max(6, t.floorLBase - d * 2); const alt = d % 2 === 0 ? 4 : 0; return `hsl(${t.floorHue} ${t.floorSat}% ${base + alt}%)` },
+    ceilBand:  (d: number) => { const base = Math.max(7, t.ceilLBase - d * t.ceilLStep); const alt = d % 2 === 0 ? 3 : 0; return `hsl(${t.ceilHue} ${t.ceilSat}% ${base + alt}%)` },
+  }
 }
 
-// ── Floor bands (cool checker, Phantasy Star perspective grid) ─────────────────
-// Band d: y from sliceRect(d).y2 (top of band) down to sliceRect(d-1).y2 (bottom)
-//   d=1 → closest to player (bottom of screen)
-//   d=MAX_D → nearest the horizon (thin band)
+// ── Floor/ceiling band y-positions ────────────────────────────────────────────
 function floorBandY(d: number): number {
   return sliceRect(d).y2
 }
-function floorBandColor(d: number): string {
-  // Nearest=brightest, farthest=darkest. Alternating checkerish tint.
-  const base = Math.max(6, 17 - d * 2)
-  const alt  = d % 2 === 0 ? 4 : 0
-  return `hsl(225 12% ${base + alt}%)`
-}
-
-// ── Ceiling bands (warm stone, Eye of the Beholder style) ─────────────────────
-// Band d: y from sliceRect(d-1).y1 (top) down to sliceRect(d).y1 (bottom)
-//   d=1 → closest (top of screen)  d=MAX_D → near horizon (thin)
 function ceilBandY(d: number): number {
   return sliceRect(d).y1
-}
-function ceilBandColor(d: number): string {
-  const base = Math.max(7, 22 - d * 3)
-  const alt  = d % 2 === 0 ? 3 : 0
-  return `hsl(28 14% ${base + alt}%)`
 }
 
 // ── Direction helpers ──────────────────────────────────────────────────────────
@@ -243,6 +228,8 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
   const [rd0, rd1] = rightDelta(facing)
   const px = map.playerX
   const py = map.playerY
+  const theme = getTheme(map.theme)
+  const pal = makeFpPalette(theme)
 
   function cellAt(ahead: number, side: number): [number, number] {
     return [px + fd0 * ahead + rd0 * side, py + fd1 * ahead + rd1 * side]
@@ -301,7 +288,7 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
     const y1 = d === MAX_D   ? VP_Y : ceilBandY(d + 1)
     if (y1 <= y0) continue
     nodes.push(
-      <rect key={`cb${d}`} x={0} y={y0} width={VW} height={y1 - y0} fill={ceilBandColor(d + 1)} />,
+      <rect key={`cb${d}`} x={0} y={y0} width={VW} height={y1 - y0} fill={pal.ceilBand(d + 1)} />,
     )
   }
 
@@ -310,7 +297,7 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
     <defs key="stone-defs">
       <pattern id="stone-grid" x={0} y={0} width={48} height={24} patternUnits="userSpaceOnUse">
         <rect width={48} height={24} fill="none" />
-        <rect width={47} height={23} fill="none" stroke="rgba(0,0,0,0.28)" strokeWidth={1} />
+        <rect width={47} height={23} fill="none" stroke={theme.ceilPatternColor} strokeWidth={1} />
       </pattern>
       <linearGradient id="ceil-fade" x1="0" y1="0" x2="0" y2="1">
         <stop offset="0%" stopColor="rgba(0,0,0,0)" />
@@ -339,7 +326,7 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
     const xBot = (i / 4) * VW
     nodes.push(
       <line key={`cvl${i}`} x1={VP_X} y1={VP_Y} x2={xBot} y2={0}
-        stroke="rgba(0,0,0,0.22)" strokeWidth={0.8} />,
+        stroke={theme.ceilPatternColor} strokeWidth={0.8} />,
     )
   }
 
@@ -352,7 +339,7 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
     const y1 = d === 0      ? VH   : floorBandY(d)
     if (y1 <= y0) continue
     nodes.push(
-      <rect key={`fb${d}`} x={0} y={y0} width={VW} height={y1 - y0} fill={floorBandColor(d)} />,
+      <rect key={`fb${d}`} x={0} y={y0} width={VW} height={y1 - y0} fill={pal.floorBand(d)} />,
     )
   }
 
@@ -361,20 +348,20 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
     const xBot = (i / 4) * VW
     nodes.push(
       <line key={`fvl${i}`} x1={VP_X} y1={VP_Y} x2={xBot} y2={VH}
-        stroke="rgba(0,0,0,0.30)" strokeWidth={0.8} />,
+        stroke={theme.gridLineColor} strokeWidth={0.8} />,
     )
   }
   for (let d = 1; d <= MAX_D; d++) {
     nodes.push(
       <line key={`fhl${d}`} x1={0} y1={floorBandY(d)} x2={VW} y2={floorBandY(d)}
-        stroke="rgba(0,0,0,0.22)" strokeWidth={0.6} />,
+        stroke={theme.gridLineColor} strokeWidth={0.6} />,
     )
   }
 
   // Floor: brighten the nearest band a little (torch-light spill)
   nodes.push(
     <rect key="floor-glow" x={0} y={floorBandY(1)} width={VW} height={VH - floorBandY(1)}
-      fill="rgba(180,160,100,0.06)" />,
+      fill={theme.floorGlowColor} />,
   )
 
   // ── 3. Walls — back to front ──────────────────────────────────────────────────
@@ -411,7 +398,7 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
         nodes.push(
           <polygon key={`vfloor${d}`} points={floorPts} fill="url(#void-grad)" />,
           <rect key={`vlip${d}`} x={far.x1} y={far.y2} width={far.x2 - far.x1} height={sinkNear}
-            fill={frontWallColor(d)} />,
+            fill={pal.frontWall(d)} />,
           <line key={`vfl1${d}`} x1={far.x1 + (far.x2 - far.x1) * .25} y1={far.y2 + sinkNear}
             x2={VP_X} y2={farFar.y2 + sinkFar} stroke="rgba(50,50,80,.28)" strokeWidth={.5} />,
           <line key={`vfl2${d}`} x1={far.x1 + (far.x2 - far.x1) * .75} y1={far.y2 + sinkNear}
@@ -424,7 +411,7 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
             fill={isWater ? 'url(#water-grad)' : 'url(#lava-grad)'} />,
           // Visible stone LIP from floor level down to water surface
           <rect key={`tlip${d}`} x={far.x1} y={far.y2} width={far.x2 - far.x1} height={sinkNear}
-            fill={frontWallColor(d)} />,
+            fill={pal.frontWall(d)} />,
           // Surface shimmer at water level
           <line key={`tsh${d}`} x1={far.x1} y1={far.y2 + sinkNear} x2={far.x2} y2={far.y2 + sinkNear}
             stroke={isWater ? 'rgba(100,200,240,.6)' : 'rgba(255,140,30,.65)'} strokeWidth={1} />,
@@ -491,10 +478,10 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
         const woodL  = Math.max(8, 28 - (d - 1) * 5)
         nodes.push(
           // Stone frame
-          <rect key={`djl${d}`} x={far.x1}          y={far.y1} width={jamb}   height={fh}     fill={frontWallColor(d)} />,
-          <rect key={`djr${d}`} x={far.x2 - jamb}   y={far.y1} width={jamb}   height={fh}     fill={frontWallColor(d)} />,
-          <rect key={`dlt${d}`} x={far.x1}           y={far.y1} width={fw}     height={lintel} fill={frontWallColor(d)} />,
-          <rect key={`dth${d}`} x={far.x1}           y={far.y2 - thresh} width={fw} height={thresh} fill={frontWallColor(d)} />,
+          <rect key={`djl${d}`} x={far.x1}          y={far.y1} width={jamb}   height={fh}     fill={pal.frontWall(d)} />,
+          <rect key={`djr${d}`} x={far.x2 - jamb}   y={far.y1} width={jamb}   height={fh}     fill={pal.frontWall(d)} />,
+          <rect key={`dlt${d}`} x={far.x1}           y={far.y1} width={fw}     height={lintel} fill={pal.frontWall(d)} />,
+          <rect key={`dth${d}`} x={far.x1}           y={far.y2 - thresh} width={fw} height={thresh} fill={pal.frontWall(d)} />,
           // Wood door panel
           <rect key={`dp${d}`} x={panelX} y={panelY} width={panelW} height={panelH}
             fill={`hsl(28 45% ${woodL}%)`} />,
@@ -527,13 +514,13 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
         // Standard stone wall
         nodes.push(
           <rect key={`fw${d}`} x={far.x1} y={far.y1} width={fw} height={fh}
-            fill={frontWallColor(d)} />,
+            fill={pal.frontWall(d)} />,
           <line key={`fwl${d}`} x1={far.x1 + fw * 0.33} y1={far.y1} x2={far.x1 + fw * 0.33} y2={far.y2}
             stroke="rgba(0,0,0,0.18)" strokeWidth={0.6} />,
           <line key={`fwr${d}`} x1={far.x1 + fw * 0.67} y1={far.y1} x2={far.x1 + fw * 0.67} y2={far.y2}
             stroke="rgba(0,0,0,0.18)" strokeWidth={0.6} />,
           <line key={`fwt${d}`} x1={far.x1} y1={far.y1} x2={far.x2} y2={far.y1}
-            stroke={`hsl(215 30% ${Math.min(72, 72 - (d - 1) * 12)}%)`} strokeWidth={1} />,
+            stroke={pal.wallEdge(d)} strokeWidth={1} />,
           fog > 0 && <rect key={`fwf${d}`} x={far.x1} y={far.y1} width={fw} height={fh}
             fill={`rgba(0,0,0,${fog})`} />,
         )
@@ -556,10 +543,10 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
       const lintel = fh * 0.08
       const thresh = fh * 0.04
       nodes.push(
-        <rect key={`djlo${d}`} x={far.x1}        y={far.y1} width={jamb}   height={fh}     fill={frontWallColor(d)} />,
-        <rect key={`djro${d}`} x={far.x2 - jamb} y={far.y1} width={jamb}   height={fh}     fill={frontWallColor(d)} />,
-        <rect key={`dlto${d}`} x={far.x1}         y={far.y1} width={fw}     height={lintel} fill={frontWallColor(d)} />,
-        <rect key={`dtho${d}`} x={far.x1}         y={far.y2 - thresh} width={fw} height={thresh} fill={frontWallColor(d)} />,
+        <rect key={`djlo${d}`} x={far.x1}        y={far.y1} width={jamb}   height={fh}     fill={pal.frontWall(d)} />,
+        <rect key={`djro${d}`} x={far.x2 - jamb} y={far.y1} width={jamb}   height={fh}     fill={pal.frontWall(d)} />,
+        <rect key={`dlto${d}`} x={far.x1}         y={far.y1} width={fw}     height={lintel} fill={pal.frontWall(d)} />,
+        <rect key={`dtho${d}`} x={far.x1}         y={far.y2 - thresh} width={fw} height={thresh} fill={pal.frontWall(d)} />,
         fog > 0 && <rect key={`dffo${d}`} x={far.x1} y={far.y1} width={fw} height={fh}
           fill={`rgba(0,0,0,${fog * 0.6})`} />,
       )
@@ -575,9 +562,9 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
         `${cur.x1},${cur.y2}`,
       ].join(' ')
       nodes.push(
-        <polygon key={`lw${d}`} points={pts} fill={sideWallColor(d)} />,
+        <polygon key={`lw${d}`} points={pts} fill={pal.sideWall(d)} />,
         <line key={`lwe${d}`} x1={cur.x1} y1={cur.y1} x2={cur.x1} y2={cur.y2}
-          stroke={`hsl(215 25% ${Math.min(55, 55 - (d - 1) * 10)}%)`} strokeWidth={1} />,
+          stroke={pal.sideEdge(d)} strokeWidth={1} />,
         fog > 0 && <polygon key={`lwf${d}`} points={pts} fill={`rgba(0,0,0,${fog * 0.8})`} />,
       )
     }
@@ -591,9 +578,9 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
         `${cur.x2},${cur.y2}`,
       ].join(' ')
       nodes.push(
-        <polygon key={`rw${d}`} points={pts} fill={sideWallColor(d)} />,
+        <polygon key={`rw${d}`} points={pts} fill={pal.sideWall(d)} />,
         <line key={`rwe${d}`} x1={cur.x2} y1={cur.y1} x2={cur.x2} y2={cur.y2}
-          stroke={`hsl(215 25% ${Math.min(55, 55 - (d - 1) * 10)}%)`} strokeWidth={1} />,
+          stroke={pal.sideEdge(d)} strokeWidth={1} />,
         fog > 0 && <polygon key={`rwf${d}`} points={pts} fill={`rgba(0,0,0,${fog * 0.8})`} />,
       )
     }
@@ -608,7 +595,7 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
         const sw = cur.x2 - far.x2
         nodes.push(
           <rect key={`rrw${d}`} x={far.x2} y={far.y1} width={sw} height={far.y2 - far.y1}
-            fill={sideWallColor(d)} />,
+            fill={pal.sideWall(d)} />,
           fog > 0 && <rect key={`rrwf${d}`} x={far.x2} y={far.y1} width={sw} height={far.y2 - far.y1}
             fill={`rgba(0,0,0,${fog * 0.7})`} />,
         )
@@ -620,7 +607,7 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
         const sw = far.x1 - cur.x1
         nodes.push(
           <rect key={`lrw${d}`} x={cur.x1} y={far.y1} width={sw} height={far.y2 - far.y1}
-            fill={sideWallColor(d)} />,
+            fill={pal.sideWall(d)} />,
           fog > 0 && <rect key={`lrwf${d}`} x={cur.x1} y={far.y1} width={sw} height={far.y2 - far.y1}
             fill={`rgba(0,0,0,${fog * 0.7})`} />,
         )
@@ -795,6 +782,9 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
     <line key="horizon" x1={0} y1={VP_Y} x2={VW} y2={VP_Y}
       stroke="rgba(100,120,160,0.18)" strokeWidth={1} />,
 
+    // Optional theme ambient tint (e.g. blue for ice, red for lava)
+    theme.ambientTint && <rect key="ambient-tint" x={0} y={0} width={VW} height={VH} fill={theme.ambientTint} />,
+
     // Vignette: dark corners for cinematic depth
     <defs key="vig-defs">
       <radialGradient id="vignette" cx="50%" cy="50%" r="70%">
@@ -869,6 +859,7 @@ function DungeonViewport({
   customBase: Record<number, MarkerDef>; customOverlay: Record<number, MarkerDef>
   isCellRevealed: (x: number, y: number) => boolean
 }) {
+  const theme = getTheme(map.theme)
   const containerRef = useRef<HTMLDivElement>(null)
   const [availW, setAvailW] = useState(0)
   const [availH, setAvailH] = useState(0)
@@ -913,7 +904,7 @@ function DungeonViewport({
               <div className="grid" style={{
                 gridTemplateColumns: `repeat(${cols}, ${cellSize}px)`,
                 gridTemplateRows: `repeat(${rows}, ${cellSize}px)`,
-                gap: '1px', backgroundColor: '#0a0a0c',
+                gap: '1px', backgroundColor: theme.gapColor,
               }}>
                 {Array.from({ length: rows }, (_, ri) => {
                   const y = minY + ri
@@ -923,8 +914,8 @@ function DungeonViewport({
                     const isPlayer = x === px && y === py
                     const revealed = isCellRevealed(x, y)
                     const cell = map.cells[key] ?? EMPTY_CELL
-                    if (!revealed) return <div key={key} style={{ width: cellSize, height: cellSize, background: '#0a0a0c' }} />
-                    const bg = (cell.base ?? 0) !== 0 ? baseDef(cell.base, customBase).color : '#18181b'
+                    if (!revealed) return <div key={key} style={{ width: cellSize, height: cellSize, background: theme.fogColor }} />
+                    const bg = (cell.base ?? 0) !== 0 ? baseDef(cell.base, customBase).color : theme.emptyColor
                     return (
                       <div key={key} className={cn('relative overflow-hidden', isPlayer && 'ring-1 ring-inset ring-amber-300 z-10')}
                         style={{ width: cellSize, height: cellSize, background: bg }}>
