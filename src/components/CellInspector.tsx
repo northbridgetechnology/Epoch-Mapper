@@ -6,7 +6,8 @@ import { cn } from '@/lib/utils'
 import type {
   CellEntity, CellEvent, Condition, Effect, ObjectInstance, Ruleset,
 } from '@/lib/engine-types'
-import type { CellData, MapData } from '@/lib/types'
+import type { CellData, MapData, SubcubeObject } from '@/lib/types'
+import { SUBCUBE_KIND_DEFS, getSubcubeDef } from '@/lib/subcube-defs'
 import { EffectBuilder } from './forms/EffectBuilder'
 
 // ── Condition builder ─────────────────────────────────────────────────────────
@@ -426,6 +427,139 @@ function makeBlankEntity(t: CellEntity['t']): CellEntity {
   }
 }
 
+// ── Sub-cube volume editor ────────────────────────────────────────────────────
+
+const LAYER_NAMES = ['Floor', 'Mid', 'Ceiling'] as const
+const X_LABELS    = ['W', 'C', 'E']
+const Z_ROW_ORDER = [2, 1, 0] as const  // far (north) at top, near (south) at bottom
+
+let _scSeq = 1
+
+function SubcubeVolumeEditor({
+  objects,
+  onChange,
+}: {
+  objects: SubcubeObject[]
+  onChange: (objs: SubcubeObject[]) => void
+}) {
+  const [open, setOpen]       = useState(false)
+  const [layer, setLayer]     = useState<0 | 1 | 2>(0)
+  const [selKind, setSelKind] = useState<string>('torch')
+
+  const layerObjs = objects.filter(o => o.pos.y === layer)
+
+  function getAt(x: 0 | 1 | 2, z: 0 | 1 | 2) {
+    return layerObjs.find(o => o.pos.x === x && o.pos.z === z)
+  }
+
+  function toggleSlot(x: 0 | 1 | 2, z: 0 | 1 | 2) {
+    const existing = getAt(x, z)
+    if (existing) {
+      onChange(objects.filter(o => !(o.pos.x === x && o.pos.y === layer && o.pos.z === z)))
+    } else {
+      onChange([...objects, { id: `sc_${_scSeq++}`, pos: { x, y: layer, z }, kind: selKind }])
+    }
+  }
+
+  return (
+    <div className="border-b border-white/10">
+      <button
+        onClick={() => setOpen(v => !v)}
+        className="w-full flex items-center gap-2 px-3 py-2.5 text-xs font-semibold text-white/60 hover:text-white/80 hover:bg-white/5 transition-colors"
+      >
+        {open ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+        <span className="flex-1 text-left">Volume Objects</span>
+        {objects.length > 0 && (
+          <span className="text-[10px] font-normal text-amber-400/70">{objects.length}</span>
+        )}
+      </button>
+
+      {open && (
+        <div className="px-3 pb-3 space-y-3">
+          {/* Layer tabs */}
+          <div className="flex rounded-md overflow-hidden border border-white/10">
+            {LAYER_NAMES.map((name, i) => (
+              <button
+                key={name}
+                onClick={() => setLayer(i as 0 | 1 | 2)}
+                className={cn(
+                  'flex-1 text-[10px] py-1.5 font-medium transition-colors',
+                  layer === i
+                    ? 'bg-amber-500/20 text-amber-300'
+                    : 'text-white/40 hover:text-white/70 hover:bg-white/5',
+                )}
+              >
+                {name}
+              </button>
+            ))}
+          </div>
+
+          {/* 3×3 grid — rows=z (far/N at top), cols=x (W→E) */}
+          <div className="space-y-1">
+            <div className="flex items-center">
+              <span className="text-[9px] text-white/20 w-7" />
+              {X_LABELS.map(l => (
+                <span key={l} className="flex-1 text-[9px] text-white/25 text-center">{l}</span>
+              ))}
+            </div>
+            {Z_ROW_ORDER.map((z, ri) => (
+              <div key={z} className="flex items-center gap-1">
+                <span className="text-[9px] text-white/25 w-6 text-right flex-shrink-0">
+                  {ri === 0 ? 'N' : ri === 2 ? 'S' : '·'}
+                </span>
+                {([0, 1, 2] as const).map(x => {
+                  const obj = getAt(x, z)
+                  const def = obj ? getSubcubeDef(obj.kind) : null
+                  return (
+                    <button
+                      key={x}
+                      onClick={() => toggleSlot(x, z)}
+                      title={obj ? `${def?.label ?? obj.kind} — click to remove` : `Place ${selKind}`}
+                      className={cn(
+                        'flex-1 aspect-square rounded border flex items-center justify-center text-base transition-all',
+                        obj
+                          ? 'border-amber-500/50 bg-amber-500/10 hover:border-red-400/60 hover:bg-red-500/10'
+                          : 'border-white/10 bg-white/4 hover:border-white/22 hover:bg-white/8',
+                      )}
+                    >
+                      {def?.icon ?? ''}
+                    </button>
+                  )
+                })}
+              </div>
+            ))}
+            <div className="text-[9px] text-white/20 text-center pt-0.5">S = player side</div>
+          </div>
+
+          {/* Kind picker */}
+          <div>
+            <div className="text-[10px] text-white/40 mb-1.5 font-medium uppercase tracking-wide">
+              Brush: {getSubcubeDef(selKind)?.icon} {getSubcubeDef(selKind)?.label}
+            </div>
+            <div className="grid grid-cols-5 gap-1">
+              {SUBCUBE_KIND_DEFS.map(def => (
+                <button
+                  key={def.kind}
+                  onClick={() => setSelKind(def.kind)}
+                  title={def.label}
+                  className={cn(
+                    'rounded border py-1.5 text-base transition-all',
+                    selKind === def.kind
+                      ? 'border-amber-500/50 bg-amber-500/15'
+                      : 'border-white/8 bg-white/4 hover:border-white/20 hover:bg-white/8',
+                  )}
+                >
+                  {def.icon}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Main inspector ────────────────────────────────────────────────────────────
 
 interface CellInspectorProps {
@@ -435,10 +569,11 @@ interface CellInspectorProps {
   maps: MapData[]
   ruleset: Ruleset
   onChange: (entities: CellEntity[]) => void
+  onSubcubeChange?: (objs: SubcubeObject[]) => void
   onClose: () => void
 }
 
-export function CellInspector({ x, y, cell, maps, ruleset, onChange, onClose }: CellInspectorProps) {
+export function CellInspector({ x, y, cell, maps, ruleset, onChange, onSubcubeChange, onClose }: CellInspectorProps) {
   const entities = cell.entities ?? []
   const [expanded, setExpanded] = useState<number | null>(entities.length === 1 ? 0 : null)
   const [showAddMenu, setShowAddMenu] = useState(false)
@@ -474,6 +609,14 @@ export function CellInspector({ x, y, cell, maps, ruleset, onChange, onClose }: 
           <X className="w-4 h-4" />
         </button>
       </div>
+
+      {/* Volume objects editor */}
+      {onSubcubeChange && (
+        <SubcubeVolumeEditor
+          objects={cell.subcubeObjects ?? []}
+          onChange={onSubcubeChange}
+        />
+      )}
 
       {/* Entity list */}
       <div className="flex-1 overflow-y-auto p-2 space-y-1 min-h-0">

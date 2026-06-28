@@ -6,6 +6,7 @@ import { cn } from '@/lib/utils'
 import { baseDef, overlayDef, edgeDef, boundaryKey, DEFAULT_CELL, MIN_CELL, MAX_CELL, BASE, EDGE } from '@/lib/constants'
 import type { CellData, MapData, MarkerDef, EdgeDir } from '@/lib/types'
 import { getTheme, type MapThemeDef } from '@/lib/themes'
+import { getSubcubeDef } from '@/lib/subcube-defs'
 import type { BoundaryData, CellEntity, Character, Facing } from '@/lib/engine-types'
 import { objectUsedFlagKey } from '@/lib/event-engine'
 
@@ -538,6 +539,52 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
           fog > 0 && <rect key={`slw2f${d}`} x={0} y={far.y1} width={far.x1} height={far.y2 - far.y1}
             fill={`rgba(0,0,0,${fog * 0.7})`} />,
         )
+      }
+    }
+
+    // ── Sub-cube objects in the cell at this depth (if visible) ───────────────
+    if (!frontExists) {
+      const [scx, scy] = cellAt(d, 0)
+      const scObjs = map.cells[`${scx},${scy}`]?.subcubeObjects
+      if (scObjs && scObjs.length > 0) {
+        const nearS = sliceRect(d - 1)
+        const farS  = sliceRect(d)
+        const nearH = nearS.y2 - nearS.y1
+        // Sort far-to-near then ceiling-to-floor for painter's order
+        const sorted = [...scObjs].sort((a, b) => b.pos.z - a.pos.z || b.pos.y - a.pos.y)
+        for (const obj of sorted) {
+          const def = getSubcubeDef(obj.kind)
+          if (!def) continue
+          // Interpolate slice at the object's z position (z=2→far, z=0→near)
+          const zFrac = obj.pos.z / 2
+          const sx1 = nearS.x1 + (farS.x1 - nearS.x1) * zFrac
+          const sx2 = nearS.x2 + (farS.x2 - nearS.x2) * zFrac
+          const sy1 = nearS.y1 + (farS.y1 - nearS.y1) * zFrac
+          const sy2 = nearS.y2 + (farS.y2 - nearS.y2) * zFrac
+          const sw = sx2 - sx1
+          const sh = sy2 - sy1
+          // x: 0=west→left third, 1=center, 2=east→right third
+          const screenX = sx1 + sw * ((obj.pos.x + 0.5) / 3)
+          // y: 0=floor→bottom, 1=mid, 2=ceiling→top
+          const screenY = sy2 - sh * ((obj.pos.y + 0.5) / 3)
+          // Scale emoji relative to the near-slice height so farther = smaller
+          const emojiSize = Math.max(8, nearH * 0.38 * (1 - zFrac * 0.4))
+          const opacity = Math.max(0.25, 1 - depthFog(d) * 1.8)
+          nodes.push(
+            <text
+              key={`sc_${d}_${obj.id}`}
+              x={screenX}
+              y={screenY}
+              textAnchor="middle"
+              dominantBaseline="middle"
+              fontSize={emojiSize}
+              opacity={opacity}
+              style={{ userSelect: 'none' }}
+            >
+              {def.icon}
+            </text>,
+          )
+        }
       }
     }
   }

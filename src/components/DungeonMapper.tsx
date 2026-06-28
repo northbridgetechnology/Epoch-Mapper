@@ -9,7 +9,7 @@ import {
   MAX_CELL, MAX_NOTE_LEN, MIN_CELL, OVERLAY_PALETTE, OVERLAY_TYPES, VIEWPORT_CELLS,
   baseDef, boundaryKey, edgeDef, overlayDef,
 } from '@/lib/constants'
-import type { CellData, CellMap, CustomMarker, EdgeDir, EpochmapFile, MapData, MarkerDef } from '@/lib/types'
+import type { CellData, CellMap, CustomMarker, EdgeDir, EpochmapFile, MapData, MarkerDef, SubcubeObject } from '@/lib/types'
 import { getTheme } from '@/lib/themes'
 import { parseDotEpochmap, serializeDotEpochmap } from '@/lib/epochmap-codec'
 import { resolveMarkerImport, remapMapMarkers } from '@/lib/markers'
@@ -1625,6 +1625,11 @@ export function DungeonMapper({
                 const key = `${inspectedCell.x},${inspectedCell.y}`
                 const cur = activeMap.cells[key] ?? { base: 0, overlays: [] }
                 writeCell(key, { ...cur, entities: entities.length ? entities : undefined })
+              }}
+              onSubcubeChange={(objs: SubcubeObject[]) => {
+                const key = `${inspectedCell.x},${inspectedCell.y}`
+                const cur = activeMap.cells[key] ?? { base: 0, overlays: [] }
+                writeCell(key, { ...cur, subcubeObjects: objs.length ? objs : undefined })
               }}
               onClose={() => setInspectedCell(null)}
             />

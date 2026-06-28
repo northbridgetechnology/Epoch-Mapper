@@ -22,12 +22,28 @@ export type EdgeDir = 'N' | 'S' | 'E' | 'W'
  *
  * Walls, doors, and other boundary data live in `MapData.boundaries`, not here.
  */
+/** Position within a cell's 3×3×3 sub-cube grid. */
+export interface SubcubePos {
+  x: 0 | 1 | 2  // 0=West, 1=Center, 2=East
+  y: 0 | 1 | 2  // 0=Floor, 1=Mid, 2=Ceiling
+  z: 0 | 1 | 2  // 0=Near (south, player side), 1=Center, 2=Far (north)
+}
+
+/** A visual/interactive object placed in a sub-cube slot within a cell. */
+export interface SubcubeObject {
+  id: string
+  pos: SubcubePos
+  kind: string  // key from SUBCUBE_KIND_DEFS
+}
+
 export interface CellData {
   base: number
   overlays: number[]
   note?: string
   /** L2 world placement entities — encounters, objects, events (engine layer). */
   entities?: import('./engine-types').CellEntity[]
+  /** Sub-cell visual objects placed in the 3×3×3 sub-cube grid. */
+  subcubeObjects?: SubcubeObject[]
 }
 
 /** Sparse cell storage keyed by `"x,y"`. */
