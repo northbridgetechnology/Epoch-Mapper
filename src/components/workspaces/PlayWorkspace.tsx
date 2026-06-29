@@ -146,6 +146,24 @@ function depthFog(d: number): number {
   return Math.min(0.72, Math.max(0, (d - 1) * 0.18))
 }
 
+// Map sub-cube cell-space position to screen fractions, accounting for facing.
+// xFrac: 0=left edge of corridor, 1=right edge
+// yFrac: 0=floor, 1=ceiling  (invariant to facing)
+// zFrac: 0=near (player side), 1=far  — used to interpolate between sliceRect(d-1) and sliceRect(d)
+function subcubeScreenFracs(
+  pos: { x: 0|1|2; y: 0|1|2; z: 0|1|2 },
+  f: Facing,
+): { xFrac: number; yFrac: number; zFrac: number } {
+  const { x, y, z } = pos
+  const yFrac = (y + 0.5) / 3
+  switch (f) {
+    case 'N': return { xFrac: (x + 0.5) / 3,   yFrac, zFrac: z / 2 }
+    case 'S': return { xFrac: (2.5 - x) / 3,   yFrac, zFrac: (2 - z) / 2 }
+    case 'E': return { xFrac: (2.5 - z) / 3,   yFrac, zFrac: x / 2 }
+    case 'W': return { xFrac: (z + 0.5) / 3,   yFrac, zFrac: (2 - x) / 2 }
+  }
+}
+
 // ── Theme-driven colour palette ────────────────────────────────────────────────
 function makeFpPalette(t: MapThemeDef) {
   return {
@@ -549,57 +567,45 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
       if (scObjs && scObjs.length > 0) {
         const nearS = sliceRect(d - 1)
         const farS  = sliceRect(d)
-        const nearH = nearS.y2 - nearS.y1
-        // Sort far-to-near then ceiling-to-floor for painter's order
-        const sorted = [...scObjs].sort((a, b) => b.pos.z - a.pos.z || b.pos.y - a.pos.y)
+        // Sort far-to-near, ceiling-to-floor for painter's order (using facing-aware zFrac)
+        const sorted = [...scObjs].sort((a, b) => {
+          const za = subcubeScreenFracs(a.pos, facing).zFrac
+          const zb = subcubeScreenFracs(b.pos, facing).zFrac
+          return zb - za || b.pos.y - a.pos.y
+        })
         for (const obj of sorted) {
           const def = getSubcubeDef(obj.kind)
           if (!def) continue
-          // Interpolate slice at the object's z position (z=2→far, z=0→near)
-          const zFrac = obj.pos.z / 2
+          const { xFrac, yFrac, zFrac } = subcubeScreenFracs(obj.pos, facing)
+          // Interpolate slice at the object's facing-relative depth position
           const sx1 = nearS.x1 + (farS.x1 - nearS.x1) * zFrac
           const sx2 = nearS.x2 + (farS.x2 - nearS.x2) * zFrac
           const sy1 = nearS.y1 + (farS.y1 - nearS.y1) * zFrac
           const sy2 = nearS.y2 + (farS.y2 - nearS.y2) * zFrac
           const sw = sx2 - sx1
           const sh = sy2 - sy1
-          // x: 0=west→left third, 1=center, 2=east→right third
-          const screenX = sx1 + sw * ((obj.pos.x + 0.5) / 3)
-          // y: 0=floor→bottom, 1=mid, 2=ceiling→top
-          const screenY = sy2 - sh * ((obj.pos.y + 0.5) / 3)
-          // Scale emoji relative to the near-slice height so farther = smaller
-          const emojiSize = Math.max(8, nearH * 0.38 * (1 - zFrac * 0.4))
+          const screenX = sx1 + sw * xFrac
+          const screenY = sy2 - sh * yFrac
+          const emojiSize = Math.max(8, sh * 0.38)
           const opacity = Math.max(0.25, 1 - depthFog(d) * 1.8)
-          // Glow ring for interactive objects (trigger set)
           if (obj.trigger) {
             const glowColor =
               obj.trigger === 'onInteract' ? 'rgba(56,189,248,0.30)' :
               obj.trigger === 'onView'     ? 'rgba(52,211,153,0.30)' :
                                              'rgba(251,191,36,0.30)'
             nodes.push(
-              <circle
-                key={`sc_glow_${d}_${obj.id}`}
-                cx={screenX}
-                cy={screenY}
-                r={emojiSize * 0.75}
-                fill={glowColor}
-                opacity={opacity}
-              />,
+              <circle key={`sc_glow_${d}_${obj.id}`}
+                cx={screenX} cy={screenY} r={emojiSize * 0.75}
+                fill={glowColor} opacity={opacity} />,
             )
           }
           nodes.push(
-            <text
-              key={`sc_${d}_${obj.id}`}
-              x={screenX}
-              y={screenY}
-              textAnchor="middle"
-              dominantBaseline="middle"
-              fontSize={emojiSize}
-              opacity={opacity}
+            <text key={`sc_${d}_${obj.id}`}
+              x={screenX} y={screenY}
+              textAnchor="middle" dominantBaseline="middle"
+              fontSize={emojiSize} opacity={opacity}
               style={{ userSelect: 'none' }}
-            >
-              {def.icon}
-            </text>,
+            >{def.icon}</text>,
           )
         }
       }
