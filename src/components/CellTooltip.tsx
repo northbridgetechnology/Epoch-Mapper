@@ -1,8 +1,9 @@
 'use client'
 
-import type { CellData, EdgeDir, MarkerDef } from '@/lib/types'
+import type { CellData, EdgeDir, MarkerDef, SubcubeObject } from '@/lib/types'
 import type { BoundaryData, CellEntity } from '@/lib/engine-types'
 import { baseDef, edgeDef, overlayDef } from '@/lib/constants'
+import { getSubcubeDef } from '@/lib/subcube-defs'
 
 const DIR_LABELS: Record<EdgeDir, string> = { N: 'North', S: 'South', E: 'East', W: 'West' }
 
@@ -38,6 +39,10 @@ function boundaryColor(b: BoundaryData): string {
   return 'rgba(228,228,231,0.95)'
 }
 
+function posLabel(pos: SubcubeObject['pos']): string {
+  return `${['Floor', 'Mid', 'Ceil'][pos.y]} ${['W', 'C', 'E'][pos.x]} ${['Near', 'C', 'Far'][pos.z]}`
+}
+
 export function CellTooltip({
   x,
   y,
@@ -62,7 +67,8 @@ export function CellTooltip({
     cell.overlays.length > 0 ||
     hasBoundaries ||
     !!cell.note ||
-    !!cell.entities?.length
+    !!cell.entities?.length ||
+    !!cell.subcubeObjects?.length
 
   if (!hasContent) return null
 
@@ -133,6 +139,26 @@ export function CellTooltip({
                 {entityLabel(ent)}
               </div>
             ))}
+          </div>
+        )}
+
+        {cell.subcubeObjects && cell.subcubeObjects.length > 0 && (
+          <div className="space-y-0.5">
+            <div className="text-white/35 text-[10px] uppercase tracking-wide">Volume Objects</div>
+            {cell.subcubeObjects.map((obj) => {
+              const def = getSubcubeDef(obj.kind)
+              return (
+                <div key={obj.id} className="flex items-start gap-1.5 text-white/60">
+                  <span className="shrink-0 mt-px" style={{ color: def?.color }}>{def?.icon ?? '•'}</span>
+                  <div className="flex-1 min-w-0">
+                    <div className="truncate">{def?.label ?? obj.kind}</div>
+                    <div className="text-[9px] text-white/35">
+                      {posLabel(obj.pos)}{obj.trigger ? ` · ${obj.trigger}` : ''}
+                    </div>
+                  </div>
+                </div>
+              )
+            })}
           </div>
         )}
 

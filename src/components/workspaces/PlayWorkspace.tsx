@@ -164,6 +164,20 @@ function subcubeScreenFracs(
   }
 }
 
+// Depth-into-side-cell fraction for the side strip (0=near corridor edge, 1=far).
+// For each facing × side combination, a different sub-cube axis is the depth axis.
+function subcubeSideDepthFrac(
+  pos: { x: 0|1|2; y: 0|1|2; z: 0|1|2 },
+  f: Facing,
+  side: 1 | -1,
+): number {
+  const { x, z } = pos
+  if (f === 'N') return side > 0 ? x / 2 : (2 - x) / 2
+  if (f === 'S') return side > 0 ? (2 - x) / 2 : x / 2
+  if (f === 'E') return side > 0 ? (2 - z) / 2 : z / 2
+  /* W */        return side > 0 ? z / 2 : (2 - z) / 2
+}
+
 // ── Theme-driven colour palette ────────────────────────────────────────────────
 function makeFpPalette(t: MapThemeDef) {
   return {
@@ -608,6 +622,52 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
             >{def.icon}</text>,
           )
         }
+      }
+    }
+
+    // ── Sub-cube objects in visible side cells ────────────────────────────────
+    for (const side of [1, -1] as const) {
+      const sideOpen = side > 0 ? !rightExists : !leftExists
+      if (!sideOpen) continue
+      const [scx, scy] = cellAt(d - 1, side)
+      const sideObjs = map.cells[`${scx},${scy}`]?.subcubeObjects
+      if (!sideObjs || sideObjs.length === 0) continue
+      const sortedSide = [...sideObjs].sort((a, b) => {
+        const da = subcubeSideDepthFrac(a.pos, facing, side)
+        const db = subcubeSideDepthFrac(b.pos, facing, side)
+        return db - da || b.pos.y - a.pos.y
+      })
+      for (const obj of sortedSide) {
+        const def = getSubcubeDef(obj.kind)
+        if (!def) continue
+        const depthFrac = subcubeSideDepthFrac(obj.pos, facing, side)
+        const sliceY1 = cur.y1 + (far.y1 - cur.y1) * depthFrac
+        const sliceY2 = cur.y2 + (far.y2 - cur.y2) * depthFrac
+        const screenX = side > 0
+          ? cur.x2 + (far.x2 - cur.x2) * depthFrac
+          : cur.x1 + (far.x1 - cur.x1) * depthFrac
+        const screenY = sliceY2 - (sliceY2 - sliceY1) * (obj.pos.y + 0.5) / 3
+        const emojiSize = Math.max(6, Math.min(56, (sliceY2 - sliceY1) * 0.28))
+        const opacity = Math.max(0.2, 1 - depthFog(d) * 2)
+        if (obj.trigger) {
+          const glowColor =
+            obj.trigger === 'onInteract' ? 'rgba(56,189,248,0.30)' :
+            obj.trigger === 'onView'     ? 'rgba(52,211,153,0.30)' :
+                                           'rgba(251,191,36,0.30)'
+          nodes.push(
+            <circle key={`sc_s${side}_glow_${d}_${obj.id}`}
+              cx={screenX} cy={screenY} r={emojiSize * 0.75}
+              fill={glowColor} opacity={opacity} />,
+          )
+        }
+        nodes.push(
+          <text key={`sc_s${side}_${d}_${obj.id}`}
+            x={screenX} y={screenY}
+            textAnchor="middle" dominantBaseline="middle"
+            fontSize={emojiSize} opacity={opacity}
+            style={{ userSelect: 'none' }}
+          >{def.icon}</text>,
+        )
       }
     }
   }
