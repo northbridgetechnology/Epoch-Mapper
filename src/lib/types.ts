@@ -34,6 +34,12 @@ export interface SubcubeObject {
   id: string
   pos: SubcubePos
   kind: string  // key from SUBCUBE_KIND_DEFS
+  label?: string
+  trigger?: 'onEnter' | 'onInteract' | 'onView'
+  conditions?: import('./engine-types').Condition[]
+  effects?: import('./engine-types').Effect[]
+  encounter?: string  // DefRef<EncounterTableDef>
+  once?: boolean
 }
 
 export interface CellData {

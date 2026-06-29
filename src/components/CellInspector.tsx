@@ -433,32 +433,72 @@ const LAYER_NAMES = ['Floor', 'Mid', 'Ceiling'] as const
 const X_LABELS    = ['W', 'C', 'E']
 const Z_ROW_ORDER = [2, 1, 0] as const  // far (north) at top, near (south) at bottom
 
+const SC_TRIGGER_OPTS = [
+  { value: '',            label: 'None — visual only' },
+  { value: 'onEnter',    label: 'On Enter (step into cell)' },
+  { value: 'onInteract', label: 'On Interact (E key)' },
+  { value: 'onView',     label: 'On View (facing object)' },
+] as const
+
+const SC_TRIGGER_COLORS: Record<string, string> = {
+  onEnter:    'text-amber-300',
+  onInteract: 'text-sky-300',
+  onView:     'text-emerald-300',
+}
+
+function posLabel(pos: { x: number; y: number; z: number }): string {
+  return `${['Floor','Mid','Ceiling'][pos.y]} · ${['W','C','E'][pos.x]} · ${['Near','C','Far'][pos.z]}`
+}
+
 let _scSeq = 1
 
 function SubcubeVolumeEditor({
   objects,
+  ruleset,
   onChange,
 }: {
   objects: SubcubeObject[]
+  ruleset: Ruleset
   onChange: (objs: SubcubeObject[]) => void
 }) {
-  const [open, setOpen]       = useState(false)
-  const [layer, setLayer]     = useState<0 | 1 | 2>(0)
-  const [selKind, setSelKind] = useState<string>('torch')
+  const [open, setOpen]         = useState(false)
+  const [layer, setLayer]       = useState<0 | 1 | 2>(0)
+  const [selKind, setSelKind]   = useState<string>('torch')
+  const [selId, setSelId]       = useState<string | null>(null)
 
   const layerObjs = objects.filter(o => o.pos.y === layer)
+  const selObj    = selId ? objects.find(o => o.id === selId) ?? null : null
 
   function getAt(x: 0 | 1 | 2, z: 0 | 1 | 2) {
     return layerObjs.find(o => o.pos.x === x && o.pos.z === z)
   }
 
-  function toggleSlot(x: 0 | 1 | 2, z: 0 | 1 | 2) {
+  function clickSlot(x: 0 | 1 | 2, z: 0 | 1 | 2) {
     const existing = getAt(x, z)
     if (existing) {
-      onChange(objects.filter(o => !(o.pos.x === x && o.pos.y === layer && o.pos.z === z)))
+      setSelId(existing.id === selId ? null : existing.id)
     } else {
-      onChange([...objects, { id: `sc_${_scSeq++}`, pos: { x, y: layer, z }, kind: selKind }])
+      const newObj: SubcubeObject = { id: `sc_${_scSeq++}`, pos: { x, y: layer, z }, kind: selKind }
+      onChange([...objects, newObj])
+      setSelId(newObj.id)
     }
+  }
+
+  function updateSel(patch: Partial<SubcubeObject>) {
+    if (!selObj) return
+    onChange(objects.map(o => o.id === selObj.id ? { ...o, ...patch } : o))
+  }
+
+  function removeSel() {
+    if (!selObj) return
+    onChange(objects.filter(o => o.id !== selObj.id))
+    setSelId(null)
+  }
+
+  // Clear selection when switching layers if selected object is on a different layer
+  function switchLayer(y: 0 | 1 | 2) {
+    if (selObj && selObj.pos.y !== y) setSelId(null)
+    setLayer(y)
   }
 
   return (
@@ -481,7 +521,7 @@ function SubcubeVolumeEditor({
             {LAYER_NAMES.map((name, i) => (
               <button
                 key={name}
-                onClick={() => setLayer(i as 0 | 1 | 2)}
+                onClick={() => switchLayer(i as 0 | 1 | 2)}
                 className={cn(
                   'flex-1 text-[10px] py-1.5 font-medium transition-colors',
                   layer === i
@@ -510,25 +550,34 @@ function SubcubeVolumeEditor({
                 {([0, 1, 2] as const).map(x => {
                   const obj = getAt(x, z)
                   const def = obj ? getSubcubeDef(obj.kind) : null
+                  const isSel = obj?.id === selId
+                  const hasTrigger = Boolean(obj?.trigger)
                   return (
                     <button
                       key={x}
-                      onClick={() => toggleSlot(x, z)}
-                      title={obj ? `${def?.label ?? obj.kind} — click to remove` : `Place ${selKind}`}
+                      onClick={() => clickSlot(x, z)}
+                      title={obj
+                        ? `${def?.label ?? obj.kind}${hasTrigger ? ` · ${obj.trigger}` : ''} — click to edit`
+                        : `Place ${selKind}`}
                       className={cn(
-                        'flex-1 aspect-square rounded border flex items-center justify-center text-base transition-all',
-                        obj
-                          ? 'border-amber-500/50 bg-amber-500/10 hover:border-red-400/60 hover:bg-red-500/10'
+                        'flex-1 aspect-square rounded border flex items-center justify-center text-base transition-all relative',
+                        isSel
+                          ? 'border-sky-400/70 bg-sky-500/15 ring-1 ring-sky-400/40'
+                          : obj
+                          ? 'border-amber-500/50 bg-amber-500/10 hover:border-amber-400/70 hover:bg-amber-500/15'
                           : 'border-white/10 bg-white/4 hover:border-white/22 hover:bg-white/8',
                       )}
                     >
                       {def?.icon ?? ''}
+                      {hasTrigger && !isSel && (
+                        <span className="absolute top-0.5 right-0.5 w-1.5 h-1.5 rounded-full bg-amber-400" />
+                      )}
                     </button>
                   )
                 })}
               </div>
             ))}
-            <div className="text-[9px] text-white/20 text-center pt-0.5">S = player side</div>
+            <div className="text-[9px] text-white/20 text-center pt-0.5">S = player side · dot = has trigger</div>
           </div>
 
           {/* Kind picker */}
@@ -554,6 +603,105 @@ function SubcubeVolumeEditor({
               ))}
             </div>
           </div>
+
+          {/* ── Detail panel for selected object ─────────────────────────────── */}
+          {selObj && (() => {
+            const def = getSubcubeDef(selObj.kind)
+            const trigger = selObj.trigger ?? ''
+            return (
+              <div className="rounded-lg border border-sky-500/25 bg-sky-500/6 p-2.5 space-y-3">
+                {/* Header */}
+                <div className="flex items-center gap-2">
+                  <span className="text-base leading-none">{def?.icon ?? '?'}</span>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-xs font-semibold text-white/80">{def?.label ?? selObj.kind}</div>
+                    <div className="text-[9px] text-white/35">{posLabel(selObj.pos)}</div>
+                  </div>
+                  <button onClick={removeSel}
+                    className="p-1 rounded text-white/30 hover:text-red-400 hover:bg-red-500/10 transition-colors">
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+
+                {/* Custom label */}
+                <div>
+                  <label className={LABEL}>Label (optional)</label>
+                  <input
+                    type="text"
+                    value={selObj.label ?? ''}
+                    placeholder={def?.label ?? selObj.kind}
+                    maxLength={60}
+                    onChange={e => updateSel({ label: e.target.value || undefined })}
+                    className={cn(INPUT, 'w-full')}
+                  />
+                </div>
+
+                {/* Trigger */}
+                <div className="flex items-end gap-2">
+                  <div className="flex-1">
+                    <label className={LABEL}>Trigger</label>
+                    <select
+                      value={trigger}
+                      onChange={e => updateSel({ trigger: (e.target.value as SubcubeObject['trigger']) || undefined, conditions: undefined, effects: undefined, encounter: undefined })}
+                      className={cn(INPUT, 'w-full', trigger && SC_TRIGGER_COLORS[trigger])}
+                    >
+                      {SC_TRIGGER_OPTS.map(o => (
+                        <option key={o.value} value={o.value}>{o.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                  {trigger && (
+                    <label className="flex items-center gap-1.5 pb-1.5 text-xs text-white/60 cursor-pointer whitespace-nowrap">
+                      <input type="checkbox" checked={!!selObj.once}
+                        onChange={e => updateSel({ once: e.target.checked || undefined })} />
+                      Once
+                    </label>
+                  )}
+                </div>
+
+                {/* Logic body — only when trigger is set */}
+                {trigger && (
+                  <>
+                    <ConditionBuilder
+                      conditions={selObj.conditions ?? []}
+                      ruleset={ruleset}
+                      onChange={cs => updateSel({ conditions: cs.length ? cs : undefined })}
+                    />
+
+                    {/* Encounter OR effects — mutually exclusive */}
+                    <div>
+                      <label className={LABEL}>Encounter table (optional)</label>
+                      <select
+                        value={selObj.encounter ?? ''}
+                        onChange={e => updateSel({ encounter: e.target.value || undefined, effects: e.target.value ? undefined : selObj.effects })}
+                        className={cn(INPUT, 'w-full')}
+                      >
+                        <option value="">— none —</option>
+                        {ruleset.encounterTables.map(t => (
+                          <option key={t.id} value={t.id}>{t.name}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {!selObj.encounter && (
+                      <EffectBuilder
+                        label="Effects"
+                        effects={selObj.effects ?? []}
+                        ruleset={ruleset}
+                        onChange={effs => updateSel({ effects: effs.length ? effs : undefined })}
+                      />
+                    )}
+                  </>
+                )}
+
+                {!trigger && (
+                  <p className="text-[10px] text-white/30 leading-relaxed">
+                    No trigger — object is visual only. Set a trigger above to add interactivity.
+                  </p>
+                )}
+              </div>
+            )
+          })()}
         </div>
       )}
     </div>
@@ -614,6 +762,7 @@ export function CellInspector({ x, y, cell, maps, ruleset, onChange, onSubcubeCh
       {onSubcubeChange && (
         <SubcubeVolumeEditor
           objects={cell.subcubeObjects ?? []}
+          ruleset={ruleset}
           onChange={onSubcubeChange}
         />
       )}

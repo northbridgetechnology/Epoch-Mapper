@@ -570,6 +570,23 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
           // Scale emoji relative to the near-slice height so farther = smaller
           const emojiSize = Math.max(8, nearH * 0.38 * (1 - zFrac * 0.4))
           const opacity = Math.max(0.25, 1 - depthFog(d) * 1.8)
+          // Glow ring for interactive objects (trigger set)
+          if (obj.trigger) {
+            const glowColor =
+              obj.trigger === 'onInteract' ? 'rgba(56,189,248,0.30)' :
+              obj.trigger === 'onView'     ? 'rgba(52,211,153,0.30)' :
+                                             'rgba(251,191,36,0.30)'
+            nodes.push(
+              <circle
+                key={`sc_glow_${d}_${obj.id}`}
+                cx={screenX}
+                cy={screenY}
+                r={emojiSize * 0.75}
+                fill={glowColor}
+                opacity={opacity}
+              />,
+            )
+          }
           nodes.push(
             <text
               key={`sc_${d}_${obj.id}`}
