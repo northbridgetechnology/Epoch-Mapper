@@ -625,18 +625,33 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
       }
     }
 
-    // ── Sub-cube objects in visible side cells ────────────────────────────────
+    // ── Sub-cube objects in visible side cells (clipped to strip trapezoid) ─────
     for (const side of [1, -1] as const) {
       const sideOpen = side > 0 ? !rightExists : !leftExists
       if (!sideOpen) continue
       const [scx, scy] = cellAt(d - 1, side)
       const sideObjs = map.cells[`${scx},${scy}`]?.subcubeObjects
       if (!sideObjs || sideObjs.length === 0) continue
+
+      // Clip to the side strip trapezoid so objects never bleed into the corridor
+      const clipId = `sc_clip_${side > 0 ? 'r' : 'l'}_d${d}`
+      const stripPts = side > 0
+        ? `${far.x2},${far.y1} ${cur.x2},${cur.y1} ${cur.x2},${cur.y2} ${far.x2},${far.y2}`
+        : `${cur.x1},${cur.y1} ${far.x1},${far.y1} ${far.x1},${far.y2} ${cur.x1},${cur.y2}`
+      nodes.push(
+        <defs key={`${clipId}_def`}>
+          <clipPath id={clipId}><polygon points={stripPts} /></clipPath>
+        </defs>,
+      )
+
       const sortedSide = [...sideObjs].sort((a, b) => {
         const da = subcubeSideDepthFrac(a.pos, facing, side)
         const db = subcubeSideDepthFrac(b.pos, facing, side)
         return db - da || b.pos.y - a.pos.y
       })
+      // Strip width (constant across depthFrac) used to size objects sensibly
+      const stripW = side > 0 ? cur.x2 - far.x2 : far.x1 - cur.x1
+      const objNodes: React.ReactNode[] = []
       for (const obj of sortedSide) {
         const def = getSubcubeDef(obj.kind)
         if (!def) continue
@@ -647,20 +662,21 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
           ? cur.x2 + (far.x2 - cur.x2) * depthFrac
           : cur.x1 + (far.x1 - cur.x1) * depthFrac
         const screenY = sliceY2 - (sliceY2 - sliceY1) * (obj.pos.y + 0.5) / 3
-        const emojiSize = Math.max(6, Math.min(56, (sliceY2 - sliceY1) * 0.28))
+        // Size is capped by strip width so the emoji stays within the strip
+        const emojiSize = Math.max(6, Math.min(stripW * 0.50, (sliceY2 - sliceY1) * 0.28))
         const opacity = Math.max(0.2, 1 - depthFog(d) * 2)
         if (obj.trigger) {
           const glowColor =
             obj.trigger === 'onInteract' ? 'rgba(56,189,248,0.30)' :
             obj.trigger === 'onView'     ? 'rgba(52,211,153,0.30)' :
                                            'rgba(251,191,36,0.30)'
-          nodes.push(
+          objNodes.push(
             <circle key={`sc_s${side}_glow_${d}_${obj.id}`}
               cx={screenX} cy={screenY} r={emojiSize * 0.75}
               fill={glowColor} opacity={opacity} />,
           )
         }
-        nodes.push(
+        objNodes.push(
           <text key={`sc_s${side}_${d}_${obj.id}`}
             x={screenX} y={screenY}
             textAnchor="middle" dominantBaseline="middle"
@@ -669,6 +685,11 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
           >{def.icon}</text>,
         )
       }
+      nodes.push(
+        <g key={`sc_s${side > 0 ? 'r' : 'l'}_d${d}`} clipPath={`url(#${clipId})`}>
+          {objNodes}
+        </g>,
+      )
     }
   }
 
