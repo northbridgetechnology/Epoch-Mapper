@@ -30,7 +30,7 @@ import { makeDefaultRuleset } from '@/lib/default-ruleset'
 import { savePartyTemplate, loadPartyTemplate } from '@/lib/save-state'
 import { checkCellForEncounter, resolveEncounterTable, visitedFlagKey } from '@/lib/encounter-engine'
 import { EncounterModal } from './EncounterModal'
-import { initCombat, applyCombatOutcome, type CombatState } from '@/lib/combat-engine'
+import { initCombat, applyCombatOutcome, consumeCombatItems, type CombatState } from '@/lib/combat-engine'
 import { CellInspector } from './CellInspector'
 import { ShopModal } from './ShopModal'
 import { getTriggeredEvents, resolveExploreEffects, getInteractableObjects, objectUsedFlagKey, resolveLootTable, type ExploreEffect, type EventContext } from '@/lib/event-engine'
@@ -1386,11 +1386,13 @@ export function DungeonMapper({
             flags={flags}
             combat={combatState}
             ruleset={ruleset}
+            inventory={inventory}
             onCombatAction={handleCombatAction}
             onCombatEnd={() => {
               if (!combatState) return
               const { party: updatedParty, levelUps } = applyCombatOutcome(party, combatState, ruleset)
               setParty(updatedParty)
+              setInventory(inv => consumeCombatItems(inv, combatState))
               if (combatState.phase === 'victory') {
                 setGold(g => g + combatState.goldReward)
               }

@@ -7,7 +7,7 @@ import { baseDef, overlayDef, edgeDef, boundaryKey, DEFAULT_CELL, MIN_CELL, MAX_
 import type { CellData, MapData, MarkerDef, EdgeDir } from '@/lib/types'
 import { getTheme, type MapThemeDef } from '@/lib/themes'
 import { getSubcubeDef } from '@/lib/subcube-defs'
-import type { BoundaryData, CellEntity, Character, Facing, Ruleset } from '@/lib/engine-types'
+import type { BoundaryData, CellEntity, Character, Facing, ItemInstance, Ruleset } from '@/lib/engine-types'
 import { objectUsedFlagKey } from '@/lib/event-engine'
 import type { BattleViewState } from '@/lib/battle-scene'
 import type { CombatState } from '@/lib/combat-engine'
@@ -28,6 +28,7 @@ interface PlayWorkspaceProps {
   flags: Record<string, boolean | number | string>
   combat?: CombatState | null
   ruleset: Ruleset
+  inventory: ItemInstance[]
   onCombatAction: (next: CombatState) => void
   onCombatEnd: () => void
   onMoveForward: () => void
@@ -1010,7 +1011,7 @@ export function PlayWorkspace({
   activeMap, party, gold, facing,
   customBase, customOverlay, isCellRevealed, revealedBoundaries, bumpTrigger,
   flags,
-  combat, ruleset, onCombatAction, onCombatEnd,
+  combat, ruleset, inventory, onCombatAction, onCombatEnd,
   onMoveForward, onMoveBack, onTurnLeft, onTurnRight, onInteract,
 }: PlayWorkspaceProps) {
   const [cellSize, setCellSize] = useState(DEFAULT_CELL + 6)
@@ -1023,6 +1024,7 @@ export function PlayWorkspace({
     combat: combat ?? null,
     ruleset,
     party,
+    inventory,
     onAction: onCombatAction,
   })
 

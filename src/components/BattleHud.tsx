@@ -20,36 +20,50 @@ import {
   resolvePlayerAttack,
   resolvePlayerCast,
   resolvePlayerFlee,
+  resolvePlayerDefend,
+  resolvePlayerUseItem,
   resolveEnemyTurn,
 } from '@/lib/combat-engine'
 import { buildBattlePlacements, type BattleViewState } from '@/lib/battle-scene'
-import type { Character, Ruleset, SpellDef } from '@/lib/engine-types'
+import type { Character, ItemDef, ItemInstance, Ruleset, SpellDef } from '@/lib/engine-types'
 
 type Mode =
   | { k: 'menu' }
-  | { k: 'targets'; spell?: SpellDef }
+  | { k: 'targets'; spell?: SpellDef; item?: ItemDef }
   | { k: 'spells' }
-  | { k: 'allies'; spell: SpellDef }
+  | { k: 'items' }
+  | { k: 'allies'; spell?: SpellDef; item?: ItemDef }
+
+/** A consumable the party can still use this battle (qty net of itemsUsed). */
+export interface UsableItem {
+  def: ItemDef
+  remaining: number
+}
 
 export interface BattleHudProps {
   combat: CombatState
   mode: Mode
   currentActor: CombatActor | undefined
   castableSpells: SpellDef[]
+  usableItems: UsableItem[]
   selectedIdx: number | null
   onAttack: () => void
   onOpenSpells: () => void
   onChooseSpell: (spell: SpellDef) => void
+  onOpenItems: () => void
+  onChooseItem: (item: ItemDef) => void
+  onDefend: () => void
   onAllyTarget: (actorIdx: number) => void
   onConfirmTarget: () => void
   onFlee: () => void
   onBack: () => void
 }
 
-export function useBattleController({ combat, ruleset, party, onAction }: {
+export function useBattleController({ combat, ruleset, party, inventory, onAction }: {
   combat: CombatState | null
   ruleset: Ruleset
   party: Character[]
+  inventory: ItemInstance[]
   onAction: (next: CombatState) => void
 }): { view: BattleViewState | null; hud: BattleHudProps | null } {
   const [mode, setMode] = useState<Mode>({ k: 'menu' })
@@ -98,6 +112,18 @@ export function useBattleController({ combat, ruleset, party, onAction }: {
       .filter((s): s is SpellDef => !!s && s.inCombat)
   }, [combat, currentActor, party, ruleset])
 
+  // Consumables with onUse effects the party still holds (net of this battle's usage)
+  const usableItems = useMemo<UsableItem[]>(() => {
+    if (!combat) return []
+    return ruleset.items
+      .filter(it => it.kind === 'consumable' && (it.onUse?.length ?? 0) > 0)
+      .map(it => {
+        const held = inventory.find(i => i.def === it.id)?.qty ?? 0
+        return { def: it, remaining: held - (combat.itemsUsed[it.id] ?? 0) }
+      })
+      .filter(e => e.remaining > 0)
+  }, [combat, inventory, ruleset])
+
   function execAttack(targetIdx: number) {
     const cur = combatRef.current
     if (!cur) return
@@ -110,10 +136,23 @@ export function useBattleController({ combat, ruleset, party, onAction }: {
     onAction(resolvePlayerCast(cur, spell.id, targetIdxs, ruleset, Math.random))
     setMode({ k: 'menu' }); setSel(null)
   }
+  function execUseItem(item: ItemDef, targetIdxs: number[]) {
+    const cur = combatRef.current
+    if (!cur) return
+    onAction(resolvePlayerUseItem(cur, item.id, targetIdxs, ruleset, Math.random))
+    setMode({ k: 'menu' }); setSel(null)
+  }
 
-  function enterTargets(spell?: SpellDef) {
-    setMode({ k: 'targets', spell })
+  function enterTargets(spell?: SpellDef, item?: ItemDef) {
+    setMode({ k: 'targets', spell, item })
     setSel(aliveEnemyIdxs[0] ?? null)
+  }
+
+  // Items whose effects include damage are thrown at enemies; the rest aid allies
+  function chooseItem(item: ItemDef) {
+    const offensive = item.onUse?.some(e => e.t === 'damage') ?? false
+    if (offensive) enterTargets(undefined, item)
+    else setMode({ k: 'allies', item })
   }
 
   function chooseSpell(spell: SpellDef) {
@@ -141,8 +180,18 @@ export function useBattleController({ combat, ruleset, party, onAction }: {
     if (mode.k !== 'targets') return
     const target = idx ?? sel
     if (target == null) return
-    if (mode.spell) execCast(mode.spell, [target])
+    if (mode.item) execUseItem(mode.item, [target])
+    else if (mode.spell) execCast(mode.spell, [target])
     else execAttack(target)
+  }
+
+  // Back out of targeting to the submenu it came from (spells / items / menu)
+  function backOut() {
+    setMode(m => {
+      if (m.k === 'targets' && m.spell) return { k: 'spells' }
+      if (m.k === 'targets' && m.item) return { k: 'items' }
+      return { k: 'menu' }
+    })
   }
 
   // Keyboard: cycle targets with arrows, Enter confirms, Esc backs out
@@ -159,9 +208,9 @@ export function useBattleController({ combat, ruleset, party, onAction }: {
         } else if (e.key === 'Enter') {
           e.preventDefault(); confirmTarget()
         } else if (e.key === 'Escape') {
-          e.preventDefault(); setMode(m => (m.k === 'targets' && m.spell ? { k: 'spells' } : { k: 'menu' })); setSel(null)
+          e.preventDefault(); backOut(); setSel(null)
         }
-      } else if (mode.k === 'spells' || mode.k === 'allies') {
+      } else if (mode.k === 'spells' || mode.k === 'items' || mode.k === 'allies') {
         if (e.key === 'Escape') { e.preventDefault(); setMode({ k: 'menu' }) }
       }
     }
@@ -182,15 +231,22 @@ export function useBattleController({ combat, ruleset, party, onAction }: {
   }
 
   const hud: BattleHudProps = {
-    combat, mode, currentActor, castableSpells,
+    combat, mode, currentActor, castableSpells, usableItems,
     selectedIdx: sel,
     onAttack: () => enterTargets(),
     onOpenSpells: () => setMode({ k: 'spells' }),
     onChooseSpell: chooseSpell,
-    onAllyTarget: (idx) => { if (mode.k === 'allies') execCast(mode.spell, [idx]) },
+    onOpenItems: () => setMode({ k: 'items' }),
+    onChooseItem: chooseItem,
+    onDefend: () => { const cur = combatRef.current; if (cur) onAction(resolvePlayerDefend(cur, ruleset, Math.random)) },
+    onAllyTarget: (idx) => {
+      if (mode.k !== 'allies') return
+      if (mode.item) execUseItem(mode.item, [idx])
+      else if (mode.spell) execCast(mode.spell, [idx])
+    },
     onConfirmTarget: () => confirmTarget(),
     onFlee: () => { const cur = combatRef.current; if (cur) onAction(resolvePlayerFlee(cur, ruleset, Math.random)) },
-    onBack: () => { setMode(m => (m.k === 'targets' && m.spell ? { k: 'spells' } : { k: 'menu' })); setSel(null) },
+    onBack: () => { backOut(); setSel(null) },
   }
 
   return { view, hud }
@@ -222,8 +278,9 @@ function MenuButton({ icon, label, onClick, disabled, title }: {
 }
 
 export function BattleHud({
-  combat, mode, currentActor, castableSpells, selectedIdx,
-  onAttack, onOpenSpells, onChooseSpell, onAllyTarget, onConfirmTarget, onFlee, onBack,
+  combat, mode, currentActor, castableSpells, usableItems, selectedIdx,
+  onAttack, onOpenSpells, onChooseSpell, onOpenItems, onChooseItem, onDefend,
+  onAllyTarget, onConfirmTarget, onFlee, onBack,
 }: BattleHudProps) {
   const logEndRef = useRef<HTMLDivElement>(null)
   useEffect(() => { logEndRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [combat.log.length])
@@ -248,9 +305,22 @@ export function BattleHud({
             <MenuButton icon={<Wand2 className="w-3.5 h-3.5" />} label="Spell"
               onClick={onOpenSpells} disabled={castableSpells.length === 0}
               title={castableSpells.length === 0 ? 'No combat spells known' : undefined} />
-            <MenuButton icon={<FlaskConical className="w-3.5 h-3.5" />} label="Item" disabled title="Coming soon" />
-            <MenuButton icon={<Shield className="w-3.5 h-3.5" />} label="Defend" disabled title="Coming soon" />
+            <MenuButton icon={<FlaskConical className="w-3.5 h-3.5" />} label="Item"
+              onClick={onOpenItems} disabled={usableItems.length === 0}
+              title={usableItems.length === 0 ? 'No usable items' : undefined} />
+            <MenuButton icon={<Shield className="w-3.5 h-3.5" />} label="Defend" onClick={onDefend}
+              title="Halve incoming damage until your next turn" />
             <MenuButton icon={<Wind className="w-3.5 h-3.5" />} label="Flee" onClick={onFlee} />
+          </div>
+        ) : mode.k === 'items' ? (
+          <div className="space-y-0.5 max-h-24 overflow-y-auto">
+            {usableItems.map(({ def, remaining }) => (
+              <MenuButton key={def.id}
+                icon={<span className="text-sm leading-none">{def.icon ?? '🧪'}</span>}
+                label={`${def.name} ×${remaining}`}
+                onClick={() => onChooseItem(def)} />
+            ))}
+            <MenuButton icon={<ChevronLeft className="w-3.5 h-3.5" />} label="Back" onClick={onBack} />
           </div>
         ) : mode.k === 'spells' ? (
           <div className="space-y-0.5 max-h-24 overflow-y-auto">
@@ -277,7 +347,9 @@ export function BattleHud({
           </div>
         ) : (
           <div className="space-y-0.5 max-h-24 overflow-y-auto">
-            <div className="px-2 text-[10px] uppercase tracking-wide text-emerald-300/70">Cast on…</div>
+            <div className="px-2 text-[10px] uppercase tracking-wide text-emerald-300/70">
+              {mode.k === 'allies' && mode.item ? 'Use on…' : 'Cast on…'}
+            </div>
             {combat.actors.map((a, i) => (a.kind === 'party' && a.alive) ? (
               <MenuButton key={i} icon={<span className="text-sm leading-none">{a.icon ?? '🧑'}</span>}
                 label={a.name} onClick={() => onAllyTarget(i)} />

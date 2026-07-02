@@ -150,8 +150,11 @@ export {
   resolvePlayerAttack,
   resolvePlayerCast,
   resolvePlayerFlee,
+  resolvePlayerDefend,
+  resolvePlayerUseItem,
   resolveEnemyTurn,
   applyCombatOutcome,
+  consumeCombatItems,
 } from './lib/combat-engine'
 export type { CombatActor, CombatLogEntry, CombatPhase, CombatState } from './lib/combat-engine'
 

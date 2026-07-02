@@ -3,7 +3,7 @@
  * No DOM, no React. All mutations return new state objects.
  */
 
-import type { Character, ActiveStatus, EnemyAbility, Effect, Ruleset } from './engine-types'
+import type { Character, ActiveStatus, EnemyAbility, Effect, ItemInstance, Ruleset } from './engine-types'
 import { deriveMaxHp, deriveMaxMp, xpToNextLevel } from './engine-types'
 import type { ResolvedEncounter } from './engine-types'
 
@@ -29,6 +29,8 @@ export interface CombatActor {
   alive: boolean
   statuses: ActiveStatus[]
   defId?: string   // enemies only — links back to EnemyDef for ability lookup
+  /** Guarding this round: incoming damage is halved until the actor's next turn */
+  defending?: boolean
 }
 
 export interface CombatLogEntry {
@@ -44,6 +46,10 @@ export interface CombatState {
   fleeAttempts: number
   xpReward: number
   goldReward: number
+  /** Consumables used this battle (item id → count); applied to the shared
+   *  inventory by consumeCombatItems() when combat ends — used items stay
+   *  used even on flee or defeat. */
+  itemsUsed: Record<string, number>
 }
 
 // ── Dice ──────────────────────────────────────────────────────────────────────
@@ -107,7 +113,8 @@ function resolveCombatEffects(
         if (!target.alive) continue
         const base = rollDice(eff.amount, rng)
         const crit = eff.canCrit !== false && rng() < 0.1
-        const dmg = Math.max(1, Math.round(base * (crit ? 1.5 : 1)))
+        const raw = Math.max(1, Math.round(base * (crit ? 1.5 : 1)))
+        const dmg = target.defending ? Math.max(1, Math.floor(raw / 2)) : raw
         const newHp = Math.max(0, target.hp - dmg)
         cur = cur.map((a, i) => i === tIdx ? { ...a, hp: newHp, alive: newHp > 0 } : a)
         log.push({
@@ -245,7 +252,9 @@ function advanceTurn(state: CombatState, ruleset: Ruleset, rng: () => number): C
   const nextIdx = nextAliveTurn(state.actors, state.turnIdx)
   const phase: CombatPhase = state.actors[nextIdx].kind === 'party' ? 'player_action' : 'enemy_turn'
 
-  const { actors: tickedActors, log: tickLog, blocked } = tickStatuses(nextIdx, state.actors, ruleset, rng)
+  const { actors: ticked, log: tickLog, blocked } = tickStatuses(nextIdx, state.actors, ruleset, rng)
+  // Guard stance ends when the actor's own turn comes back around
+  const tickedActors = ticked.map((a, i) => (i === nextIdx && a.defending ? { ...a, defending: false } : a))
   const newLog = [...state.log, ...tickLog]
 
   if (blocked) {
@@ -267,7 +276,8 @@ function calcHit(attacker: CombatActor, defender: CombatActor, rng: () => number
   const crit = rng() < 0.1
   const base = Math.max(1, attacker.attack - Math.floor(defender.defense / 2))
   const variance = rng() * 0.3
-  const damage = Math.max(1, Math.round(base * (1 + variance) * (crit ? 1.5 : 1)))
+  const raw = Math.max(1, Math.round(base * (1 + variance) * (crit ? 1.5 : 1)))
+  const damage = defender.defending ? Math.max(1, Math.floor(raw / 2)) : raw
   return { damage, crit, miss: false }
 }
 
@@ -312,6 +322,7 @@ export function initCombat(party: Character[], encounter: ResolvedEncounter): Co
     fleeAttempts: 0,
     xpReward: encounter.xpReward,
     goldReward: encounter.goldReward,
+    itemsUsed: {},
   }
 }
 
@@ -403,6 +414,58 @@ export function resolvePlayerFlee(
   }
   const failEntry: CombatLogEntry = { text: 'Failed to escape!', kind: 'flee_fail' }
   return advanceTurn({ ...state, fleeAttempts: attempts, log: [...state.log, failEntry] }, ruleset, rng)
+}
+
+// ── Player: defend ────────────────────────────────────────────────────────────
+
+export function resolvePlayerDefend(
+  state: CombatState,
+  ruleset: Ruleset,
+  rng: () => number,
+): CombatState {
+  const actor = state.actors[state.turnIdx]
+  if (!actor || !actor.alive) return state
+  const actors = state.actors.map((a, i) =>
+    i === state.turnIdx ? { ...a, defending: true } : a,
+  )
+  const entry: CombatLogEntry = { text: `${actor.name} defends.`, kind: 'info' }
+  return advanceTurn({ ...state, actors, log: [...state.log, entry] }, ruleset, rng)
+}
+
+// ── Player: use item ──────────────────────────────────────────────────────────
+
+export function resolvePlayerUseItem(
+  state: CombatState,
+  itemId: string,
+  targetActorIdxs: number[],
+  ruleset: Ruleset,
+  rng: () => number,
+): CombatState {
+  const user = state.actors[state.turnIdx]
+  if (!user || !user.alive) return state
+  const def = ruleset.items.find(i => i.id === itemId)
+  if (!def || def.kind !== 'consumable' || !def.onUse?.length) return state
+
+  const useEntry: CombatLogEntry = { text: `${user.name} uses ${def.name}!`, kind: 'info' }
+  const { actors, log } = resolveCombatEffects(
+    def.onUse, state.turnIdx, targetActorIdxs, state.actors, ruleset, rng,
+  )
+  const itemsUsed = { ...state.itemsUsed, [itemId]: (state.itemsUsed[itemId] ?? 0) + 1 }
+  return advanceTurn(
+    { ...state, actors, itemsUsed, log: [...state.log, useEntry, ...log] },
+    ruleset,
+    rng,
+  )
+}
+
+/** Apply a finished battle's item usage to the shared inventory. */
+export function consumeCombatItems(inventory: ItemInstance[], state: CombatState): ItemInstance[] {
+  return inventory
+    .map(inst => {
+      const used = state.itemsUsed[inst.def] ?? 0
+      return used > 0 ? { ...inst, qty: Math.max(0, inst.qty - used) } : inst
+    })
+    .filter(inst => inst.qty > 0)
 }
 
 // ── Enemy turn (auto) ─────────────────────────────────────────────────────────
