@@ -739,9 +739,10 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
   // it. Enemies stand at mid-cell depth in their lane's sub-cube column.
   if (battle) {
     const sorted = [...battle.placements].sort((a, b) => b.rank - a.rank)
+    const benPos: Record<number, { x: number; y: number; s: number }> = {}
     for (const pl of sorted) {
       const actor = battle.actors[pl.actorIdx]
-      if (!actor || !actor.alive) continue
+      if (!actor) continue
       const ez = pl.size === 2 ? 2.0 : pl.rank + 1.5
       const hw = (0.5 * PF_X) / ez
       const hh = PF_Y / ez
@@ -749,6 +750,8 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
       const exX = (VP_X - hw) + hw * 2 * ((pl.lane + 0.5) / 3)
       const size = hh * 2 * (pl.size === 2 ? 0.9 : 0.55)
       const emY = floorY - size * 0.52
+      benPos[pl.actorIdx] = { x: exX, y: emY, s: size }
+      if (!actor.alive) continue
       const isActive = battle.activeIdx === pl.actorIdx
       const isSelected = battle.selectedIdx === pl.actorIdx
       const isTargetable = battle.targetableIdxs.includes(pl.actorIdx)
@@ -811,6 +814,53 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
         <rect key={`ben_hp_${pl.actorIdx}`} x={exX - barW / 2} y={emY - size * 0.60}
           width={barW * hpPct} height={3} rx={1.5}
           fill={hpPct > 0.5 ? 'hsl(150 60% 45%)' : hpPct > 0.25 ? 'hsl(40 90% 55%)' : 'hsl(0 80% 55%)'} />,
+      )
+    }
+
+    // ── Action feedback: floating popups + hit flashes (keyed by eventSeq so
+    //    each action replays its animations) ─────────────────────────────────
+    battle.events.forEach((ev, i) => {
+      const pos = benPos[ev.target]
+      if (!pos || battle.actors[ev.target]?.kind !== 'enemy') return
+      const txt =
+        ev.kind === 'miss'   ? 'MISS' :
+        ev.kind === 'status' ? '✦' :
+        `${ev.kind === 'heal' || ev.kind === 'mp' ? '+' : '-'}${ev.amount ?? ''}`
+      const fill =
+        ev.kind === 'crit' ? 'hsl(44 95% 60%)' :
+        ev.kind === 'heal' ? 'hsl(150 65% 55%)' :
+        ev.kind === 'mp'   ? 'hsl(210 80% 65%)' :
+        ev.kind === 'miss' ? 'rgba(255,255,255,0.65)' :
+                             'hsl(0 85% 62%)'
+      const fs = ev.kind === 'crit' ? pos.s * 0.30 : pos.s * 0.22
+      const px0 = pos.x + (i - (battle.events.length - 1) / 2) * pos.s * 0.22
+      nodes.push(
+        <g key={`pop_${battle.eventSeq}_${i}`} pointerEvents="none">
+          {(ev.kind === 'damage' || ev.kind === 'crit') && (
+            <circle cx={pos.x} cy={pos.y} r={pos.s * 0.5} fill="rgba(255,80,60,0.35)">
+              <animate attributeName="opacity" from="1" to="0" dur="0.35s" fill="freeze" />
+            </circle>
+          )}
+          <text x={px0} y={pos.y - pos.s * 0.35}
+            textAnchor="middle" fontSize={fs} fontWeight={700} fill={fill}
+            stroke="rgba(0,0,0,0.7)" strokeWidth={0.8} paintOrder="stroke"
+            style={{ userSelect: 'none' }}>
+            {txt}
+            <animate attributeName="y" from={pos.y - pos.s * 0.35} to={pos.y - pos.s * 0.85} dur="0.9s" fill="freeze" />
+            <animate attributeName="opacity" values="1;1;0" keyTimes="0;0.6;1" dur="0.9s" fill="freeze" />
+          </text>
+        </g>,
+      )
+    })
+
+    // Party struck: brief red vignette across the whole view
+    if (battle.events.some(ev =>
+      (ev.kind === 'damage' || ev.kind === 'crit') && battle.actors[ev.target]?.kind === 'party')) {
+      nodes.push(
+        <rect key={`phit_${battle.eventSeq}`} x={0} y={0} width={VW} height={VH}
+          fill="rgba(190,30,30,0.28)" pointerEvents="none">
+          <animate attributeName="opacity" from="1" to="0" dur="0.45s" fill="freeze" />
+        </rect>,
       )
     }
   }

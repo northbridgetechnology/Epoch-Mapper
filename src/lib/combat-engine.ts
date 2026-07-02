@@ -3,7 +3,7 @@
  * No DOM, no React. All mutations return new state objects.
  */
 
-import type { Character, ActiveStatus, EnemyAbility, Effect, ItemInstance, Ruleset } from './engine-types'
+import type { Character, ActiveStatus, EnemyAbility, Effect, Formation, ItemInstance, Ruleset } from './engine-types'
 import { deriveMaxHp, deriveMaxMp, xpToNextLevel } from './engine-types'
 import type { ResolvedEncounter } from './engine-types'
 
@@ -31,6 +31,20 @@ export interface CombatActor {
   defId?: string   // enemies only — links back to EnemyDef for ability lookup
   /** Guarding this round: incoming damage is halved until the actor's next turn */
   defending?: boolean
+  /** 0 = front rank/row, 1 = back. Each back rank halves melee dealt/taken. */
+  rank: 0 | 1
+  /** Enemies only: sub-cube lane on the playfield (0=left, 1=center, 2=right). */
+  lane?: 0 | 1 | 2
+  /** Enemies only: 1 = standard, 2 = large (claims its lane in both ranks). */
+  size?: 1 | 2
+}
+
+/** A discrete thing that happened during one action — drives view feedback
+ *  (floating damage popups, hit flashes) without parsing log text. */
+export interface CombatEvent {
+  target: number   // actor idx
+  kind: 'damage' | 'crit' | 'heal' | 'mp' | 'miss' | 'status'
+  amount?: number
 }
 
 export interface CombatLogEntry {
@@ -50,6 +64,22 @@ export interface CombatState {
    *  inventory by consumeCombatItems() when combat ends — used items stay
    *  used even on flee or defeat. */
   itemsUsed: Record<string, number>
+  /** Seeded PRNG stream state — battles are deterministic given the same
+   *  initial seed and action sequence (callers may still inject an rng). */
+  rngState: number
+  /** Feedback events from the most recent action (see CombatEvent). */
+  events: CombatEvent[]
+  /** Monotonic counter bumped per action — keys popup animations in the view. */
+  eventSeq: number
+}
+
+// ── Seeded RNG (mulberry32) ───────────────────────────────────────────────────
+
+function nextRand(box: { s: number }): number {
+  let t = (box.s = (box.s + 0x6d2b79f5) | 0)
+  t = Math.imul(t ^ (t >>> 15), t | 1)
+  t ^= t + Math.imul(t ^ (t >>> 7), t | 61)
+  return ((t ^ (t >>> 14)) >>> 0) / 4294967296
 }
 
 // ── Dice ──────────────────────────────────────────────────────────────────────
@@ -68,7 +98,7 @@ function rollDice(dice: number | string, rng: () => number): number {
 
 // ── Actor construction ────────────────────────────────────────────────────────
 
-function partyActorFromChar(char: Character, originalIdx: number): CombatActor {
+function partyActorFromChar(char: Character, originalIdx: number, rank: 0 | 1): CombatActor {
   return {
     kind: 'party',
     idx: originalIdx,
@@ -85,6 +115,7 @@ function partyActorFromChar(char: Character, originalIdx: number): CombatActor {
     gold: 0,
     alive: char.alive && char.hp > 0,
     statuses: char.statuses ?? [],
+    rank,
   }
 }
 
@@ -97,9 +128,10 @@ function resolveCombatEffects(
   actors: CombatActor[],
   ruleset: Ruleset,
   rng: () => number,
-): { actors: CombatActor[]; log: CombatLogEntry[] } {
+): { actors: CombatActor[]; log: CombatLogEntry[]; events: CombatEvent[] } {
   let cur = [...actors]
   const log: CombatLogEntry[] = []
+  const events: CombatEvent[] = []
   const casterName = cur[casterIdx]?.name ?? '?'
 
   for (const eff of effects) {
@@ -117,6 +149,7 @@ function resolveCombatEffects(
         const dmg = target.defending ? Math.max(1, Math.floor(raw / 2)) : raw
         const newHp = Math.max(0, target.hp - dmg)
         cur = cur.map((a, i) => i === tIdx ? { ...a, hp: newHp, alive: newHp > 0 } : a)
+        events.push({ target: tIdx, kind: crit ? 'crit' : 'damage', amount: dmg })
         log.push({
           text: crit
             ? `${casterName} critically hits ${target.name} for ${dmg}!`
@@ -131,6 +164,7 @@ function resolveCombatEffects(
         const newHp = Math.min(target.maxHp, target.hp + amount)
         const gained = newHp - target.hp
         cur = cur.map((a, i) => i === tIdx ? { ...a, hp: newHp } : a)
+        events.push({ target: tIdx, kind: 'heal', amount: gained })
         log.push({ text: `${target.name} recovers ${gained} HP.`, kind: 'info' })
 
       } else if (eff.t === 'restoreMp') {
@@ -139,12 +173,14 @@ function resolveCombatEffects(
         const newMp = Math.min(target.maxMp, target.mp + amount)
         const gained = newMp - target.mp
         cur = cur.map((a, i) => i === tIdx ? { ...a, mp: newMp } : a)
+        events.push({ target: tIdx, kind: 'mp', amount: gained })
         log.push({ text: `${target.name} recovers ${gained} MP.`, kind: 'info' })
 
       } else if (eff.t === 'status') {
         if (!target.alive) continue
         const chance = eff.chance ?? 1
         if (rng() > chance) {
+          events.push({ target: tIdx, kind: 'miss' })
           log.push({ text: `${target.name} resisted!`, kind: 'miss' })
           continue
         }
@@ -157,6 +193,7 @@ function resolveCombatEffects(
               ? { ...a, statuses: [...a.statuses, { def: eff.status, remaining }] }
               : a,
           )
+          events.push({ target: tIdx, kind: 'status' })
           log.push({ text: `${target.name} is ${def.name}!`, kind: 'info' })
         }
 
@@ -175,6 +212,7 @@ function resolveCombatEffects(
         cur = cur.map((a, i) =>
           i === tIdx ? { ...a, hp: a.maxHp, mp: a.maxMp, statuses: [], alive: true } : a,
         )
+        events.push({ target: tIdx, kind: 'heal', amount: target.maxHp })
         log.push({ text: `${target.name} is fully restored!`, kind: 'info' })
 
       } else if (eff.t === 'reviveRandom') {
@@ -187,7 +225,7 @@ function resolveCombatEffects(
     }
   }
 
-  return { actors: cur, log }
+  return { actors: cur, log, events }
 }
 
 // ── Status ticking ────────────────────────────────────────────────────────────
@@ -266,6 +304,17 @@ function advanceTurn(state: CombatState, ruleset: Ruleset, rng: () => number): C
   return { ...state, actors: tickedActors, log: newLog, turnIdx: nextIdx, phase }
 }
 
+/** Stamp an action's results onto the outgoing state: advance the RNG stream,
+ *  publish feedback events, and bump the animation sequence counter. */
+function finishAction(
+  out: CombatState,
+  box: { s: number },
+  events: CombatEvent[],
+  prev: CombatState,
+): CombatState {
+  return { ...out, rngState: box.s, events, eventSeq: prev.eventSeq + 1 }
+}
+
 // ── Hit calculation (physical) ────────────────────────────────────────────────
 
 interface HitResult { damage: number; crit: boolean; miss: boolean }
@@ -276,16 +325,33 @@ function calcHit(attacker: CombatActor, defender: CombatActor, rng: () => number
   const crit = rng() < 0.1
   const base = Math.max(1, attacker.attack - Math.floor(defender.defense / 2))
   const variance = rng() * 0.3
-  const raw = Math.max(1, Math.round(base * (1 + variance) * (crit ? 1.5 : 1)))
+  let raw = Math.max(1, Math.round(base * (1 + variance) * (crit ? 1.5 : 1)))
+  // Row rules: melee dealt from the back rank and melee taken in the back
+  // rank are each halved (spells/effects ignore rank)
+  if (attacker.rank === 1) raw = Math.max(1, Math.floor(raw / 2))
+  if (defender.rank === 1) raw = Math.max(1, Math.floor(raw / 2))
   const damage = defender.defending ? Math.max(1, Math.floor(raw / 2)) : raw
   return { damage, crit, miss: false }
 }
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 
-export function initCombat(party: Character[], encounter: ResolvedEncounter): CombatState {
+export interface InitCombatOpts {
+  /** PRNG seed — battles replay identically given the same seed + actions */
+  seed?: number
+  /** Party rows: members listed in formation.back fight from the back rank */
+  formation?: Formation
+  /** Used for enemy size lookup (large enemies straddle both ranks) */
+  ruleset?: Ruleset
+}
+
+export function initCombat(
+  party: Character[],
+  encounter: ResolvedEncounter,
+  opts?: InitCombatOpts,
+): CombatState {
   const partyActors = party
-    .map((c, i) => partyActorFromChar(c, i))
+    .map((c, i) => partyActorFromChar(c, i, opts?.formation?.back?.includes(i) ? 1 : 0))
     .filter(a => a.alive)
 
   const enemyActors: CombatActor[] = encounter.enemies.map((e, i) => ({
@@ -305,7 +371,31 @@ export function initCombat(party: Character[], encounter: ResolvedEncounter): Co
     alive: true,
     statuses: [],
     defId: e.defId,
+    rank: 0 as const,
   }))
+
+  // Formation placement: fill the front rank centre-first, overflow to the
+  // back; large (size 2) enemies claim their lane in both ranks
+  const laneOrder: (0 | 1 | 2)[] = [1, 0, 2]
+  const frontTaken = [false, false, false]
+  const backTaken = [false, false, false]
+  enemyActors.forEach((actor, i) => {
+    const size: 1 | 2 = opts?.ruleset?.enemies.find(d => d.id === actor.defId)?.size === 2 ? 2 : 1
+    actor.size = size
+    if (size === 2) {
+      const lane = laneOrder.find(l => !frontTaken[l] && !backTaken[l])
+      if (lane !== undefined) {
+        frontTaken[lane] = backTaken[lane] = true
+        actor.rank = 0; actor.lane = lane
+        return
+      }
+    }
+    let lane = laneOrder.find(l => !frontTaken[l])
+    if (lane !== undefined) { frontTaken[lane] = true; actor.rank = 0; actor.lane = lane; return }
+    lane = laneOrder.find(l => !backTaken[l])
+    if (lane !== undefined) { backTaken[lane] = true; actor.rank = 1; actor.lane = lane; return }
+    actor.rank = 1; actor.lane = laneOrder[i % 3]   // overflow beyond 6: double up
+  })
 
   const actors = [...partyActors, ...enemyActors].sort(
     (a, b) => b.speed - a.speed || (a.kind === 'party' ? -1 : 1),
@@ -323,6 +413,9 @@ export function initCombat(party: Character[], encounter: ResolvedEncounter): Co
     xpReward: encounter.xpReward,
     goldReward: encounter.goldReward,
     itemsUsed: {},
+    rngState: (opts?.seed ?? Math.floor(Math.random() * 0xffffffff)) | 0,
+    events: [],
+    eventSeq: 0,
   }
 }
 
@@ -332,13 +425,15 @@ export function resolvePlayerAttack(
   state: CombatState,
   targetActorIdx: number,
   ruleset: Ruleset,
-  rng: () => number,
+  rng?: () => number,
 ): CombatState {
   const attacker = state.actors[state.turnIdx]
   const defender = state.actors[targetActorIdx]
   if (!attacker || !defender || !defender.alive || defender.kind !== 'enemy') return state
 
-  const result = calcHit(attacker, defender, rng)
+  const box = { s: state.rngState }
+  const rand = rng ?? (() => nextRand(box))
+  const result = calcHit(attacker, defender, rand)
   const newHp = Math.max(0, defender.hp - result.damage)
   const died = newHp === 0
 
@@ -355,7 +450,12 @@ export function resolvePlayerAttack(
   const newLog = [...state.log, entry]
   if (died) newLog.push({ text: `${defender.name} was defeated!`, kind: 'info' })
 
-  return advanceTurn({ ...state, actors: newActors, log: newLog }, ruleset, rng)
+  const events: CombatEvent[] = [
+    result.miss
+      ? { target: targetActorIdx, kind: 'miss' }
+      : { target: targetActorIdx, kind: result.crit ? 'crit' : 'damage', amount: result.damage },
+  ]
+  return finishAction(advanceTurn({ ...state, actors: newActors, log: newLog }, ruleset, rand), box, events, state)
 }
 
 // ── Player: cast spell ────────────────────────────────────────────────────────
@@ -365,7 +465,7 @@ export function resolvePlayerCast(
   spellId: string,
   targetActorIdxs: number[],
   ruleset: Ruleset,
-  rng: () => number,
+  rng?: () => number,
 ): CombatState {
   const caster = state.actors[state.turnIdx]
   if (!caster || !caster.alive) return state
@@ -373,25 +473,31 @@ export function resolvePlayerCast(
   const spell = ruleset.spells.find(s => s.id === spellId)
   if (!spell || caster.mp < spell.mpCost) return state
 
+  const box = { s: state.rngState }
+  const rand = rng ?? (() => nextRand(box))
+
   const actorsAfterMp = state.actors.map((a, i) =>
     i === state.turnIdx ? { ...a, mp: a.mp - spell.mpCost } : a,
   )
 
   const castEntry: CombatLogEntry = { text: `${caster.name} casts ${spell.name}!`, kind: 'spell' }
 
-  const { actors: newActors, log: effectLog } = resolveCombatEffects(
+  const { actors: newActors, log: effectLog, events } = resolveCombatEffects(
     spell.effects,
     state.turnIdx,
     targetActorIdxs,
     actorsAfterMp,
     ruleset,
-    rng,
+    rand,
   )
 
-  return advanceTurn(
-    { ...state, actors: newActors, log: [...state.log, castEntry, ...effectLog] },
-    ruleset,
-    rng,
+  return finishAction(
+    advanceTurn(
+      { ...state, actors: newActors, log: [...state.log, castEntry, ...effectLog] },
+      ruleset,
+      rand,
+    ),
+    box, events, state,
   )
 }
 
@@ -400,20 +506,33 @@ export function resolvePlayerCast(
 export function resolvePlayerFlee(
   state: CombatState,
   ruleset: Ruleset,
-  rng: () => number,
+  rng?: () => number,
 ): CombatState {
+  const box = { s: state.rngState }
+  const rand = rng ?? (() => nextRand(box))
   const attempts = state.fleeAttempts + 1
-  const success = attempts >= 2 || rng() < 0.5
-  if (success) {
-    return {
+
+  // Speed-based escape: party average vs the fastest living enemy, with a
+  // growing bonus per failed attempt. Clamped so escape is never certain.
+  const alive = state.actors.filter(a => a.alive)
+  const partySpd = alive.filter(a => a.kind === 'party').map(a => a.speed)
+  const avgParty = partySpd.reduce((t, v) => t + v, 0) / Math.max(1, partySpd.length)
+  const maxEnemy = alive.filter(a => a.kind === 'enemy').reduce((m, a) => Math.max(m, a.speed), 0)
+  const chance = Math.min(0.95, Math.max(0.15, 0.5 + (avgParty - maxEnemy) * 0.04 + (attempts - 1) * 0.2))
+
+  if (rand() < chance) {
+    return finishAction({
       ...state,
       fleeAttempts: attempts,
       phase: 'fled',
       log: [...state.log, { text: 'You fled from battle!', kind: 'flee' }],
-    }
+    }, box, [], state)
   }
   const failEntry: CombatLogEntry = { text: 'Failed to escape!', kind: 'flee_fail' }
-  return advanceTurn({ ...state, fleeAttempts: attempts, log: [...state.log, failEntry] }, ruleset, rng)
+  return finishAction(
+    advanceTurn({ ...state, fleeAttempts: attempts, log: [...state.log, failEntry] }, ruleset, rand),
+    box, [], state,
+  )
 }
 
 // ── Player: defend ────────────────────────────────────────────────────────────
@@ -421,15 +540,17 @@ export function resolvePlayerFlee(
 export function resolvePlayerDefend(
   state: CombatState,
   ruleset: Ruleset,
-  rng: () => number,
+  rng?: () => number,
 ): CombatState {
   const actor = state.actors[state.turnIdx]
   if (!actor || !actor.alive) return state
+  const box = { s: state.rngState }
+  const rand = rng ?? (() => nextRand(box))
   const actors = state.actors.map((a, i) =>
     i === state.turnIdx ? { ...a, defending: true } : a,
   )
   const entry: CombatLogEntry = { text: `${actor.name} defends.`, kind: 'info' }
-  return advanceTurn({ ...state, actors, log: [...state.log, entry] }, ruleset, rng)
+  return finishAction(advanceTurn({ ...state, actors, log: [...state.log, entry] }, ruleset, rand), box, [], state)
 }
 
 // ── Player: use item ──────────────────────────────────────────────────────────
@@ -439,22 +560,27 @@ export function resolvePlayerUseItem(
   itemId: string,
   targetActorIdxs: number[],
   ruleset: Ruleset,
-  rng: () => number,
+  rng?: () => number,
 ): CombatState {
   const user = state.actors[state.turnIdx]
   if (!user || !user.alive) return state
   const def = ruleset.items.find(i => i.id === itemId)
   if (!def || def.kind !== 'consumable' || !def.onUse?.length) return state
 
+  const box = { s: state.rngState }
+  const rand = rng ?? (() => nextRand(box))
   const useEntry: CombatLogEntry = { text: `${user.name} uses ${def.name}!`, kind: 'info' }
-  const { actors, log } = resolveCombatEffects(
-    def.onUse, state.turnIdx, targetActorIdxs, state.actors, ruleset, rng,
+  const { actors, log, events } = resolveCombatEffects(
+    def.onUse, state.turnIdx, targetActorIdxs, state.actors, ruleset, rand,
   )
   const itemsUsed = { ...state.itemsUsed, [itemId]: (state.itemsUsed[itemId] ?? 0) + 1 }
-  return advanceTurn(
-    { ...state, actors, itemsUsed, log: [...state.log, useEntry, ...log] },
-    ruleset,
-    rng,
+  return finishAction(
+    advanceTurn(
+      { ...state, actors, itemsUsed, log: [...state.log, useEntry, ...log] },
+      ruleset,
+      rand,
+    ),
+    box, events, state,
   )
 }
 
@@ -473,10 +599,14 @@ export function consumeCombatItems(inventory: ItemInstance[], state: CombatState
 export function resolveEnemyTurn(
   state: CombatState,
   ruleset: Ruleset,
-  rng: () => number,
+  rng?: () => number,
 ): CombatState {
+  const box = { s: state.rngState }
+  const rand = rng ?? (() => nextRand(box))
   const enemy = state.actors[state.turnIdx]
-  if (!enemy || enemy.kind !== 'enemy' || !enemy.alive) return advanceTurn(state, ruleset, rng)
+  if (!enemy || enemy.kind !== 'enemy' || !enemy.alive) {
+    return finishAction(advanceTurn(state, ruleset, rand), box, [], state)
+  }
 
   const partyTargets = state.actors.map((a, i) => ({ a, i })).filter(({ a }) => a.kind === 'party' && a.alive)
   if (partyTargets.length === 0) return { ...state, phase: 'defeat' }
@@ -487,7 +617,7 @@ export function resolveEnemyTurn(
 
   if (abilities?.length) {
     const totalWeight = abilities.reduce((s, a) => s + a.weight, 0)
-    let pick = rng() * totalWeight
+    let pick = rand() * totalWeight
     let chosen = abilities[abilities.length - 1]
     for (const ab of abilities) {
       pick -= ab.weight
@@ -506,22 +636,25 @@ export function resolveEnemyTurn(
         targetIdxs = partyTargets.map(t => t.i)
         break
       default: // 'enemy', 'ally', 'none'
-        targetIdxs = [partyTargets[Math.floor(rng() * partyTargets.length)].i]
+        targetIdxs = [partyTargets[Math.floor(rand() * partyTargets.length)].i]
     }
 
     const abilityEntry: CombatLogEntry = { text: `${enemy.name} uses an ability!`, kind: 'spell' }
-    const { actors: newActors, log: effectLog } = resolveCombatEffects(
-      chosen.effects, state.turnIdx, targetIdxs, state.actors, ruleset, rng,
+    const { actors: newActors, log: effectLog, events } = resolveCombatEffects(
+      chosen.effects, state.turnIdx, targetIdxs, state.actors, ruleset, rand,
     )
-    return advanceTurn(
-      { ...state, actors: newActors, log: [...state.log, abilityEntry, ...effectLog] },
-      ruleset, rng,
+    return finishAction(
+      advanceTurn(
+        { ...state, actors: newActors, log: [...state.log, abilityEntry, ...effectLog] },
+        ruleset, rand,
+      ),
+      box, events, state,
     )
   }
 
   // Default: physical attack
-  const { a: defender, i: targetIdx } = partyTargets[Math.floor(rng() * partyTargets.length)]
-  const result = calcHit(enemy, defender, rng)
+  const { a: defender, i: targetIdx } = partyTargets[Math.floor(rand() * partyTargets.length)]
+  const result = calcHit(enemy, defender, rand)
   const newHp = Math.max(0, defender.hp - result.damage)
   const died = newHp === 0
 
@@ -538,7 +671,28 @@ export function resolveEnemyTurn(
   const newLog = [...state.log, entry]
   if (died) newLog.push({ text: `${defender.name} has fallen!`, kind: 'info' })
 
-  return advanceTurn({ ...state, actors: newActors, log: newLog }, ruleset, rng)
+  const events: CombatEvent[] = [
+    result.miss
+      ? { target: targetIdx, kind: 'miss' }
+      : { target: targetIdx, kind: result.crit ? 'crit' : 'damage', amount: result.damage },
+  ]
+  return finishAction(advanceTurn({ ...state, actors: newActors, log: newLog }, ruleset, rand), box, events, state)
+}
+
+// ── Turn preview ──────────────────────────────────────────────────────────────
+
+/** The next `count` actor indices in turn order, starting with the current
+ *  actor — drives the HUD turn-order strip. */
+export function upcomingTurns(state: CombatState, count: number): number[] {
+  const out: number[] = []
+  let idx = state.turnIdx
+  if (state.actors[idx]?.alive) out.push(idx)
+  while (out.length < count) {
+    idx = nextAliveTurn(state.actors, idx)
+    if (!state.actors[idx]?.alive) break
+    out.push(idx)
+  }
+  return out
 }
 
 // ── Post-combat: apply outcome to party ───────────────────────────────────────

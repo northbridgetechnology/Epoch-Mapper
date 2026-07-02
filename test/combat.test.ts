@@ -6,10 +6,12 @@
 import assert from 'node:assert/strict'
 import {
   initCombat,
+  resolvePlayerAttack,
   resolvePlayerDefend,
   resolvePlayerUseItem,
   resolveEnemyTurn,
   consumeCombatItems,
+  upcomingTurns,
   type CombatState,
 } from '../src/lib/combat-engine'
 import type { Character, ItemInstance, ResolvedEncounter, Ruleset } from '../src/lib/engine-types'
@@ -117,6 +119,65 @@ test('consumeCombatItems decrements quantities and drops empty stacks', () => {
     { def: 'item.potion', qty: 1 },
     { def: 'item.sword', qty: 1 },
   ])
+})
+
+// ── Batch A: seeded RNG, ranks, events, turn preview ─────────────────────────
+
+test('same seed + same actions → identical battles', () => {
+  const run = () => {
+    let s = initCombat([hero], encounter, { seed: 1234 })
+    s = resolvePlayerAttack(s, 1, ruleset)     // no rng injected → seeded stream
+    if (s.phase === 'enemy_turn') s = resolveEnemyTurn(s, ruleset)
+    return s
+  }
+  const a = run(), b = run()
+  assert.deepEqual(a.actors.map(x => x.hp), b.actors.map(x => x.hp))
+  assert.equal(a.rngState, b.rngState)
+})
+
+test('back-rank melee is halved for attacker and defender', () => {
+  const s0 = freshState()
+  // Move the rat to the back rank: its melee on the front-row hero halves 5 → 2
+  const backRat = {
+    ...s0, turnIdx: 1, phase: 'enemy_turn' as const,
+    actors: s0.actors.map((a, i) => (i === 1 ? { ...a, rank: 1 as const } : a)),
+  }
+  assert.equal(resolveEnemyTurn(backRat, ruleset, rng).actors[0].hp, 20 - 2)
+  // Back-row hero takes half from a front-rank rat: 5 → 2
+  const backHero = initCombat([hero], encounter, { formation: { front: [], back: [0] } })
+  const s2 = resolveEnemyTurn({ ...backHero, turnIdx: 1, phase: 'enemy_turn' }, ruleset, rng)
+  assert.equal(s2.actors[0].hp, 20 - 2)
+})
+
+test('formation places back-row members at rank 1', () => {
+  const s = initCombat([hero], encounter, { formation: { front: [], back: [0] } })
+  assert.equal(s.actors[0].rank, 1)
+  assert.equal(freshState().actors[0].rank, 0)
+})
+
+test('enemies fill front-rank lanes centre-first', () => {
+  const three: ResolvedEncounter = {
+    ...encounter,
+    enemies: [1, 2, 3, 4].map(n => ({ ...encounter.enemies[0], name: `Rat ${n}` })),
+  }
+  const s = initCombat([hero], three, {})
+  const rats = s.actors.filter(a => a.kind === 'enemy')
+  assert.deepEqual(rats.map(r => [r.rank, r.lane]), [[0, 1], [0, 0], [0, 2], [1, 1]])
+})
+
+test('actions publish feedback events with bumped sequence', () => {
+  const s = resolvePlayerAttack(freshState(), 1, ruleset, rng)
+  assert.equal(s.eventSeq, 1)
+  assert.equal(s.events.length, 1)
+  assert.equal(s.events[0].target, 1)
+  assert.equal(s.events[0].kind, 'damage')
+})
+
+test('upcomingTurns previews turn order and skips the dead', () => {
+  const s = freshState()
+  assert.deepEqual(upcomingTurns(s, 4), [0, 1, 0, 1])
+  const oneDead = { ...s, actors: s.actors.map((a, i) => (i === 1 ? { ...a, alive: false } : a)) }
+  assert.deepEqual(upcomingTurns(oneDead, 3), [0, 0, 0])
 })
 
 console.log(`\n${passed} passed`)

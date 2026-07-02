@@ -1782,7 +1782,7 @@ export function DungeonMapper({
         <EncounterModal
           encounter={activeEncounter}
           onFight={() => {
-            setCombatState(initCombat(party, activeEncounter))
+            setCombatState(initCombat(party, activeEncounter, { formation, ruleset }))
             setActiveEncounter(null)
             setWorkspace('play')   // battles play out in the first-person view
           }}

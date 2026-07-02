@@ -1,30 +1,16 @@
 /**
- * Battle formation placement (pure, no React).
+ * Battle playfield view-state (pure, no React).
  *
- * Maps each enemy actor in a CombatState onto the first-person playfield in
- * front of the party, using the 3×3×3 sub-cube slots of the cells ahead:
+ * Formation is assigned by the combat engine at initCombat time (each enemy
+ * actor carries rank/lane/size — see CombatActor). This module projects that
+ * into the shape FirstPersonView renders:
  *   rank 0 = the cell directly ahead, rank 1 = the cell behind it
  *   lane   = sub-cube column within the cell (0=screen-left, 1=center, 2=right)
- * Enemies stand on the floor (sub-cube y=0) at the cell's center depth.
- * Large enemies (EnemyDef.size === 2) claim their lane in BOTH ranks and
- * render scaled up, straddling the rank boundary.
+ * Large enemies (size 2) claim their lane in both ranks and render scaled up,
+ * straddling the rank boundary.
  */
 
-import type { CombatState, CombatActor } from './combat-engine'
-import type { Ruleset } from './engine-types'
-
-/** Everything FirstPersonView needs to draw a battle over the playfield. */
-export interface BattleViewState {
-  placements: EnemyPlacement[]
-  actors: CombatActor[]
-  /** Actor whose turn it is (amber pulse when it's an enemy) */
-  activeIdx: number
-  /** Enemy actor idxs currently selectable as targets */
-  targetableIdxs: number[]
-  /** Current target cursor (red ring + arrow), or null */
-  selectedIdx: number | null
-  onSelectTarget?: (actorIdx: number) => void
-}
+import type { CombatState, CombatActor, CombatEvent } from './combat-engine'
 
 export interface EnemyPlacement {
   /** Index into CombatState.actors */
@@ -36,46 +22,31 @@ export interface EnemyPlacement {
   size: 1 | 2
 }
 
-/** Fill order: center first, then left, then right — classic formation look. */
-const LANE_ORDER: (0 | 1 | 2)[] = [1, 0, 2]
+/** Everything FirstPersonView needs to draw a battle over the playfield. */
+export interface BattleViewState {
+  placements: EnemyPlacement[]
+  actors: CombatActor[]
+  /** Actor whose turn it is (amber pulse when it's an enemy) */
+  activeIdx: number
+  /** Enemy actor idxs currently selectable as targets */
+  targetableIdxs: number[]
+  /** Current target cursor (red ring + arrow), or null */
+  selectedIdx: number | null
+  /** Feedback from the most recent action (popups / hit flashes) */
+  events: CombatEvent[]
+  /** Monotonic action counter — keys popup animations so they replay */
+  eventSeq: number
+  onSelectTarget?: (actorIdx: number) => void
+}
 
-export function buildBattlePlacements(state: CombatState, ruleset: Ruleset): EnemyPlacement[] {
-  const enemies = state.actors
+export function buildBattlePlacements(state: CombatState): EnemyPlacement[] {
+  return state.actors
     .map((a, i) => ({ a, i }))
     .filter(({ a }) => a.kind === 'enemy')
-
-  const front = [false, false, false]
-  const back = [false, false, false]
-  const out: EnemyPlacement[] = []
-
-  for (const { a, i } of enemies) {
-    const def = ruleset.enemies.find(e => e.id === a.defId)
-    const size: 1 | 2 = def?.size === 2 ? 2 : 1
-
-    if (size === 2) {
-      const lane = LANE_ORDER.find(l => !front[l] && !back[l])
-      if (lane !== undefined) {
-        front[lane] = back[lane] = true
-        out.push({ actorIdx: i, rank: 0, lane, size })
-        continue
-      }
-    }
-
-    let lane = LANE_ORDER.find(l => !front[l])
-    if (lane !== undefined) {
-      front[lane] = true
-      out.push({ actorIdx: i, rank: 0, lane, size })
-      continue
-    }
-    lane = LANE_ORDER.find(l => !back[l])
-    if (lane !== undefined) {
-      back[lane] = true
-      out.push({ actorIdx: i, rank: 1, lane, size })
-      continue
-    }
-    // Overflow beyond 6: double up in the back rank round-robin
-    out.push({ actorIdx: i, rank: 1, lane: LANE_ORDER[out.length % 3], size })
-  }
-
-  return out
+    .map(({ a, i }) => ({
+      actorIdx: i,
+      rank: a.rank,
+      lane: a.lane ?? 1,
+      size: a.size ?? 1,
+    }))
 }

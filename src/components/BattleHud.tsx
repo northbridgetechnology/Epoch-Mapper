@@ -23,6 +23,7 @@ import {
   resolvePlayerDefend,
   resolvePlayerUseItem,
   resolveEnemyTurn,
+  upcomingTurns,
 } from '@/lib/combat-engine'
 import { buildBattlePlacements, type BattleViewState } from '@/lib/battle-scene'
 import type { Character, ItemDef, ItemInstance, Ruleset, SpellDef } from '@/lib/engine-types'
@@ -74,8 +75,8 @@ export function useBattleController({ combat, ruleset, party, inventory, onActio
   combatRef.current = combat
 
   const placements = useMemo(
-    () => (combat ? buildBattlePlacements(combat, ruleset) : []),
-    [combat, ruleset],
+    () => (combat ? buildBattlePlacements(combat) : []),
+    [combat],
   )
 
   const aliveEnemyIdxs = useMemo(
@@ -95,7 +96,7 @@ export function useBattleController({ combat, ruleset, party, inventory, onActio
     if (!combat || combat.phase !== 'enemy_turn') return
     const timer = setTimeout(() => {
       const cur = combatRef.current
-      if (cur && cur.phase === 'enemy_turn') onAction(resolveEnemyTurn(cur, ruleset, Math.random))
+      if (cur && cur.phase === 'enemy_turn') onAction(resolveEnemyTurn(cur, ruleset))
     }, 750)
     return () => clearTimeout(timer)
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -127,19 +128,19 @@ export function useBattleController({ combat, ruleset, party, inventory, onActio
   function execAttack(targetIdx: number) {
     const cur = combatRef.current
     if (!cur) return
-    onAction(resolvePlayerAttack(cur, targetIdx, ruleset, Math.random))
+    onAction(resolvePlayerAttack(cur, targetIdx, ruleset))
     setMode({ k: 'menu' }); setSel(null)
   }
   function execCast(spell: SpellDef, targetIdxs: number[]) {
     const cur = combatRef.current
     if (!cur) return
-    onAction(resolvePlayerCast(cur, spell.id, targetIdxs, ruleset, Math.random))
+    onAction(resolvePlayerCast(cur, spell.id, targetIdxs, ruleset))
     setMode({ k: 'menu' }); setSel(null)
   }
   function execUseItem(item: ItemDef, targetIdxs: number[]) {
     const cur = combatRef.current
     if (!cur) return
-    onAction(resolvePlayerUseItem(cur, item.id, targetIdxs, ruleset, Math.random))
+    onAction(resolvePlayerUseItem(cur, item.id, targetIdxs, ruleset))
     setMode({ k: 'menu' }); setSel(null)
   }
 
@@ -227,6 +228,8 @@ export function useBattleController({ combat, ruleset, party, inventory, onActio
     activeIdx: combat.turnIdx,
     targetableIdxs: mode.k === 'targets' ? aliveEnemyIdxs : [],
     selectedIdx: mode.k === 'targets' ? sel : null,
+    events: combat.events,
+    eventSeq: combat.eventSeq,
     onSelectTarget: selectTarget,
   }
 
@@ -238,14 +241,14 @@ export function useBattleController({ combat, ruleset, party, inventory, onActio
     onChooseSpell: chooseSpell,
     onOpenItems: () => setMode({ k: 'items' }),
     onChooseItem: chooseItem,
-    onDefend: () => { const cur = combatRef.current; if (cur) onAction(resolvePlayerDefend(cur, ruleset, Math.random)) },
+    onDefend: () => { const cur = combatRef.current; if (cur) onAction(resolvePlayerDefend(cur, ruleset)) },
     onAllyTarget: (idx) => {
       if (mode.k !== 'allies') return
       if (mode.item) execUseItem(mode.item, [idx])
       else if (mode.spell) execCast(mode.spell, [idx])
     },
     onConfirmTarget: () => confirmTarget(),
-    onFlee: () => { const cur = combatRef.current; if (cur) onAction(resolvePlayerFlee(cur, ruleset, Math.random)) },
+    onFlee: () => { const cur = combatRef.current; if (cur) onAction(resolvePlayerFlee(cur, ruleset)) },
     onBack: () => { backOut(); setSel(null) },
   }
 
@@ -287,9 +290,28 @@ export function BattleHud({
 
   const isPlayerTurn = combat.phase === 'player_action' && currentActor?.kind === 'party'
   const selName = selectedIdx != null ? combat.actors[selectedIdx]?.name : null
+  const isTerminal = combat.phase === 'victory' || combat.phase === 'defeat' || combat.phase === 'fled'
+  const upcoming = isTerminal ? [] : upcomingTurns(combat, 6)
 
   return (
-    <div className="flex items-stretch gap-3 w-full min-h-[92px]">
+    <div className="w-full">
+      {upcoming.length > 0 && (
+        <div className="flex items-center gap-1 mb-1.5">
+          <span className="text-[9px] uppercase tracking-wide text-white/30 mr-1">Turn order</span>
+          {upcoming.map((idx, i) => {
+            const a = combat.actors[idx]
+            return (
+              <div key={i} title={a?.name}
+                className={cn(
+                  'w-6 h-6 grid place-items-center rounded border text-sm leading-none',
+                  i === 0 ? 'border-amber-400/80 bg-amber-950/40' : 'border-white/10 bg-zinc-900/70 opacity-70',
+                )}
+              >{a?.icon ?? (a?.kind === 'enemy' ? '👾' : '🧑')}</div>
+            )
+          })}
+        </div>
+      )}
+      <div className="flex items-stretch gap-3 w-full min-h-[92px]">
       {/* Command menu */}
       <div className="w-44 flex-shrink-0 rounded-lg border border-amber-500/25 bg-zinc-900/80 p-1.5">
         {!isPlayerTurn ? (
@@ -395,6 +417,7 @@ export function BattleHud({
             </div>
           )
         })}
+      </div>
       </div>
     </div>
   )

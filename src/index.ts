@@ -155,8 +155,9 @@ export {
   resolveEnemyTurn,
   applyCombatOutcome,
   consumeCombatItems,
+  upcomingTurns,
 } from './lib/combat-engine'
-export type { CombatActor, CombatLogEntry, CombatPhase, CombatState } from './lib/combat-engine'
+export type { CombatActor, CombatEvent, CombatLogEntry, CombatPhase, CombatState, InitCombatOpts } from './lib/combat-engine'
 
 // Battle UI: first-person battle HUD + playfield formation (Phase E4)
 export { BattleHud, BattleOutcomeOverlay, useBattleController } from './components/BattleHud'
