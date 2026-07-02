@@ -128,18 +128,21 @@ function PartyHud({ party, gold }: { party: Character[]; gold: number }) {
 const VW = 640
 const VH = 480
 const MAX_D = 5
-const DEPTH_F = 0.62   // per-depth perspective shrink factor
 const VP_X = VW / 2
 const VP_Y = VH / 2
 const MAX_S = 3   // ±3 cells lateral
 
-// Depth-scaled wall slice rect (wall face at depth d occupies this rect on screen)
+// True perspective: camera at the centre of the player's cell. The wall plane
+// between depth k and k+1 sits z = k + 0.5 cells from the camera.
+const PF_X = 320   // horizontal focal — screenX = VP_X + lateral(cells) * PF_X / z
+const PF_Y = 120   // vertical focal — wall half-height on screen = PF_Y / z
+
+// Wall-plane rect at depth-plane d (z = d + 0.5); d=0 → full screen
 function sliceRect(d: number) {
-  if (d === 0) return { x1: 0, y1: 0, x2: VW, y2: VH }
-  const f = Math.pow(DEPTH_F, d)
-  const mx = (VW * (1 - f)) / 2
-  const my = (VH * (1 - f)) / 2
-  return { x1: mx, y1: my, x2: VW - mx, y2: VH - my }
+  const z = Math.max(0.25, d + 0.5)
+  const hw = (0.5 * PF_X) / z
+  const hh = PF_Y / z
+  return { x1: VP_X - hw, y1: VP_Y - hh, x2: VP_X + hw, y2: VP_Y + hh }
 }
 
 // Screen rect for an off-axis cell at depth d, lateral offset s
@@ -314,31 +317,6 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
     return isWall(map, sx, sy) || !isCellRevealed(sx, sy)
   }
 
-  // canNav[d][s + MAX_S] = player can navigate to cell (d, s)
-  const canNav: boolean[][] = Array.from({ length: MAX_D + 1 }, () => Array(MAX_S * 2 + 1).fill(false))
-  canNav[0][MAX_S] = true
-  let _changed = true
-  while (_changed) {
-    _changed = false
-    for (let d = 0; d < MAX_D; d++) {
-      for (let s = -MAX_S; s <= MAX_S; s++) {
-        if (!canNav[d][s + MAX_S]) continue
-        const [cx, cy] = cellAt(d, s)
-        if ((d !== 0 || s !== 0) && (isWall(map, cx, cy) || !isCellRevealed(cx, cy))) continue
-        const tryMark = (nd: number, ns: number, blocked: boolean) => {
-          if (nd > MAX_D || ns < -MAX_S || ns > MAX_S) return
-          if (canNav[nd][ns + MAX_S] || blocked) return
-          const [tx, ty] = cellAt(nd, ns)
-          if (isWall(map, tx, ty) || !isCellRevealed(tx, ty)) return
-          canNav[nd][ns + MAX_S] = true; _changed = true
-        }
-        tryMark(d + 1, s,     hasBoundaryWall(map, cx, cy, frontOf(facing), revealedBoundaries))
-        tryMark(d,     s + 1, hasBoundaryWall(map, cx, cy, rightOf(facing), revealedBoundaries))
-        tryMark(d,     s - 1, hasBoundaryWall(map, cx, cy, leftOf(facing), revealedBoundaries))
-      }
-    }
-  }
-
   const nodes: React.ReactNode[] = []
 
   // ── 1. Ceiling base ──────────────────────────────────────────────────────────
@@ -422,21 +400,38 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
       fill={theme.floorGlowColor} />,
   )
 
-  // ── 3. Walls — grid-based painter's algorithm ─────────────────────────────────
-  for (let d = MAX_D; d >= 1; d--) {
-    for (let s = -MAX_S; s <= MAX_S; s++) {
-      if (!canNav[d - 1][s + MAX_S]) continue
+  // ── 3. Walls — grid painter: back-to-front, outside-in (EotB style) ──────────
+  const lateralOrder: number[] = []
+  for (let a = MAX_S; a >= 1; a--) lateralOrder.push(-a, a)
+  lateralOrder.push(0)
 
-      const far  = cellFaceRect(d,     s)
+  for (let d = MAX_D; d >= 1; d--) {
+    for (const s of lateralOrder) {
       const near = cellFaceRect(d - 1, s)
+      const far  = cellFaceRect(d,     s)
       const fog  = depthFog(d)
-      const fw = far.x2 - far.x1
-      const fh = far.y2 - far.y1
+      const fw = near.x2 - near.x1
+      const fh = near.y2 - near.y1
 
       const [cx,  cy]  = cellAt(d,     s)
       const [ncx, ncy] = cellAt(d - 1, s)
+      const solid    = isWall(map, cx, cy) || !isCellRevealed(cx, cy)
+      const nearOpen = (d === 1 && s === 0) || (!isWall(map, ncx, ncy) && isCellRevealed(ncx, ncy))
 
-      // Side walls
+      if (solid) {
+        // Solid cell: flat front face at its near plane, painted over farther cells
+        if (!nearOpen) continue
+        nodes.push(
+          <rect key={`fw_${d}_${s}`}  x={near.x1} y={near.y1} width={fw} height={fh} fill={pal.frontWall(d)} />,
+          <line key={`fwl_${d}_${s}`} x1={near.x1 + fw * 0.33} y1={near.y1} x2={near.x1 + fw * 0.33} y2={near.y2} stroke="rgba(0,0,0,0.18)" strokeWidth={0.6} />,
+          <line key={`fwr_${d}_${s}`} x1={near.x1 + fw * 0.67} y1={near.y1} x2={near.x1 + fw * 0.67} y2={near.y2} stroke="rgba(0,0,0,0.18)" strokeWidth={0.6} />,
+          <line key={`fwt_${d}_${s}`} x1={near.x1} y1={near.y1} x2={near.x2} y2={near.y1} stroke={pal.wallEdge(d)} strokeWidth={1} />,
+          fog > 0 && <rect key={`fwf_${d}_${s}`} x={near.x1} y={near.y1} width={fw} height={fh} fill={`rgba(0,0,0,${fog})`} />,
+        )
+        continue
+      }
+
+      // Side walls bounding this open cell
       if (hasSideWallAt(d, s, 'left')) {
         const pts = `${near.x1},${near.y1} ${far.x1},${far.y1} ${far.x1},${far.y2} ${near.x1},${near.y2}`
         nodes.push(
@@ -454,64 +449,13 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
         )
       }
 
-      // Front face
-      const frontBound = map.boundaries?.[boundaryKey(ncx, ncy, frontOf(facing))] ?? null
-      const hasFrontBound = hasBoundaryWall(map, ncx, ncy, frontOf(facing), revealedBoundaries)
-      const cellIsWall = isWall(map, cx, cy) || !isCellRevealed(cx, cy)
-      const isIllusory = frontBound?.wall === EDGE.ILLUSORY && (revealedBoundaries?.has(boundaryKey(ncx, ncy, frontOf(facing))) ?? false)
-      const isFrontDoor = frontBound?.wall === EDGE.DOOR
+      // Cell contents — entities first, then volume objects; the near boundary
+      // (door/wall) is painted after so closed doors hide the room behind them
+      const entGroup: React.ReactNode[] = []
+      drawCellEntities(d, s, entGroup)
+      if (entGroup.length > 0) nodes.push(<g key={`ce_${d}_${s}`}>{entGroup}</g>)
 
-      if (isIllusory) {
-        nodes.push(<rect key={`fwg_${d}_${s}`} x={far.x1} y={far.y1} width={fw} height={fh} fill="rgba(160,200,255,0.12)" />)
-      } else if (hasFrontBound || cellIsWall) {
-        if (isFrontDoor && s === 0) {
-          const doorState = frontBound?.door?.state ?? 'closed'
-          const locked = doorState === 'locked'
-          const jamb = fw * 0.10, lintel = fh * 0.08, thresh = fh * 0.04
-          const px = far.x1 + jamb, py = far.y1 + lintel
-          const pw = fw - jamb * 2, ph = fh - lintel - thresh
-          const woodL = Math.max(8, 28 - (d - 1) * 5)
-          nodes.push(
-            <rect key={`djl_${d}`} x={far.x1}        y={far.y1} width={jamb} height={fh}     fill={pal.frontWall(d)} />,
-            <rect key={`djr_${d}`} x={far.x2 - jamb} y={far.y1} width={jamb} height={fh}     fill={pal.frontWall(d)} />,
-            <rect key={`dlt_${d}`} x={far.x1}        y={far.y1} width={fw}   height={lintel}  fill={pal.frontWall(d)} />,
-            <rect key={`dth_${d}`} x={far.x1}        y={far.y2 - thresh} width={fw} height={thresh} fill={pal.frontWall(d)} />,
-            <rect key={`dp_${d}`}  x={px} y={py} width={pw} height={ph} fill={`hsl(28 45% ${woodL}%)`} />,
-            <line key={`dpl1_${d}`} x1={px + pw * 0.35} y1={py + ph * 0.04} x2={px + pw * 0.35} y2={py + ph * 0.96} stroke="rgba(0,0,0,0.28)" strokeWidth={0.7} />,
-            <line key={`dpl2_${d}`} x1={px + pw * 0.65} y1={py + ph * 0.04} x2={px + pw * 0.65} y2={py + ph * 0.96} stroke="rgba(0,0,0,0.28)" strokeWidth={0.7} />,
-            <line key={`dpr_${d}`}  x1={px + pw * 0.04} y1={py + ph * 0.50} x2={px + pw * 0.96} y2={py + ph * 0.50} stroke="rgba(0,0,0,0.22)" strokeWidth={0.6} />,
-            <circle key={`dph_${d}`} cx={px + pw * 0.74} cy={py + ph * 0.52} r={Math.max(1.5, fw * 0.028)} fill={locked ? '#b91c1c' : `hsl(44 80% ${Math.max(30, 50 - d * 4)}%)`} />,
-            fog > 0 && <rect key={`dff_${d}`} x={far.x1} y={far.y1} width={fw} height={fh} fill={`rgba(0,0,0,${fog})`} />,
-          )
-          if (locked) nodes.push(<text key={`dlck_${d}`} x={px + pw * 0.74} y={py + ph * 0.40} textAnchor="middle" dominantBaseline="middle" fontSize={Math.max(4, fw * 0.07)}>🔒</text>)
-        } else if (isFrontDoor && s !== 0) {
-          nodes.push(
-            <rect key={`fw_${d}_${s}`} x={far.x1} y={far.y1} width={fw} height={fh} fill={pal.frontWall(d)} />,
-            <rect key={`dp_${d}_${s}`} x={far.x1 + fw * 0.08} y={far.y1 + fh * 0.08} width={fw * 0.84} height={fh * 0.84} fill={`hsl(28 45% ${Math.max(8, 22 - d * 3)}%)`} />,
-            fog > 0 && <rect key={`fwf_${d}_${s}`} x={far.x1} y={far.y1} width={fw} height={fh} fill={`rgba(0,0,0,${fog})`} />,
-          )
-        } else {
-          nodes.push(
-            <rect key={`fw_${d}_${s}`}  x={far.x1} y={far.y1} width={fw} height={fh} fill={pal.frontWall(d)} />,
-            <line key={`fwl_${d}_${s}`} x1={far.x1 + fw * 0.33} y1={far.y1} x2={far.x1 + fw * 0.33} y2={far.y2} stroke="rgba(0,0,0,0.18)" strokeWidth={0.6} />,
-            <line key={`fwr_${d}_${s}`} x1={far.x1 + fw * 0.67} y1={far.y1} x2={far.x1 + fw * 0.67} y2={far.y2} stroke="rgba(0,0,0,0.18)" strokeWidth={0.6} />,
-            <line key={`fwt_${d}_${s}`} x1={far.x1} y1={far.y1} x2={far.x2} y2={far.y1} stroke={pal.wallEdge(d)} strokeWidth={1} />,
-            fog > 0 && <rect key={`fwf_${d}_${s}`} x={far.x1} y={far.y1} width={fw} height={fh} fill={`rgba(0,0,0,${fog})`} />,
-          )
-        }
-      } else if (isFrontDoor && frontBound?.door?.state === 'open' && s === 0) {
-        const jamb = fw * 0.10, lintel = fh * 0.08, thresh = fh * 0.04
-        nodes.push(
-          <rect key={`djlo_${d}`} x={far.x1}        y={far.y1} width={jamb} height={fh}     fill={pal.frontWall(d)} />,
-          <rect key={`djro_${d}`} x={far.x2 - jamb} y={far.y1} width={jamb} height={fh}     fill={pal.frontWall(d)} />,
-          <rect key={`dlto_${d}`} x={far.x1}        y={far.y1} width={fw}   height={lintel}  fill={pal.frontWall(d)} />,
-          <rect key={`dtho_${d}`} x={far.x1}        y={far.y2 - thresh} width={fw} height={thresh} fill={pal.frontWall(d)} />,
-          fog > 0 && <rect key={`dffo_${d}`} x={far.x1} y={far.y1} width={fw} height={fh} fill={`rgba(0,0,0,${fog * 0.6})`} />,
-        )
-      }
-
-      // Sub-cube objects in visible open cells
-      if (!cellIsWall && canNav[d][s + MAX_S]) {
+      {
         const scObjs = map.cells[`${cx},${cy}`]?.subcubeObjects
         if (scObjs && scObjs.length > 0) {
           const sorted = [...scObjs].sort((a, b) => {
@@ -520,7 +464,9 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
             return zb - za || b.pos.y - a.pos.y
           })
           const clipId = `sc_clip_${d}_${s}`
-          nodes.push(<defs key={`${clipId}_def`}><clipPath id={clipId}><rect x={near.x1} y={near.y1} width={near.x2 - near.x1} height={near.y2 - near.y1} /></clipPath></defs>)
+          const cbx1 = Math.min(near.x1, far.x1)
+          const cbx2 = Math.max(near.x2, far.x2)
+          nodes.push(<defs key={`${clipId}_def`}><clipPath id={clipId}><rect x={cbx1} y={near.y1} width={cbx2 - cbx1} height={near.y2 - near.y1} /></clipPath></defs>)
           const objNodes: React.ReactNode[] = []
           for (const obj of sorted) {
             const def = getSubcubeDef(obj.kind)
@@ -541,21 +487,63 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
             }
             objNodes.push(<text key={`sc_${d}_${s}_${obj.id}`} x={screenX} y={screenY} textAnchor="middle" dominantBaseline="middle" fontSize={emojiSize} opacity={opacity} style={{ userSelect: 'none' }}>{def.icon}</text>)
           }
-          nodes.push(<g key={`scg_${d}_${s}`} clipPath={`url(#${clipId})`}>{objNodes}</g>)
+          nodes.push(<g key={`scw_${d}_${s}`} clipPath={`url(#${clipId})`}>{objNodes}</g>)
         }
+      }
+
+      // Near boundary between (d-1,s) and (d,s): wall / door / revealed illusion
+      const bk = boundaryKey(ncx, ncy, frontOf(facing))
+      const fb = map.boundaries?.[bk] ?? null
+      const blocked = hasBoundaryWall(map, ncx, ncy, frontOf(facing), revealedBoundaries)
+      const ghost = fb?.wall === EDGE.ILLUSORY && (revealedBoundaries?.has(bk) ?? false)
+      const isDoor = fb?.wall === EDGE.DOOR
+
+      if (ghost) {
+        nodes.push(<rect key={`fwg_${d}_${s}`} x={near.x1} y={near.y1} width={fw} height={fh} fill="rgba(160,200,255,0.12)" />)
+      } else if (blocked && isDoor) {
+        const locked = (fb?.door?.state ?? 'closed') === 'locked'
+        const jamb = fw * 0.10, lintel = fh * 0.08, thresh = fh * 0.04
+        const dpx = near.x1 + jamb, dpy = near.y1 + lintel
+        const dpw = fw - jamb * 2,  dph = fh - lintel - thresh
+        const woodL = Math.max(8, 28 - (d - 1) * 5)
+        nodes.push(
+          <rect key={`djl_${d}_${s}`} x={near.x1}        y={near.y1} width={jamb} height={fh}     fill={pal.frontWall(d)} />,
+          <rect key={`djr_${d}_${s}`} x={near.x2 - jamb} y={near.y1} width={jamb} height={fh}     fill={pal.frontWall(d)} />,
+          <rect key={`dlt_${d}_${s}`} x={near.x1}        y={near.y1} width={fw}   height={lintel}  fill={pal.frontWall(d)} />,
+          <rect key={`dth_${d}_${s}`} x={near.x1}        y={near.y2 - thresh} width={fw} height={thresh} fill={pal.frontWall(d)} />,
+          <rect key={`dp_${d}_${s}`}  x={dpx} y={dpy} width={dpw} height={dph} fill={`hsl(28 45% ${woodL}%)`} />,
+          <line key={`dpl1_${d}_${s}`} x1={dpx + dpw * 0.35} y1={dpy + dph * 0.04} x2={dpx + dpw * 0.35} y2={dpy + dph * 0.96} stroke="rgba(0,0,0,0.28)" strokeWidth={0.7} />,
+          <line key={`dpl2_${d}_${s}`} x1={dpx + dpw * 0.65} y1={dpy + dph * 0.04} x2={dpx + dpw * 0.65} y2={dpy + dph * 0.96} stroke="rgba(0,0,0,0.28)" strokeWidth={0.7} />,
+          <circle key={`dph_${d}_${s}`} cx={dpx + dpw * 0.74} cy={dpy + dph * 0.52} r={Math.max(1.5, fw * 0.028)} fill={locked ? '#b91c1c' : `hsl(44 80% ${Math.max(30, 50 - d * 4)}%)`} />,
+          fog > 0 && <rect key={`dff_${d}_${s}`} x={near.x1} y={near.y1} width={fw} height={fh} fill={`rgba(0,0,0,${fog})`} />,
+        )
+        if (locked) nodes.push(<text key={`dlck_${d}_${s}`} x={dpx + dpw * 0.74} y={dpy + dph * 0.40} textAnchor="middle" dominantBaseline="middle" fontSize={Math.max(4, fw * 0.07)}>🔒</text>)
+      } else if (blocked) {
+        nodes.push(
+          <rect key={`bw_${d}_${s}`}  x={near.x1} y={near.y1} width={fw} height={fh} fill={pal.frontWall(d)} />,
+          <line key={`bwt_${d}_${s}`} x1={near.x1} y1={near.y1} x2={near.x2} y2={near.y1} stroke={pal.wallEdge(d)} strokeWidth={1} />,
+          fog > 0 && <rect key={`bwf_${d}_${s}`} x={near.x1} y={near.y1} width={fw} height={fh} fill={`rgba(0,0,0,${fog})`} />,
+        )
+      } else if (isDoor && fb?.door?.state === 'open') {
+        const jamb = fw * 0.10, lintel = fh * 0.08, thresh = fh * 0.04
+        nodes.push(
+          <rect key={`djlo_${d}_${s}`} x={near.x1}        y={near.y1} width={jamb} height={fh}     fill={pal.frontWall(d)} />,
+          <rect key={`djro_${d}_${s}`} x={near.x2 - jamb} y={near.y1} width={jamb} height={fh}     fill={pal.frontWall(d)} />,
+          <rect key={`dlto_${d}_${s}`} x={near.x1}        y={near.y1} width={fw}   height={lintel}  fill={pal.frontWall(d)} />,
+          <rect key={`dtho_${d}_${s}`} x={near.x1}        y={near.y2 - thresh} width={fw} height={thresh} fill={pal.frontWall(d)} />,
+          fog > 0 && <rect key={`dffo_${d}_${s}`} x={near.x1} y={near.y1} width={fw} height={fh} fill={`rgba(0,0,0,${fog * 0.6})`} />,
+        )
       }
     }
   }
 
-  // ── 4. Entities at visible depths ─────────────────────────────────────────────
-  // Chests take priority over overlay icons. Nearest entity per (d, s) column renders.
-  for (let d = 1; d <= MAX_D; d++) {
-    for (let s = -MAX_S; s <= MAX_S; s++) {
-    if (!canNav[d - 1][s + MAX_S]) continue
+  // ── 4. Entity drawing helper — invoked from the wall pass for each open cell ──
+  // Hoisted declaration; the `nodes` parameter shadows the outer array so all the
+  // pushes below land in the caller-provided per-cell group.
+  function drawCellEntities(d: number, s: number, nodes: React.ReactNode[]) {
     const [fx, fy] = cellAt(d, s)
-    if (isWall(map, fx, fy) || !isCellRevealed(fx, fy)) continue
     const frontCell = map.cells[`${fx},${fy}`]
-    if (!frontCell) continue
+    if (!frontCell) return
 
     // ── Chest object entity ──────────────────────────────────────────────────
     const chestEnt = (frontCell.entities ?? []).find(
@@ -669,14 +657,14 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
         )
       }
 
-      continue
+      return
     }
 
     // ── Overlay icon fallback ────────────────────────────────────────────────
     const icons = (frontCell.overlays ?? [])
       .map(o => overlayDef(o, customOverlay)?.icon)
       .filter((x): x is string => Boolean(x))
-    if (icons.length === 0) continue
+    if (icons.length === 0) return
 
     const face  = cellFaceRect(d, s)
     const faceW = face.x2 - face.x1
@@ -700,8 +688,7 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
         x={face.x1} y={face.y1} width={faceW} height={faceH}
         fill={`rgba(0,0,0,${entFog * 0.5})`} />,
     )
-    } // end s loop
-  } // end d loop
+  }
 
   // ── 5. HUD overlay ────────────────────────────────────────────────────────────
   const compassLabel: Record<Facing, string> = { N: '↑N', S: '↓S', E: '→E', W: '←W' }
