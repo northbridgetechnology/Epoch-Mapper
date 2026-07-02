@@ -7,8 +7,11 @@ import { baseDef, overlayDef, edgeDef, boundaryKey, DEFAULT_CELL, MIN_CELL, MAX_
 import type { CellData, MapData, MarkerDef, EdgeDir } from '@/lib/types'
 import { getTheme, type MapThemeDef } from '@/lib/themes'
 import { getSubcubeDef } from '@/lib/subcube-defs'
-import type { BoundaryData, CellEntity, Character, Facing } from '@/lib/engine-types'
+import type { BoundaryData, CellEntity, Character, Facing, Ruleset } from '@/lib/engine-types'
 import { objectUsedFlagKey } from '@/lib/event-engine'
+import type { BattleViewState } from '@/lib/battle-scene'
+import type { CombatState } from '@/lib/combat-engine'
+import { useBattleController, BattleHud, BattleOutcomeOverlay } from '@/components/BattleHud'
 
 // ── Props ─────────────────────────────────────────────────────────────────────
 
@@ -23,6 +26,10 @@ interface PlayWorkspaceProps {
   revealedBoundaries?: Set<string>
   bumpTrigger?: number
   flags: Record<string, boolean | number | string>
+  combat?: CombatState | null
+  ruleset: Ruleset
+  onCombatAction: (next: CombatState) => void
+  onCombatEnd: () => void
   onMoveForward: () => void
   onMoveBack: () => void
   onTurnLeft: () => void
@@ -176,20 +183,6 @@ function subcubeScreenFracs(
   }
 }
 
-// Depth-into-side-cell fraction for the side strip (0=near corridor edge, 1=far).
-// For each facing × side combination, a different sub-cube axis is the depth axis.
-function subcubeSideDepthFrac(
-  pos: { x: 0|1|2; y: 0|1|2; z: 0|1|2 },
-  f: Facing,
-  side: 1 | -1,
-): number {
-  const { x, z } = pos
-  if (f === 'N') return side > 0 ? x / 2 : (2 - x) / 2
-  if (f === 'S') return side > 0 ? (2 - x) / 2 : x / 2
-  if (f === 'E') return side > 0 ? (2 - z) / 2 : z / 2
-  /* W */        return side > 0 ? z / 2 : (2 - z) / 2
-}
-
 // ── Theme-driven colour palette ────────────────────────────────────────────────
 function makeFpPalette(t: MapThemeDef) {
   return {
@@ -266,9 +259,10 @@ interface FirstPersonViewProps {
   isCellRevealed: (x: number, y: number) => boolean
   revealedBoundaries?: Set<string>
   flags: Record<string, boolean | number | string>
+  battle?: BattleViewState | null
 }
 
-function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedBoundaries, flags }: FirstPersonViewProps) {
+function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedBoundaries, flags, battle }: FirstPersonViewProps) {
   const [fd0, fd1] = facingDelta(facing)
   const [rd0, rd1] = rightDelta(facing)
   const px = map.playerX
@@ -279,35 +273,6 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
   function cellAt(ahead: number, side: number): [number, number] {
     return [px + fd0 * ahead + rd0 * side, py + fd1 * ahead + rd1 * side]
   }
-  function hasFrontWall(ahead: number): boolean {
-    const [cx, cy] = cellAt(ahead, 0)
-    if (hasBoundaryWall(map, cx, cy, frontOf(facing), revealedBoundaries)) return true
-    // Option A: special terrain clips at fog boundary — no phantom stone wall behind it
-    const curKind = getCellKind(map, cx, cy)
-    if (curKind === 'water' || curKind === 'lava' || curKind === 'void') return false
-    const [nx, ny] = cellAt(ahead + 1, 0)
-    return isWall(map, nx, ny) || !isCellRevealed(nx, ny)
-  }
-  function hasSideWall(ahead: number, side: 'left' | 'right'): boolean {
-    const s = side === 'right' ? 1 : -1
-    const [cx, cy] = cellAt(ahead, 0)
-    const dir = side === 'right' ? rightOf(facing) : leftOf(facing)
-    if (hasBoundaryWall(map, cx, cy, dir, revealedBoundaries)) return true
-    const [sx, sy] = cellAt(ahead, s)
-    return isWall(map, sx, sy) || !isCellRevealed(sx, sy)
-  }
-  function isRevealedIllusoryFront(ahead: number): boolean {
-    const [cx, cy] = cellAt(ahead, 0)
-    const bk = boundaryKey(cx, cy, frontOf(facing))
-    const b = map.boundaries?.[bk]
-    return b?.wall === EDGE.ILLUSORY && (revealedBoundaries?.has(bk) ?? false)
-  }
-  function getFrontBoundary(ahead: number): BoundaryData | null {
-    const [cx, cy] = cellAt(ahead, 0)
-    const bk = boundaryKey(cx, cy, frontOf(facing))
-    return map.boundaries?.[bk] ?? null
-  }
-
   function hasSideWallAt(d: number, s: number, side: 'left' | 'right'): boolean {
     const [cx, cy] = cellAt(d, s)
     const dir = side === 'right' ? rightOf(facing) : leftOf(facing)
@@ -768,6 +733,87 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
     )
   }
 
+  // ── 4b. Battle: enemies at sub-cube slots of the cells ahead ─────────────────
+  // Rank 0 = cell directly ahead (z 1..2 from the camera), rank 1 = cell behind
+  // it. Enemies stand at mid-cell depth in their lane's sub-cube column.
+  if (battle) {
+    const sorted = [...battle.placements].sort((a, b) => b.rank - a.rank)
+    for (const pl of sorted) {
+      const actor = battle.actors[pl.actorIdx]
+      if (!actor || !actor.alive) continue
+      const ez = pl.size === 2 ? 2.0 : pl.rank + 1.5
+      const hw = (0.5 * PF_X) / ez
+      const hh = PF_Y / ez
+      const floorY = VP_Y + hh
+      const exX = (VP_X - hw) + hw * 2 * ((pl.lane + 0.5) / 3)
+      const size = hh * 2 * (pl.size === 2 ? 0.9 : 0.55)
+      const emY = floorY - size * 0.52
+      const isActive = battle.activeIdx === pl.actorIdx
+      const isSelected = battle.selectedIdx === pl.actorIdx
+      const isTargetable = battle.targetableIdxs.includes(pl.actorIdx)
+
+      // Ground shadow + state rings
+      nodes.push(
+        <ellipse key={`ben_sh_${pl.actorIdx}`} cx={exX} cy={floorY}
+          rx={size * 0.42} ry={size * 0.10} fill="rgba(0,0,0,0.5)" />,
+      )
+      if (isActive) {
+        nodes.push(
+          <ellipse key={`ben_act_${pl.actorIdx}`} cx={exX} cy={floorY}
+            rx={size * 0.50} ry={size * 0.12} fill="none"
+            stroke="hsl(44 95% 60%)" strokeWidth={2}>
+            <animate attributeName="opacity" values="1;0.35;1" dur="1.1s" repeatCount="indefinite" />
+          </ellipse>,
+        )
+      }
+      if (isSelected) {
+        nodes.push(
+          <ellipse key={`ben_selr_${pl.actorIdx}`} cx={exX} cy={floorY}
+            rx={size * 0.50} ry={size * 0.12} fill="none"
+            stroke="hsl(0 85% 58%)" strokeWidth={2} />,
+          <text key={`ben_cur_${pl.actorIdx}`} x={exX} y={floorY - size * 1.16}
+            textAnchor="middle" fontSize={size * 0.26} fill="hsl(0 85% 58%)"
+            style={{ userSelect: 'none' }}>
+            ▼
+            <animate attributeName="y"
+              values={`${floorY - size * 1.22};${floorY - size * 1.10};${floorY - size * 1.22}`}
+              dur="0.8s" repeatCount="indefinite" />
+          </text>,
+        )
+      }
+
+      // Enemy sprite (emoji v1) with a click-to-target hit area
+      nodes.push(
+        <g key={`ben_${pl.actorIdx}`}
+          style={isTargetable ? { cursor: 'pointer' } : undefined}
+          onClick={isTargetable && battle.onSelectTarget
+            ? () => battle.onSelectTarget!(pl.actorIdx)
+            : undefined}
+        >
+          <text x={exX} y={emY} textAnchor="middle" dominantBaseline="middle"
+            fontSize={size} style={{ userSelect: 'none' }}
+            opacity={battle.targetableIdxs.length === 0 || isTargetable || isActive ? 1 : 0.8}
+          >{actor.icon ?? '👾'}</text>
+          <circle cx={exX} cy={emY} r={size * 0.55} fill="transparent" />
+        </g>,
+      )
+
+      // Name tag + HP sliver
+      const barW = size * 0.8
+      const hpPct = actor.maxHp > 0 ? Math.max(0, actor.hp / actor.maxHp) : 0
+      nodes.push(
+        <text key={`ben_nm_${pl.actorIdx}`} x={exX} y={emY - size * 0.66}
+          textAnchor="middle" fontSize={Math.max(7, size * 0.13)}
+          fill="rgba(255,255,255,0.85)" style={{ userSelect: 'none' }}>{actor.name}</text>,
+        <rect key={`ben_hbg_${pl.actorIdx}`} x={exX - barW / 2} y={emY - size * 0.60}
+          width={barW} height={3} rx={1.5} fill="rgba(0,0,0,0.55)" />,
+        <rect key={`ben_hp_${pl.actorIdx}`} x={exX - barW / 2} y={emY - size * 0.60}
+          width={barW * hpPct} height={3} rx={1.5}
+          fill={hpPct > 0.5 ? 'hsl(150 60% 45%)' : hpPct > 0.25 ? 'hsl(40 90% 55%)' : 'hsl(0 80% 55%)'} />,
+      )
+    }
+  }
+
   // ── 5. HUD overlay ────────────────────────────────────────────────────────────
   const compassLabel: Record<Facing, string> = { N: '↑N', S: '↓S', E: '→E', W: '←W' }
   nodes.push(
@@ -964,6 +1010,7 @@ export function PlayWorkspace({
   activeMap, party, gold, facing,
   customBase, customOverlay, isCellRevealed, revealedBoundaries, bumpTrigger,
   flags,
+  combat, ruleset, onCombatAction, onCombatEnd,
   onMoveForward, onMoveBack, onTurnLeft, onTurnRight, onInteract,
 }: PlayWorkspaceProps) {
   const [cellSize, setCellSize] = useState(DEFAULT_CELL + 6)
@@ -971,6 +1018,16 @@ export function PlayWorkspace({
   const zoom = useCallback((delta: number) => {
     setCellSize(s => Math.max(MIN_CELL, Math.min(MAX_CELL, s + delta)))
   }, [])
+
+  const { view: battleView, hud: battleHud } = useBattleController({
+    combat: combat ?? null,
+    ruleset,
+    party,
+    onAction: onCombatAction,
+  })
+
+  // Battles play out in first person — snap to the 3D view when one starts
+  useEffect(() => { if (combat) setView('3d') }, [combat])
 
   const viewRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
@@ -1028,7 +1085,7 @@ export function PlayWorkspace({
 
       {/* Main viewport — 3D fills all available space; map view keeps existing scroll grid */}
       {view === '3d' ? (
-        <div ref={viewRef} className="flex-1 min-h-0 bg-zinc-950 overflow-hidden">
+        <div ref={viewRef} className="relative flex-1 min-h-0 bg-zinc-950 overflow-hidden">
           <FirstPersonView
             map={activeMap}
             facing={facing}
@@ -1036,7 +1093,9 @@ export function PlayWorkspace({
             isCellRevealed={isCellRevealed}
             revealedBoundaries={revealedBoundaries}
             flags={flags}
+            battle={battleView}
           />
+          {combat && <BattleOutcomeOverlay state={combat} onContinue={onCombatEnd} />}
         </div>
       ) : (
         <DungeonViewport
@@ -1049,18 +1108,24 @@ export function PlayWorkspace({
         />
       )}
 
-      {/* Bottom bar: party HUD + blobber controls */}
+      {/* Bottom bar: battle command bar during combat, else party HUD + D-pad */}
       <div className="flex items-end gap-3 px-3 py-2 border-t border-white/10 bg-zinc-950/60 flex-shrink-0">
-        <div className="flex-1 min-w-0">
-          <PartyHud party={party} gold={gold} />
-        </div>
-        <BlobberDPad
-          onForward={onMoveForward}
-          onBack={onMoveBack}
-          onLeft={onTurnLeft}
-          onRight={onTurnRight}
-          onInteract={onInteract}
-        />
+        {combat && battleHud ? (
+          <BattleHud {...battleHud} />
+        ) : (
+          <>
+            <div className="flex-1 min-w-0">
+              <PartyHud party={party} gold={gold} />
+            </div>
+            <BlobberDPad
+              onForward={onMoveForward}
+              onBack={onMoveBack}
+              onLeft={onTurnLeft}
+              onRight={onTurnRight}
+              onInteract={onInteract}
+            />
+          </>
+        )}
       </div>
 
     </div>

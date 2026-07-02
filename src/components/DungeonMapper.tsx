@@ -30,7 +30,6 @@ import { makeDefaultRuleset } from '@/lib/default-ruleset'
 import { savePartyTemplate, loadPartyTemplate } from '@/lib/save-state'
 import { checkCellForEncounter, resolveEncounterTable, visitedFlagKey } from '@/lib/encounter-engine'
 import { EncounterModal } from './EncounterModal'
-import { CombatScreen } from './CombatScreen'
 import { initCombat, applyCombatOutcome, type CombatState } from '@/lib/combat-engine'
 import { CellInspector } from './CellInspector'
 import { ShopModal } from './ShopModal'
@@ -1385,6 +1384,20 @@ export function DungeonMapper({
             revealedBoundaries={revealedBoundaries}
             bumpTrigger={bumpTrigger}
             flags={flags}
+            combat={combatState}
+            ruleset={ruleset}
+            onCombatAction={handleCombatAction}
+            onCombatEnd={() => {
+              if (!combatState) return
+              const { party: updatedParty, levelUps } = applyCombatOutcome(party, combatState, ruleset)
+              setParty(updatedParty)
+              if (combatState.phase === 'victory') {
+                setGold(g => g + combatState.goldReward)
+              }
+              savePartyTemplate(updatedParty, formation)
+              levelUps.forEach(name => toast.success(`${name} leveled up!`))
+              setCombatState(null)
+            }}
             onMoveForward={stepForward}
             onMoveBack={stepBack}
             onTurnLeft={turnLeft}
@@ -1769,28 +1782,9 @@ export function DungeonMapper({
           onFight={() => {
             setCombatState(initCombat(party, activeEncounter))
             setActiveEncounter(null)
+            setWorkspace('play')   // battles play out in the first-person view
           }}
           onFlee={() => setActiveEncounter(null)}
-        />
-      )}
-
-      {/* Combat screen */}
-      {combatState && (
-        <CombatScreen
-          state={combatState}
-          ruleset={ruleset}
-          party={party}
-          onAction={handleCombatAction}
-          onClose={() => {
-            const { party: updatedParty, levelUps } = applyCombatOutcome(party, combatState, ruleset)
-            setParty(updatedParty)
-            if (combatState.phase === 'victory') {
-              setGold(g => g + combatState.goldReward)
-            }
-            savePartyTemplate(updatedParty, formation)
-            levelUps.forEach(name => toast.success(`${name} leveled up!`))
-            setCombatState(null)
-          }}
         />
       )}
 

@@ -155,8 +155,10 @@ export {
 } from './lib/combat-engine'
 export type { CombatActor, CombatLogEntry, CombatPhase, CombatState } from './lib/combat-engine'
 
-// Combat screen (Phase E4)
-export { CombatScreen } from './components/CombatScreen'
+// Battle UI: first-person battle HUD + playfield formation (Phase E4)
+export { BattleHud, BattleOutcomeOverlay, useBattleController } from './components/BattleHud'
+export { buildBattlePlacements } from './lib/battle-scene'
+export type { EnemyPlacement, BattleViewState } from './lib/battle-scene'
 
 // Event engine (Phase E6)
 export {
