@@ -581,83 +581,122 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
       const cx = (face.x1 + face.x2) / 2
       const entFog = depthFog(d)
 
-      // Chest geometry — flat-bottomed body with a domed lid
+      // Chest geometry — flat-bottomed body with a low domed lid
       const cW  = faceW * 0.46
       const cH  = faceH * 0.30
       const fb  = face.y2                  // floor line
       const fl  = cx - cW / 2
       const fr  = cx + cW / 2
-      const bodyH  = cH * 0.58
+      const bodyH  = cH * 0.62
       const bodyT  = fb - bodyH            // lid seam / top of body
-      const lidTop = bodyT - cH * 0.42     // apex of the closed dome
-      const bandW  = cW * 0.10
-      const bandXs = [fl + cW * 0.18 - bandW / 2, fr - cW * 0.18 - bandW / 2]
-      // Closed silhouette: straight sides, domed top
+      const domeH  = cH * 0.38
+      const lidTop = bodyT - domeH         // apex of the closed dome
+      const bandW  = cW * 0.09
+      const bandXs = [fl + cW * 0.16 - bandW / 2, fr - cW * 0.16 - bandW / 2]
+      const rivR   = Math.max(0.8, cW * 0.013)
       const domePath = `M ${fl},${fb} L ${fl},${bodyT} C ${fl},${lidTop} ${fr},${lidTop} ${fr},${bodyT} L ${fr},${fb} Z`
-      const clipKey = `chshape_${d}_${s}`
+      const uid = `${d}_${s}`
+      const clipKey = `chshape_${uid}`
 
-      // Depth-scaled colours (wood + iron)
-      const lBase   = Math.max(12, 28 - d * 3)
-      const woodDk  = `hsl(28 42% ${lBase}%)`
-      const woodMd  = `hsl(32 46% ${lBase + 9}%)`
-      const woodLt  = `hsl(36 50% ${lBase + 18}%)`
-      const iron    = `hsl(215 14% ${Math.max(22, 40 - d * 4)}%)`
-      const goldCol = `hsl(44 75% ${Math.max(38, 55 - d * 3)}%)`
+      // Depth-scaled palette + shared gradients (wood grain, metal sheen, gold)
+      const wL = Math.max(10, 30 - d * 3)
+      const mL = Math.max(18, 36 - d * 4)
+      const woodDk  = `hsl(26 40% ${Math.max(4, wL - 7)}%)`
+      const woodMd  = `hsl(30 46% ${wL + 5}%)`
+      const woodLt  = `hsl(34 52% ${wL + 15}%)`
+      const metalDk = `hsl(215 18% ${Math.max(8, mL - 8)}%)`
+      const metalLt = `hsl(210 16% ${mL + 16}%)`
+      const goldCol = `hsl(45 82% ${Math.max(40, 58 - d * 3)}%)`
+      const goldDk  = `hsl(38 72% ${Math.max(28, 42 - d * 3)}%)`
+      nodes.push(
+        <defs key={`chgrad${uid}`}>
+          <linearGradient id={`chw_${uid}`} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={woodLt} />
+            <stop offset="55%" stopColor={woodMd} />
+            <stop offset="100%" stopColor={woodDk} />
+          </linearGradient>
+          <linearGradient id={`chm_${uid}`} x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0%" stopColor={metalDk} />
+            <stop offset="50%" stopColor={metalLt} />
+            <stop offset="100%" stopColor={metalDk} />
+          </linearGradient>
+          <radialGradient id={`chg_${uid}`} cx="50%" cy="35%" r="70%">
+            <stop offset="0%" stopColor={goldCol} />
+            <stop offset="100%" stopColor={goldDk} />
+          </radialGradient>
+        </defs>,
+        // Ground-contact shadow
+        <ellipse key={`chsh${uid}`} cx={cx} cy={fb} rx={cW * 0.56} ry={cH * 0.07} fill="rgba(0,0,0,0.45)" />,
+      )
 
       if (!isOpen) {
-        // Closed chest — domed lid, vertical iron bands, front hasp ─────────
+        // Closed chest — low dome, riveted iron bands, hasp with lock ───────
         nodes.push(
-          <defs key={`chdef${d}`}>
+          <defs key={`chdef${uid}`}>
             <clipPath id={clipKey}><path d={domePath} /></clipPath>
           </defs>,
-          <path key={`chbody${d}`} d={domePath} fill={woodMd} />,
-          // Domed lid catches more light
-          <path key={`chlid${d}`}
-            d={`M ${fl},${bodyT} C ${fl},${lidTop} ${fr},${lidTop} ${fr},${bodyT} Z`}
-            fill={woodLt} />,
-          // Iron bands + body plank lines, clipped to the silhouette
-          <g key={`chbands${d}`} clipPath={`url(#${clipKey})`}>
-            <rect x={bandXs[0]} y={lidTop} width={bandW} height={fb - lidTop} fill={iron} opacity={0.9} />
-            <rect x={bandXs[1]} y={lidTop} width={bandW} height={fb - lidTop} fill={iron} opacity={0.9} />
-            <line x1={fl} y1={bodyT + bodyH * 0.35} x2={fr} y2={bodyT + bodyH * 0.35} stroke={woodDk} strokeWidth={0.7} />
-            <line x1={fl} y1={bodyT + bodyH * 0.70} x2={fr} y2={bodyT + bodyH * 0.70} stroke={woodDk} strokeWidth={0.7} />
+          <path key={`chbody${uid}`} d={domePath} fill={`url(#chw_${uid})`} />,
+          <g key={`chdetail${uid}`} clipPath={`url(#${clipKey})`}>
+            {/* vertical plank joints */}
+            <line x1={fl + cW * 0.33} y1={lidTop} x2={fl + cW * 0.33} y2={fb} stroke="rgba(0,0,0,0.30)" strokeWidth={0.8} />
+            <line x1={fl + cW * 0.66} y1={lidTop} x2={fl + cW * 0.66} y2={fb} stroke="rgba(0,0,0,0.30)" strokeWidth={0.8} />
+            {/* sheen across the dome */}
+            <path d={`M ${fl + cW * 0.08},${bodyT} C ${fl + cW * 0.08},${lidTop + domeH * 0.16} ${fr - cW * 0.08},${lidTop + domeH * 0.16} ${fr - cW * 0.08},${bodyT}`}
+              fill="none" stroke="rgba(255,235,180,0.13)" strokeWidth={domeH * 0.30} />
+            {/* seam shadow under the lid */}
+            <rect x={fl} y={bodyT} width={cW} height={cH * 0.05} fill="rgba(0,0,0,0.35)" />
+            {/* iron bands + base plate */}
+            <rect x={bandXs[0]} y={lidTop} width={bandW} height={fb - lidTop} fill={`url(#chm_${uid})`} />
+            <rect x={bandXs[1]} y={lidTop} width={bandW} height={fb - lidTop} fill={`url(#chm_${uid})`} />
+            <rect x={fl} y={fb - cH * 0.09} width={cW} height={cH * 0.09} fill={metalDk} opacity={0.85} />
           </g>,
-          // Lid seam + silhouette outline
-          <line key={`chseam${d}`} x1={fl} y1={bodyT} x2={fr} y2={bodyT} stroke={woodDk} strokeWidth={1.1} />,
-          <path key={`chout${d}`} d={domePath} fill="none" stroke={woodDk} strokeWidth={1.2} />,
-          // Hasp plate straddling the seam + gold clasp
-          <rect key={`chhasp${d}`} x={cx - cW * 0.07} y={bodyT - cH * 0.10} width={cW * 0.14} height={cH * 0.26} fill={iron} rx={1} />,
-          <rect key={`chclasp${d}`} x={cx - cW * 0.045} y={bodyT - cH * 0.02} width={cW * 0.09} height={cH * 0.14} fill={goldCol} rx={1} />,
-          isLocked && <path key={`chls${d}`}
-            d={`M${cx - cW * 0.035},${bodyT - cH * 0.02} a${cW * 0.035},${cH * 0.10} 0 0,1 ${cW * 0.07},0`}
-            fill="none" stroke={goldCol} strokeWidth={Math.max(1, cW * 0.02)} />,
+          // Rivets on the bands
+          <circle key={`chr1${uid}`} cx={bandXs[0] + bandW / 2} cy={bodyT + bodyH * 0.28} r={rivR} fill={metalLt} />,
+          <circle key={`chr2${uid}`} cx={bandXs[1] + bandW / 2} cy={bodyT + bodyH * 0.28} r={rivR} fill={metalLt} />,
+          <circle key={`chr3${uid}`} cx={bandXs[0] + bandW / 2} cy={fb - bodyH * 0.24} r={rivR} fill={metalLt} />,
+          <circle key={`chr4${uid}`} cx={bandXs[1] + bandW / 2} cy={fb - bodyH * 0.24} r={rivR} fill={metalLt} />,
+          <path key={`chout${uid}`} d={domePath} fill="none" stroke={woodDk} strokeWidth={1.2} />,
+          // Hasp plate over the seam + gold catch
+          <rect key={`chhasp${uid}`} x={cx - cW * 0.055} y={bodyT - cH * 0.09} width={cW * 0.11} height={cH * 0.22} fill={`url(#chm_${uid})`} rx={1.5} />,
+          <rect key={`chcatch${uid}`} x={cx - cW * 0.035} y={bodyT + cH * 0.02} width={cW * 0.07} height={cH * 0.10} fill={goldCol} rx={1} />,
+          isLocked && <path key={`chls${uid}`}
+            d={`M${cx - cW * 0.030},${bodyT - cH * 0.09} a${cW * 0.030},${cH * 0.09} 0 0,1 ${cW * 0.06},0`}
+            fill="none" stroke={goldCol} strokeWidth={Math.max(1, cW * 0.018)} />,
         )
       } else {
-        // Open chest — lid swung up behind the body, showing its underside ──
-        const lidBase = bodyT - cH * 0.04
-        const lfl = fl + cW * 0.05
-        const lfr = fr - cW * 0.05
-        const lidUp = `M ${lfl},${lidBase} C ${lfl},${lidBase - cH * 0.95} ${lfr},${lidBase - cH * 0.95} ${lfr},${lidBase} Z`
+        // Open chest — lid tipped back (foreshortened arc), treasure over rim ─
+        const lidH = cH * 0.46
+        const lfl = fl + cW * 0.04
+        const lfr = fr - cW * 0.04
+        const inset = cW * 0.06
+        const lidOuter = `M ${lfl},${bodyT} C ${lfl},${bodyT - lidH} ${lfr},${bodyT - lidH} ${lfr},${bodyT} Z`
+        const lidInner = `M ${lfl + inset},${bodyT} C ${lfl + inset},${bodyT - lidH * 0.78} ${lfr - inset},${bodyT - lidH * 0.78} ${lfr - inset},${bodyT} Z`
         nodes.push(
-          // Raised lid (dark underside) with light rim
-          <path key={`chlid${d}`} d={lidUp} fill={woodDk} />,
-          <path key={`chlidrim${d}`} d={lidUp} fill="none" stroke={woodLt} strokeWidth={1} />,
-          // Body with bands and plank line
-          <rect key={`chbody${d}`} x={fl} y={bodyT} width={cW} height={bodyH} fill={woodMd} />,
-          <rect key={`chb1${d}`} x={bandXs[0]} y={bodyT} width={bandW} height={bodyH} fill={iron} opacity={0.9} />,
-          <rect key={`chb2${d}`} x={bandXs[1]} y={bodyT} width={bandW} height={bodyH} fill={iron} opacity={0.9} />,
-          <line key={`chp1${d}`} x1={fl} y1={bodyT + bodyH * 0.5} x2={fr} y2={bodyT + bodyH * 0.5} stroke={woodDk} strokeWidth={0.7} />,
-          <rect key={`chout${d}`} x={fl} y={bodyT} width={cW} height={bodyH} fill="none" stroke={woodDk} strokeWidth={1.2} />,
-          // Dark opening across the rim, with a glint of gold inside
-          <rect key={`chint${d}`} x={fl + cW * 0.04} y={lidBase} width={cW * 0.92} height={cH * 0.16} fill="hsl(20 18% 5%)" />,
-          <circle key={`chg1${d}`} cx={cx - cW * 0.12} cy={lidBase + cH * 0.10} r={Math.max(1, cW * 0.035)} fill={goldCol} />,
-          <circle key={`chg2${d}`} cx={cx + cW * 0.07} cy={lidBase + cH * 0.09} r={Math.max(1, cW * 0.028)} fill={goldCol} />,
+          // Lid underside: wooden rim around a darker interior panel
+          <path key={`chlidr${uid}`} d={lidOuter} fill={woodMd} />,
+          <path key={`chlidi${uid}`} d={lidInner} fill={woodDk} />,
+          <path key={`chlido${uid}`} d={lidOuter} fill="none" stroke={woodDk} strokeWidth={1} />,
+          // Treasure mound rising above the rim, with a couple of coins
+          <path key={`chtre${uid}`}
+            d={`M ${fl + cW * 0.07},${bodyT} Q ${cx - cW * 0.18},${bodyT - cH * 0.14} ${cx},${bodyT - cH * 0.10} Q ${cx + cW * 0.22},${bodyT - cH * 0.15} ${fr - cW * 0.07},${bodyT} Z`}
+            fill={`url(#chg_${uid})`} />,
+          <circle key={`chc1${uid}`} cx={cx - cW * 0.16} cy={bodyT - cH * 0.055} r={Math.max(1, cW * 0.022)} fill={goldCol} stroke={goldDk} strokeWidth={0.5} />,
+          <circle key={`chc2${uid}`} cx={cx + cW * 0.10} cy={bodyT - cH * 0.075} r={Math.max(1, cW * 0.022)} fill={goldCol} stroke={goldDk} strokeWidth={0.5} />,
+          // Body front: planks, bands, base plate, rim shadow
+          <rect key={`chbody${uid}`} x={fl} y={bodyT} width={cW} height={bodyH} fill={`url(#chw_${uid})`} />,
+          <line key={`chpl1${uid}`} x1={fl + cW * 0.33} y1={bodyT} x2={fl + cW * 0.33} y2={fb} stroke="rgba(0,0,0,0.30)" strokeWidth={0.8} />,
+          <line key={`chpl2${uid}`} x1={fl + cW * 0.66} y1={bodyT} x2={fl + cW * 0.66} y2={fb} stroke="rgba(0,0,0,0.30)" strokeWidth={0.8} />,
+          <rect key={`chb1${uid}`} x={bandXs[0]} y={bodyT} width={bandW} height={bodyH} fill={`url(#chm_${uid})`} />,
+          <rect key={`chb2${uid}`} x={bandXs[1]} y={bodyT} width={bandW} height={bodyH} fill={`url(#chm_${uid})`} />,
+          <rect key={`chbase${uid}`} x={fl} y={fb - cH * 0.09} width={cW} height={cH * 0.09} fill={metalDk} opacity={0.85} />,
+          <rect key={`chrim${uid}`} x={fl + cW * 0.02} y={bodyT} width={cW * 0.96} height={cH * 0.045} fill="rgba(0,0,0,0.55)" />,
+          <rect key={`chout${uid}`} x={fl} y={bodyT} width={cW} height={bodyH} fill="none" stroke={woodDk} strokeWidth={1.2} />,
         )
       }
 
       // Depth fog over chest area
       if (entFog > 0) {
-        const fogTop = isOpen ? bodyT - cH * 0.99 : lidTop
+        const fogTop = isOpen ? bodyT - cH * 0.50 : lidTop
         nodes.push(
           <polygon key={`chfog${d}`}
             points={`${fl},${fogTop} ${fr},${fogTop} ${fr},${fb} ${fl},${fb}`}
