@@ -334,30 +334,38 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
     )
   }
 
-  // Ceiling: stone-block mortar grid (static, not perspective-corrected — EotB vibe)
+  // Ceiling: perspective-correct mortar grid — transverse lines at each depth
+  // plane, longitudinal seams at cell boundaries converging on the VP
   nodes.push(
-    <defs key="stone-defs">
-      <pattern id="stone-grid" x={0} y={0} width={48} height={24} patternUnits="userSpaceOnUse">
-        <rect width={48} height={24} fill="none" />
-        <rect width={47} height={23} fill="none" stroke={theme.ceilPatternColor} strokeWidth={1} />
-      </pattern>
+    <defs key="ceil-defs">
       <linearGradient id="ceil-fade" x1="0" y1="0" x2="0" y2="1">
         <stop offset="0%" stopColor="rgba(0,0,0,0)" />
         <stop offset="100%" stopColor="rgba(0,0,0,0.55)" />
       </linearGradient>
+      <linearGradient id="ao-up" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stopColor="rgba(0,0,0,0)" />
+        <stop offset="100%" stopColor="rgba(0,0,0,0.50)" />
+      </linearGradient>
     </defs>,
-    <rect key="ceil-mortar" x={0} y={0} width={VW} height={VP_Y} fill="url(#stone-grid)" />,
-    <rect key="ceil-fade"   x={0} y={0} width={VW} height={VP_Y} fill="url(#ceil-fade)"  />,
   )
-
-  // Ceiling: 4 converging perspective lines (columns of stone)
-  for (let i = 0; i <= 4; i++) {
-    const xBot = (i / 4) * VW
+  for (let d = 0; d <= MAX_D; d++) {
     nodes.push(
-      <line key={`cvl${i}`} x1={VP_X} y1={VP_Y} x2={xBot} y2={0}
-        stroke={theme.ceilPatternColor} strokeWidth={0.8} />,
+      <line key={`chl${d}`} x1={0} y1={ceilBandY(d)} x2={VW} y2={ceilBandY(d)}
+        stroke={theme.ceilPatternColor} strokeWidth={0.7} />,
     )
   }
+  for (let k = -MAX_S; k <= MAX_S + 1; k++) {
+    const kk = k - 0.5   // seams sit on cell boundaries (±0.5, ±1.5, …)
+    nodes.push(
+      <line key={`cll${k}`}
+        x1={VP_X + (kk * PF_X) / 0.3} y1={VP_Y - PF_Y / 0.3}
+        x2={VP_X + (kk * PF_X) / (MAX_D + 1)} y2={VP_Y - PF_Y / (MAX_D + 1)}
+        stroke={theme.ceilPatternColor} strokeWidth={0.7} />,
+    )
+  }
+  nodes.push(
+    <rect key="ceil-fade" x={0} y={0} width={VW} height={VP_Y} fill="url(#ceil-fade)" />,
+  )
 
   // ── 2. Floor base ────────────────────────────────────────────────────────────
   // Bands from horizon (d=MAX_D, thin) toward screen-bottom (d=1, thick)
@@ -372,11 +380,13 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
     )
   }
 
-  // Floor: perspective grid lines — 4 vertical converging + horizontal depth markers
-  for (let i = 0; i <= 4; i++) {
-    const xBot = (i / 4) * VW
+  // Floor: longitudinal seams at cell boundaries (mirror of the ceiling grid)
+  for (let k = -MAX_S; k <= MAX_S + 1; k++) {
+    const kk = k - 0.5
     nodes.push(
-      <line key={`fvl${i}`} x1={VP_X} y1={VP_Y} x2={xBot} y2={VH}
+      <line key={`fll${k}`}
+        x1={VP_X + (kk * PF_X) / 0.3} y1={VP_Y + PF_Y / 0.3}
+        x2={VP_X + (kk * PF_X) / (MAX_D + 1)} y2={VP_Y + PF_Y / (MAX_D + 1)}
         stroke={theme.gridLineColor} strokeWidth={0.8} />,
     )
   }
@@ -420,6 +430,7 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
           <line key={`fwl_${d}_${s}`} x1={near.x1 + fw * 0.33} y1={near.y1} x2={near.x1 + fw * 0.33} y2={near.y2} stroke="rgba(0,0,0,0.18)" strokeWidth={0.6} />,
           <line key={`fwr_${d}_${s}`} x1={near.x1 + fw * 0.67} y1={near.y1} x2={near.x1 + fw * 0.67} y2={near.y2} stroke="rgba(0,0,0,0.18)" strokeWidth={0.6} />,
           <line key={`fwt_${d}_${s}`} x1={near.x1} y1={near.y1} x2={near.x2} y2={near.y1} stroke={pal.wallEdge(d)} strokeWidth={1} />,
+          <rect key={`fwao_${d}_${s}`} x={near.x1} y={near.y1 - fh * 0.08} width={fw} height={fh * 0.08} fill="url(#ao-up)" />,
           fog > 0 && <rect key={`fwf_${d}_${s}`} x={near.x1} y={near.y1} width={fw} height={fh} fill={`rgba(0,0,0,${fog})`} />,
         )
         continue
@@ -430,6 +441,9 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
         const pts = `${near.x1},${near.y1} ${far.x1},${far.y1} ${far.x1},${far.y2} ${near.x1},${near.y2}`
         nodes.push(
           <polygon key={`lw_${d}_${s}`}  points={pts} fill={pal.sideWall(d)} />,
+          <polygon key={`lwao_${d}_${s}`}
+            points={`${near.x1},${near.y1} ${far.x1},${far.y1} ${far.x1},${far.y1 - (far.y2 - far.y1) * 0.07} ${near.x1},${near.y1 - fh * 0.07}`}
+            fill="rgba(0,0,0,0.26)" />,
           <line    key={`lwe_${d}_${s}`} x1={near.x1} y1={near.y1} x2={near.x1} y2={near.y2} stroke={pal.sideEdge(d)} strokeWidth={1} />,
           fog > 0 && <polygon key={`lwf_${d}_${s}`} points={pts} fill={`rgba(0,0,0,${fog * 0.8})`} />,
         )
@@ -438,6 +452,9 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
         const pts = `${near.x2},${near.y1} ${far.x2},${far.y1} ${far.x2},${far.y2} ${near.x2},${near.y2}`
         nodes.push(
           <polygon key={`rw_${d}_${s}`}  points={pts} fill={pal.sideWall(d)} />,
+          <polygon key={`rwao_${d}_${s}`}
+            points={`${near.x2},${near.y1} ${far.x2},${far.y1} ${far.x2},${far.y1 - (far.y2 - far.y1) * 0.07} ${near.x2},${near.y1 - fh * 0.07}`}
+            fill="rgba(0,0,0,0.26)" />,
           <line    key={`rwe_${d}_${s}`} x1={near.x2} y1={near.y1} x2={near.x2} y2={near.y2} stroke={pal.sideEdge(d)} strokeWidth={1} />,
           fog > 0 && <polygon key={`rwf_${d}_${s}`} points={pts} fill={`rgba(0,0,0,${fog * 0.8})`} />,
         )
@@ -523,6 +540,7 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
           <rect key={`djr_${d}_${s}`} x={near.x2 - jamb} y={near.y1} width={jamb} height={fh}     fill={pal.frontWall(d)} />,
           <rect key={`dlt_${d}_${s}`} x={near.x1}        y={near.y1} width={fw}   height={lintel}  fill={pal.frontWall(d)} />,
           <rect key={`dth_${d}_${s}`} x={near.x1}        y={near.y2 - thresh} width={fw} height={thresh} fill={pal.frontWall(d)} />,
+          <rect key={`dao_${d}_${s}`} x={near.x1} y={near.y1 - fh * 0.08} width={fw} height={fh * 0.08} fill="url(#ao-up)" />,
           <rect key={`dp_${d}_${s}`}  x={dpx} y={dpy} width={dpw} height={dph} fill={`hsl(28 45% ${woodL}%)`} />,
           <line key={`dpl1_${d}_${s}`} x1={dpx + dpw * 0.35} y1={dpy + dph * 0.04} x2={dpx + dpw * 0.35} y2={dpy + dph * 0.96} stroke="rgba(0,0,0,0.28)" strokeWidth={0.7} />,
           <line key={`dpl2_${d}_${s}`} x1={dpx + dpw * 0.65} y1={dpy + dph * 0.04} x2={dpx + dpw * 0.65} y2={dpy + dph * 0.96} stroke="rgba(0,0,0,0.28)" strokeWidth={0.7} />,
@@ -534,6 +552,7 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
         nodes.push(
           <rect key={`bw_${d}_${s}`}  x={near.x1} y={near.y1} width={fw} height={fh} fill={pal.frontWall(d)} />,
           <line key={`bwt_${d}_${s}`} x1={near.x1} y1={near.y1} x2={near.x2} y2={near.y1} stroke={pal.wallEdge(d)} strokeWidth={1} />,
+          <rect key={`bwao_${d}_${s}`} x={near.x1} y={near.y1 - fh * 0.08} width={fw} height={fh * 0.08} fill="url(#ao-up)" />,
           fog > 0 && <rect key={`bwf_${d}_${s}`} x={near.x1} y={near.y1} width={fw} height={fh} fill={`rgba(0,0,0,${fog})`} />,
         )
       } else if (isDoor && fb?.door?.state === 'open') {
