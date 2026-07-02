@@ -132,14 +132,15 @@ const VP_X = VW / 2
 const VP_Y = VH / 2
 const MAX_S = 3   // ±3 cells lateral
 
-// True perspective: camera at the centre of the player's cell. The wall plane
-// between depth k and k+1 sits z = k + 0.5 cells from the camera.
-const PF_X = 320   // horizontal focal — screenX = VP_X + lateral(cells) * PF_X / z
-const PF_Y = 120   // vertical focal — wall half-height on screen = PF_Y / z
+// True perspective: camera at the BACK edge of the player's cell (classic
+// crawler framing) so an adjacent wall reads as a wall, not a screen-filler.
+// The wall plane between depth k and k+1 sits z = k + 1 cells from the camera.
+const PF_X = 500   // horizontal focal — screenX = VP_X + lateral(cells) * PF_X / z
+const PF_Y = 190   // vertical focal — wall half-height on screen = PF_Y / z
 
-// Wall-plane rect at depth-plane d (z = d + 0.5); d=0 → full screen
+// Wall-plane rect at depth-plane d (z = d + 1); d=-1 is the player's back plane
 function sliceRect(d: number) {
-  const z = Math.max(0.25, d + 0.5)
+  const z = Math.max(0.3, d + 1)
   const hw = (0.5 * PF_X) / z
   const hh = PF_Y / z
   return { x1: VP_X - hw, y1: VP_Y - hh, x2: VP_X + hw, y2: VP_Y + hh }
@@ -366,16 +367,8 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
     const y0 = d === MAX_D  ? VP_Y : floorBandY(d + 1)
     const y1 = d === 0      ? VH   : floorBandY(d)
     if (y1 <= y0) continue
-    let fill = pal.floorBand(d)
-    if (d > 0) {
-      const [cx, cy] = cellAt(d, 0)
-      const kind = getCellKind(map, cx, cy)
-      if (kind === 'water') fill = `hsl(210 60% ${Math.max(8, 20 - d * 2)}%)`
-      else if (kind === 'lava') fill = `hsl(12 72% ${Math.max(8, 24 - d * 3)}%)`
-      else if (kind === 'void') fill = `hsl(230 8% ${Math.max(1, 5 - d)}%)`
-    }
     nodes.push(
-      <rect key={`fb${d}`} x={0} y={y0} width={VW} height={y1 - y0} fill={fill} />,
+      <rect key={`fb${d}`} x={0} y={y0} width={VW} height={y1 - y0} fill={pal.floorBand(d)} />,
     )
   }
 
@@ -405,7 +398,7 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
   for (let a = MAX_S; a >= 1; a--) lateralOrder.push(-a, a)
   lateralOrder.push(0)
 
-  for (let d = MAX_D; d >= 1; d--) {
+  for (let d = MAX_D; d >= 0; d--) {
     for (const s of lateralOrder) {
       const near = cellFaceRect(d - 1, s)
       const far  = cellFaceRect(d,     s)
@@ -420,7 +413,8 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
 
       if (solid) {
         // Solid cell: flat front face at its near plane, painted over farther cells
-        if (!nearOpen) continue
+        // (d=0 solids sit beside the player — their near plane is behind the camera)
+        if (d === 0 || !nearOpen) continue
         nodes.push(
           <rect key={`fw_${d}_${s}`}  x={near.x1} y={near.y1} width={fw} height={fh} fill={pal.frontWall(d)} />,
           <line key={`fwl_${d}_${s}`} x1={near.x1 + fw * 0.33} y1={near.y1} x2={near.x1 + fw * 0.33} y2={near.y2} stroke="rgba(0,0,0,0.18)" strokeWidth={0.6} />,
@@ -448,6 +442,23 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
           fog > 0 && <polygon key={`rwf_${d}_${s}`} points={pts} fill={`rgba(0,0,0,${fog * 0.8})`} />,
         )
       }
+
+      // Special terrain floor quad — this cell's footprint only (water/lava/void)
+      const kind = getCellKind(map, cx, cy)
+      if (kind === 'water' || kind === 'lava' || kind === 'void') {
+        const tFill =
+          kind === 'water' ? `hsl(210 60% ${Math.max(8, 26 - d * 4)}%)` :
+          kind === 'lava'  ? `hsl(12 72% ${Math.max(8, 30 - d * 5)}%)`  :
+                             `hsl(230 8% ${Math.max(1, 6 - d)}%)`
+        nodes.push(
+          <polygon key={`ft_${d}_${s}`}
+            points={`${near.x1},${near.y2} ${near.x2},${near.y2} ${far.x2},${far.y2} ${far.x1},${far.y2}`}
+            fill={tFill} />,
+        )
+      }
+
+      // Player's own row: only side walls and floor are in frame
+      if (d === 0) continue
 
       // Cell contents — entities first, then volume objects; the near boundary
       // (door/wall) is painted after so closed doors hide the room behind them
