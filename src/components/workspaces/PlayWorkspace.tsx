@@ -747,7 +747,10 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
       style={{ display: 'block' }}
       xmlns="http://www.w3.org/2000/svg"
     >
-      {nodes}
+      <defs>
+        <clipPath id="fp-view-clip"><rect x={0} y={0} width={VW} height={VH} /></clipPath>
+      </defs>
+      <g clipPath="url(#fp-view-clip)">{nodes}</g>
     </svg>
   )
 }
