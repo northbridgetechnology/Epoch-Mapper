@@ -140,6 +140,8 @@ export interface EnemyDef extends Definition {
   defense: number
   speed: number
   resistances?: Partial<Record<DamageType, number>>
+  /** Combat AI: how this enemy picks its victim (default 'random') */
+  targeting?: 'random' | 'weakest'
   abilities?: EnemyAbility[]
   xp: number
   gold: { min: number; max: number }

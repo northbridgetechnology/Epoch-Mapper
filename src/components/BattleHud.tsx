@@ -425,8 +425,9 @@ export function BattleHud({
 
 // ── Terminal outcome overlay (victory / defeat / fled) ───────────────────────
 
-export function BattleOutcomeOverlay({ state, onContinue }: {
+export function BattleOutcomeOverlay({ state, ruleset, onContinue }: {
   state: CombatState
+  ruleset: Ruleset
   onContinue: () => void
 }) {
   const outcome = state.phase
@@ -440,6 +441,19 @@ export function BattleOutcomeOverlay({ state, onContinue }: {
         {outcome === 'victory' && (
           <div className="text-sm text-white/60 mb-4">
             +{state.xpReward} XP · +{state.goldReward} gold
+            {state.drops.length > 0 && (
+              <div className="mt-2 space-y-0.5 text-xs text-white/70">
+                {state.drops.map(d => {
+                  const def = ruleset.items.find(i => i.id === d.item)
+                  return (
+                    <div key={d.item}>
+                      <span className="mr-1">{def?.icon ?? '📦'}</span>
+                      {def?.name ?? d.item}{d.qty > 1 ? ` ×${d.qty}` : ''}
+                    </div>
+                  )
+                })}
+              </div>
+            )}
           </div>
         )}
         {outcome === 'defeat' && (

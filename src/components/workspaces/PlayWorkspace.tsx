@@ -824,15 +824,19 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
       if (!pos || battle.actors[ev.target]?.kind !== 'enemy') return
       const txt =
         ev.kind === 'miss'   ? 'MISS' :
+        ev.kind === 'weak'   ? 'WEAK!' :
+        ev.kind === 'resist' ? 'RESIST' :
         ev.kind === 'status' ? '✦' :
         `${ev.kind === 'heal' || ev.kind === 'mp' ? '+' : '-'}${ev.amount ?? ''}`
       const fill =
-        ev.kind === 'crit' ? 'hsl(44 95% 60%)' :
-        ev.kind === 'heal' ? 'hsl(150 65% 55%)' :
-        ev.kind === 'mp'   ? 'hsl(210 80% 65%)' :
-        ev.kind === 'miss' ? 'rgba(255,255,255,0.65)' :
-                             'hsl(0 85% 62%)'
-      const fs = ev.kind === 'crit' ? pos.s * 0.30 : pos.s * 0.22
+        ev.kind === 'crit'   ? 'hsl(44 95% 60%)' :
+        ev.kind === 'weak'   ? 'hsl(28 95% 58%)' :
+        ev.kind === 'resist' ? 'rgba(160,180,210,0.8)' :
+        ev.kind === 'heal'   ? 'hsl(150 65% 55%)' :
+        ev.kind === 'mp'     ? 'hsl(210 80% 65%)' :
+        ev.kind === 'miss'   ? 'rgba(255,255,255,0.65)' :
+                               'hsl(0 85% 62%)'
+      const fs = ev.kind === 'crit' || ev.kind === 'weak' ? pos.s * 0.30 : ev.kind === 'resist' ? pos.s * 0.16 : pos.s * 0.22
       const px0 = pos.x + (i - (battle.events.length - 1) / 2) * pos.s * 0.22
       nodes.push(
         <g key={`pop_${battle.eventSeq}_${i}`} pointerEvents="none">
@@ -1147,7 +1151,7 @@ export function PlayWorkspace({
             flags={flags}
             battle={battleView}
           />
-          {combat && <BattleOutcomeOverlay state={combat} onContinue={onCombatEnd} />}
+          {combat && <BattleOutcomeOverlay state={combat} ruleset={ruleset} onContinue={onCombatEnd} />}
         </div>
       ) : (
         <DungeonViewport

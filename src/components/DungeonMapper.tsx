@@ -1395,6 +1395,17 @@ export function DungeonMapper({
               setInventory(inv => consumeCombatItems(inv, combatState))
               if (combatState.phase === 'victory') {
                 setGold(g => g + combatState.goldReward)
+                if (combatState.drops.length > 0) {
+                  setInventory(prev => {
+                    let inv = [...prev]
+                    for (const { item, qty } of combatState.drops) {
+                      const idx = inv.findIndex(i => i.def === item)
+                      if (idx >= 0) inv[idx] = { ...inv[idx], qty: inv[idx].qty + qty }
+                      else inv = [...inv, { def: item, qty }]
+                    }
+                    return inv
+                  })
+                }
               }
               savePartyTemplate(updatedParty, formation)
               levelUps.forEach(name => toast.success(`${name} leveled up!`))

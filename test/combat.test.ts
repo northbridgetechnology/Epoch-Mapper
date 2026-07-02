@@ -180,4 +180,64 @@ test('upcomingTurns previews turn order and skips the dead', () => {
   assert.deepEqual(upcomingTurns(oneDead, 3), [0, 0, 0])
 })
 
+// ── Batch B: resistances, equipment, targeting AI, loot ──────────────────────
+
+const fullRuleset = {
+  ...ruleset,
+  items: [
+    ...(ruleset as unknown as { items: unknown[] }).items,
+    { id: 'item.blade', name: 'Blade', kind: 'weapon', slot: 'weapon', value: 50, stackable: false,
+      modifiers: [{ target: 'derived', key: 'attack', op: 'add', amount: 6 }] },
+  ],
+  enemies: [
+    { id: 'enemy.rat', name: 'Rat', hp: 15, attack: 6, defense: 2, speed: 1, xp: 1,
+      gold: { min: 0, max: 0 }, attributes: {}, resistances: { physical: -1 }, loot: 'loot.rat' },
+  ],
+  lootTables: [
+    { id: 'loot.rat', name: 'Rat Loot', drops: [{ item: 'item.potion', qty: 2, chance: 1 }] },
+  ],
+} as unknown as Ruleset
+
+test('physical weakness doubles basic attack damage', () => {
+  // Hero attack 10 vs def 2 → base 9, ×1.297 → 12; weakness (resist -1) → 24
+  const s = initCombat([hero], encounter, { ruleset: fullRuleset })
+  const after = resolvePlayerAttack(s, 1, fullRuleset, rng)
+  assert.equal(after.actors[1].hp, 0)                 // 24 ≥ 15 HP — obliterated
+  assert.ok(after.events.some(e => e.kind === 'weak'))
+  assert.ok(after.log.some(e => e.text.includes('weakness')))
+})
+
+test('equipment modifiers raise combat stats', () => {
+  const armed = {
+    ...hero,
+    equipment: { weapon: { def: 'item.blade', qty: 1 } },
+  } as unknown as Character
+  const s = initCombat([armed], encounter, { ruleset: fullRuleset })
+  assert.equal(s.actors[0].attack, 16)                // 10 base + 6 from blade
+  const bare = initCombat([hero], encounter, { ruleset: fullRuleset })
+  assert.equal(bare.actors[0].attack, 10)
+})
+
+test('weakest-first targeting hunts the lowest-HP member', () => {
+  const healthy = { ...hero, id: 'c2', name: 'Tank', hp: 30 } as unknown as Character
+  const hunter = {
+    ...fullRuleset,
+    enemies: [{ ...(fullRuleset.enemies[0] as object), resistances: undefined, targeting: 'weakest' }],
+  } as unknown as Ruleset
+  const s = initCombat([healthy, hero], encounter, { ruleset: hunter })
+  const enemyIdx = s.actors.findIndex(a => a.kind === 'enemy')
+  const after = resolveEnemyTurn({ ...s, turnIdx: enemyIdx, phase: 'enemy_turn' }, hunter, rng)
+  const tank = after.actors.find(a => a.name === 'Tank')!
+  const weak = after.actors.find(a => a.name === 'Hero')!
+  assert.equal(tank.hp, 30)                           // untouched
+  assert.ok(weak.hp < 20)                             // 20 HP hero took the hit
+})
+
+test('victory rolls enemy loot tables into drops and gold', () => {
+  const s = initCombat([hero], encounter, { ruleset: fullRuleset, seed: 7 })
+  const after = resolvePlayerAttack(s, 1, fullRuleset, rng)   // weakness one-shot
+  assert.equal(after.phase, 'victory')
+  assert.deepEqual(after.drops, [{ item: 'item.potion', qty: 2 }])
+})
+
 console.log(`\n${passed} passed`)

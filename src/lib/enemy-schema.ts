@@ -16,6 +16,13 @@ export const ENEMY_SCHEMA: FieldSchema[] = [
   { key: 'speed',   label: 'Speed',   type: 'number', min: 1 },
   { key: 'xp',     label: 'XP Reward',        type: 'number', min: 0 },
   {
+    key: 'targeting',
+    label: 'Targeting AI',
+    type: { kind: 'enum', options: [{ value: 'random', label: 'Random' }, { value: 'weakest', label: 'Weakest first' }] },
+    optional: true,
+  },
+  { key: 'loot', label: 'Loot Table', type: { kind: 'ref', table: 'lootTables' }, optional: true },
+  {
     key: 'size',
     label: 'Size',
     type: { kind: 'enum', options: [{ value: '1', label: '1 — Standard' }, { value: '2', label: '2 — Large (front+back row)' }] },
