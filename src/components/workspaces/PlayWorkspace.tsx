@@ -581,20 +581,20 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
       const cx = (face.x1 + face.x2) / 2
       const entFog = depthFog(d)
 
-      // Chest body bounds
-      const cW  = faceW * 0.44
-      const cH  = faceH * 0.26
-      const fb  = face.y2           // bottom = floor
-      const ft  = fb - cH           // top of body front face
+      // Chest geometry — flat-bottomed body with a domed lid
+      const cW  = faceW * 0.46
+      const cH  = faceH * 0.30
+      const fb  = face.y2                  // floor line
       const fl  = cx - cW / 2
       const fr  = cx + cW / 2
-
-      // Top-face back edge (perspective recession toward VP)
-      const tRatio = 0.70
-      const tRecede = cH * 0.40
-      const tbl = cx - (cW / 2) * tRatio
-      const tbr = cx + (cW / 2) * tRatio
-      const tby = ft - tRecede
+      const bodyH  = cH * 0.58
+      const bodyT  = fb - bodyH            // lid seam / top of body
+      const lidTop = bodyT - cH * 0.42     // apex of the closed dome
+      const bandW  = cW * 0.10
+      const bandXs = [fl + cW * 0.18 - bandW / 2, fr - cW * 0.18 - bandW / 2]
+      // Closed silhouette: straight sides, domed top
+      const domePath = `M ${fl},${fb} L ${fl},${bodyT} C ${fl},${lidTop} ${fr},${lidTop} ${fr},${bodyT} L ${fr},${fb} Z`
+      const clipKey = `chshape_${d}_${s}`
 
       // Depth-scaled colours (wood + iron)
       const lBase   = Math.max(12, 28 - d * 3)
@@ -605,63 +605,62 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
       const goldCol = `hsl(44 75% ${Math.max(38, 55 - d * 3)}%)`
 
       if (!isOpen) {
-        // Closed chest ─────────────────────────────────────────────────────
-        // Top face (lid surface)
+        // Closed chest — domed lid, vertical iron bands, front hasp ─────────
         nodes.push(
-          <polygon key={`chtop${d}`}
-            points={`${fl},${ft} ${fr},${ft} ${tbr},${tby} ${tbl},${tby}`}
+          <defs key={`chdef${d}`}>
+            <clipPath id={clipKey}><path d={domePath} /></clipPath>
+          </defs>,
+          <path key={`chbody${d}`} d={domePath} fill={woodMd} />,
+          // Domed lid catches more light
+          <path key={`chlid${d}`}
+            d={`M ${fl},${bodyT} C ${fl},${lidTop} ${fr},${lidTop} ${fr},${bodyT} Z`}
             fill={woodLt} />,
-          <line key={`chtl${d}`} x1={fl}  y1={ft}  x2={tbl} y2={tby} stroke={woodDk} strokeWidth={0.8} />,
-          <line key={`chtr${d}`} x1={fr}  y1={ft}  x2={tbr} y2={tby} stroke={woodDk} strokeWidth={0.8} />,
-          <line key={`chtb${d}`} x1={tbl} y1={tby} x2={tbr} y2={tby} stroke={woodDk} strokeWidth={0.8} />,
-          // Front body face
-          <rect key={`chbody${d}`}  x={fl} y={ft} width={cW} height={cH} fill={woodMd} />,
-          // Plank lines
-          <line key={`chp1${d}`} x1={fl} y1={ft + cH * 0.35} x2={fr} y2={ft + cH * 0.35}
-            stroke={woodDk} strokeWidth={0.7} />,
-          <line key={`chp2${d}`} x1={fl} y1={ft + cH * 0.68} x2={fr} y2={ft + cH * 0.68}
-            stroke={woodDk} strokeWidth={0.7} />,
-          // Iron bands
-          <rect key={`chb1${d}`} x={fl} y={ft + cH * 0.06} width={cW} height={cH * 0.13} fill={iron} opacity={0.75} />,
-          <rect key={`chb2${d}`} x={fl} y={ft + cH * 0.80} width={cW} height={cH * 0.13} fill={iron} opacity={0.75} />,
-          // Outline
-          <rect key={`chout${d}`} x={fl} y={ft} width={cW} height={cH} fill="none" stroke={woodDk} strokeWidth={1} />,
-          // Lock clasp or plain clasp
-          isLocked
-            ? <rect key={`chlb${d}`}  x={cx - cW * 0.065} y={ft + cH * 0.33} width={cW * 0.13} height={cH * 0.24} fill={goldCol} rx={1} />
-            : <rect key={`chcl${d}`}  x={cx - cW * 0.05}  y={ft + cH * 0.38} width={cW * 0.10} height={cH * 0.18} fill={goldCol} rx={1} />,
+          // Iron bands + body plank lines, clipped to the silhouette
+          <g key={`chbands${d}`} clipPath={`url(#${clipKey})`}>
+            <rect x={bandXs[0]} y={lidTop} width={bandW} height={fb - lidTop} fill={iron} opacity={0.9} />
+            <rect x={bandXs[1]} y={lidTop} width={bandW} height={fb - lidTop} fill={iron} opacity={0.9} />
+            <line x1={fl} y1={bodyT + bodyH * 0.35} x2={fr} y2={bodyT + bodyH * 0.35} stroke={woodDk} strokeWidth={0.7} />
+            <line x1={fl} y1={bodyT + bodyH * 0.70} x2={fr} y2={bodyT + bodyH * 0.70} stroke={woodDk} strokeWidth={0.7} />
+          </g>,
+          // Lid seam + silhouette outline
+          <line key={`chseam${d}`} x1={fl} y1={bodyT} x2={fr} y2={bodyT} stroke={woodDk} strokeWidth={1.1} />,
+          <path key={`chout${d}`} d={domePath} fill="none" stroke={woodDk} strokeWidth={1.2} />,
+          // Hasp plate straddling the seam + gold clasp
+          <rect key={`chhasp${d}`} x={cx - cW * 0.07} y={bodyT - cH * 0.10} width={cW * 0.14} height={cH * 0.26} fill={iron} rx={1} />,
+          <rect key={`chclasp${d}`} x={cx - cW * 0.045} y={bodyT - cH * 0.02} width={cW * 0.09} height={cH * 0.14} fill={goldCol} rx={1} />,
           isLocked && <path key={`chls${d}`}
-            d={`M${cx - cW * 0.035},${ft + cH * 0.36} a${cW * 0.035},${cH * 0.13} 0 0,1 ${cW * 0.07},0`}
+            d={`M${cx - cW * 0.035},${bodyT - cH * 0.02} a${cW * 0.035},${cH * 0.10} 0 0,1 ${cW * 0.07},0`}
             fill="none" stroke={goldCol} strokeWidth={Math.max(1, cW * 0.02)} />,
         )
       } else {
-        // Open chest ───────────────────────────────────────────────────────
-        const lidH = cH * 0.60
+        // Open chest — lid swung up behind the body, showing its underside ──
+        const lidBase = bodyT - cH * 0.04
+        const lfl = fl + cW * 0.05
+        const lfr = fr - cW * 0.05
+        const lidUp = `M ${lfl},${lidBase} C ${lfl},${lidBase - cH * 0.95} ${lfr},${lidBase - cH * 0.95} ${lfr},${lidBase} Z`
         nodes.push(
-          // Dark interior (visible through open top)
-          <rect key={`chint${d}`}
-            x={fl + cW * 0.06} y={ft + cH * 0.04} width={cW * 0.88} height={cH * 0.32}
-            fill="hsl(20 18% 5%)" />,
-          // Front body
-          <rect key={`chbody${d}`}  x={fl} y={ft} width={cW} height={cH} fill={woodMd} />,
-          <rect key={`chb1${d}`}    x={fl} y={ft + cH * 0.06} width={cW} height={cH * 0.13} fill={iron} opacity={0.75} />,
-          <rect key={`chb2${d}`}    x={fl} y={ft + cH * 0.80} width={cW} height={cH * 0.13} fill={iron} opacity={0.75} />,
-          <rect key={`chout${d}`}   x={fl} y={ft} width={cW} height={cH} fill="none" stroke={woodDk} strokeWidth={1} />,
-          // Open lid standing at back edge
-          <polygon key={`chlid${d}`}
-            points={`${tbl},${tby} ${tbr},${tby} ${tbr},${tby - lidH} ${tbl},${tby - lidH}`}
-            fill={woodLt} />,
-          <rect key={`chlidout${d}`}
-            x={tbl} y={tby - lidH} width={tbr - tbl} height={lidH}
-            fill="none" stroke={woodDk} strokeWidth={0.8} />,
+          // Raised lid (dark underside) with light rim
+          <path key={`chlid${d}`} d={lidUp} fill={woodDk} />,
+          <path key={`chlidrim${d}`} d={lidUp} fill="none" stroke={woodLt} strokeWidth={1} />,
+          // Body with bands and plank line
+          <rect key={`chbody${d}`} x={fl} y={bodyT} width={cW} height={bodyH} fill={woodMd} />,
+          <rect key={`chb1${d}`} x={bandXs[0]} y={bodyT} width={bandW} height={bodyH} fill={iron} opacity={0.9} />,
+          <rect key={`chb2${d}`} x={bandXs[1]} y={bodyT} width={bandW} height={bodyH} fill={iron} opacity={0.9} />,
+          <line key={`chp1${d}`} x1={fl} y1={bodyT + bodyH * 0.5} x2={fr} y2={bodyT + bodyH * 0.5} stroke={woodDk} strokeWidth={0.7} />,
+          <rect key={`chout${d}`} x={fl} y={bodyT} width={cW} height={bodyH} fill="none" stroke={woodDk} strokeWidth={1.2} />,
+          // Dark opening across the rim, with a glint of gold inside
+          <rect key={`chint${d}`} x={fl + cW * 0.04} y={lidBase} width={cW * 0.92} height={cH * 0.16} fill="hsl(20 18% 5%)" />,
+          <circle key={`chg1${d}`} cx={cx - cW * 0.12} cy={lidBase + cH * 0.10} r={Math.max(1, cW * 0.035)} fill={goldCol} />,
+          <circle key={`chg2${d}`} cx={cx + cW * 0.07} cy={lidBase + cH * 0.09} r={Math.max(1, cW * 0.028)} fill={goldCol} />,
         )
       }
 
       // Depth fog over chest area
       if (entFog > 0) {
+        const fogTop = isOpen ? bodyT - cH * 0.99 : lidTop
         nodes.push(
           <polygon key={`chfog${d}`}
-            points={`${fl},${Math.min(tby, ft - tRecede)} ${fr},${Math.min(tby, ft - tRecede)} ${fr},${fb} ${fl},${fb}`}
+            points={`${fl},${fogTop} ${fr},${fogTop} ${fr},${fb} ${fl},${fb}`}
             fill={`rgba(0,0,0,${entFog * 0.55})`} />,
         )
       }
@@ -671,7 +670,7 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
         const iconSz = Math.max(8, faceW * 0.09)
         nodes.push(
           <text key={`chlockicon${d}`}
-            x={cx} y={ft + cH * 0.46}
+            x={cx} y={bodyT + bodyH * 0.45}
             textAnchor="middle" dominantBaseline="middle"
             fontSize={iconSz} opacity={Math.max(0.5, 1 - entFog * 0.6)}
           >🔒</text>,
