@@ -457,14 +457,15 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
         )
       }
 
-      // Player's own row: only side walls and floor are in frame
-      if (d === 0) continue
-
       // Cell contents — entities first, then volume objects; the near boundary
       // (door/wall) is painted after so closed doors hide the room behind them
       const entGroup: React.ReactNode[] = []
       drawCellEntities(d, s, entGroup)
       if (entGroup.length > 0) nodes.push(<g key={`ce_${d}_${s}`}>{entGroup}</g>)
+
+      // Own-cell pass stops here: volume objects would render oversized and the
+      // near boundary plane sits behind the camera at d = 0
+      if (d === 0) continue
 
       {
         const scObjs = map.cells[`${cx},${cy}`]?.subcubeObjects
@@ -556,6 +557,15 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
     const frontCell = map.cells[`${fx},${fy}`]
     if (!frontCell) return
 
+    // Anchor contents at mid-cell depth (z = d + 0.55, projected directly) so a
+    // chest one cell ahead reads as adjacent instead of hugging its far wall —
+    // and at d = 0 it stays visible at the player's feet.
+    const ez  = d + 0.55
+    const eHW = (0.5 * PF_X) / ez
+    const eHH = PF_Y / ez
+    const eMX = VP_X + (s * PF_X) / ez
+    const entFace = { x1: eMX - eHW, y1: VP_Y - eHH, x2: eMX + eHW, y2: VP_Y + eHH }
+
     // ── Chest object entity ──────────────────────────────────────────────────
     const chestEnt = (frontCell.entities ?? []).find(
       (e): e is Extract<CellEntity, { t: 'object' }> => e.t === 'object' && e.object.kind === 'chest',
@@ -565,7 +575,7 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
       const isOpen   = Boolean(flags[objectUsedFlagKey(obj.id)])
       const isLocked = !isOpen && Boolean(obj.locked?.key)
 
-      const face  = cellFaceRect(d, s)
+      const face  = entFace
       const faceW = face.x2 - face.x1
       const faceH = face.y2 - face.y1
       const cx = (face.x1 + face.x2) / 2
@@ -677,7 +687,7 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
       .filter((x): x is string => Boolean(x))
     if (icons.length === 0) return
 
-    const face  = cellFaceRect(d, s)
+    const face  = entFace
     const faceW = face.x2 - face.x1
     const faceH = face.y2 - face.y1
     const ecx   = (face.x1 + face.x2) / 2
