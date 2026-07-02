@@ -159,6 +159,11 @@ export {
 } from './lib/combat-engine'
 export type { CombatActor, CombatEvent, CombatLogEntry, CombatPhase, CombatState, InitCombatOpts } from './lib/combat-engine'
 
+// Balance simulator (headless, uses the real combat engine)
+export { simulateEncounterTable, makeSimParty } from './lib/battle-sim'
+export type { SimConfig, SimResult } from './lib/battle-sim'
+export { SimulatePanel } from './components/SimulatePanel'
+
 // Battle UI: first-person battle HUD + playfield formation (Phase E4)
 export { BattleHud, BattleOutcomeOverlay, useBattleController } from './components/BattleHud'
 export { buildBattlePlacements } from './lib/battle-scene'

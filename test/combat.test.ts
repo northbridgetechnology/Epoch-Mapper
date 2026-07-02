@@ -14,6 +14,7 @@ import {
   upcomingTurns,
   type CombatState,
 } from '../src/lib/combat-engine'
+import { simulateEncounterTable } from '../src/lib/battle-sim'
 import type { Character, ItemInstance, ResolvedEncounter, Ruleset } from '../src/lib/engine-types'
 
 let passed = 0
@@ -238,6 +239,68 @@ test('victory rolls enemy loot tables into drops and gold', () => {
   const after = resolvePlayerAttack(s, 1, fullRuleset, rng)   // weakness one-shot
   assert.equal(after.phase, 'victory')
   assert.deepEqual(after.drops, [{ item: 'item.potion', qty: 2 }])
+})
+
+// ── Batch C: tuning, boss ability gates, simulator ────────────────────────────
+
+test('combatTuning overrides engine constants (defend multiplier)', () => {
+  const ironWall = { ...fullRuleset, combatTuning: { defendMult: 0.1 } } as unknown as Ruleset
+  const s = initCombat([hero], encounter, {})
+  const guarded = resolveEnemyTurn(resolvePlayerDefend(s, ironWall, rng), ironWall, rng)
+  // raw 5 → floor(5 × 0.1) clamped to 1 (vs 2 with the default 0.5)
+  assert.equal(guarded.actors[0].hp, 20 - 1)
+})
+
+test('when-gated abilities unlock below the HP threshold', () => {
+  const bossRules = {
+    ...fullRuleset,
+    enemies: [{
+      id: 'enemy.rat', name: 'Rat', hp: 15, attack: 6, defense: 2, speed: 1, xp: 1,
+      gold: { min: 0, max: 0 }, attributes: {},
+      abilities: [{
+        weight: 1, target: 'enemy',
+        effects: [{ t: 'damage', dmgType: 'fire', amount: 99 }],
+        when: { selfHpBelow: 0.5 },
+      }],
+    }],
+  } as unknown as Ruleset
+
+  // Full HP: gate closed → basic attack (hero takes 5, not 99)
+  const healthy = initCombat([hero], encounter, { ruleset: bossRules })
+  const t1 = resolveEnemyTurn({ ...healthy, turnIdx: 1, phase: 'enemy_turn' }, bossRules, rng)
+  assert.equal(t1.actors[0].hp, 20 - 5)
+
+  // Below half HP: enraged → fire ability fires for 99
+  const bloodied = {
+    ...healthy, turnIdx: 1, phase: 'enemy_turn' as const,
+    actors: healthy.actors.map((a, i) => (i === 1 ? { ...a, hp: 5 } : a)),
+  }
+  const t2 = resolveEnemyTurn(bloodied, bossRules, rng)
+  assert.equal(t2.actors[0].hp, 0)
+  assert.equal(t2.phase, 'defeat')
+})
+
+test('round counter advances when the turn order wraps', () => {
+  let s = freshState()
+  assert.equal(s.round, 1)
+  s = resolvePlayerAttack(s, 1, ruleset, () => 0.5)   // hero acts → rat's turn
+  s = resolveEnemyTurn(s, ruleset, () => 0.5)         // rat acts → wraps to hero
+  assert.equal(s.round, 2)
+})
+
+test('simulator reports a rout for an outmatched encounter table', () => {
+  const simRules = {
+    ...fullRuleset,
+    enemies: [{ id: 'enemy.rat', name: 'Rat', hp: 5, attack: 1, defense: 0, speed: 1, xp: 1, gold: { min: 0, max: 0 }, attributes: {} }],
+    encounterTables: [{ id: 'enc.rats', name: 'Rats', entries: [{ enemy: 'enemy.rat', min: 1, max: 2, weight: 1 }] }],
+  } as unknown as Ruleset
+  const res = simulateEncounterTable('enc.rats', simRules, { partySize: 4, level: 5, iterations: 50 })
+  assert.ok(res)
+  assert.equal(res!.runs, 50)
+  assert.equal(res!.winRate, 1)          // level-5 party of 4 vs 1-2 weak rats
+  assert.ok(res!.avgRounds >= 1)
+  // Determinism: same config twice → identical result
+  assert.deepEqual(res, simulateEncounterTable('enc.rats', simRules, { partySize: 4, level: 5, iterations: 50 }))
 })
 
 console.log(`\n${passed} passed`)

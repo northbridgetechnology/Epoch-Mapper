@@ -131,6 +131,9 @@ export interface EnemyAbility {
   effects: Effect[]
   target: SpellTarget
   mpCost?: number
+  /** Gate for boss phases: the ability is only usable when ALL hold.
+   *  selfHpBelow is a fraction of max HP (0.5 = below half). */
+  when?: { selfHpBelow?: number; roundAtLeast?: number }
 }
 
 export interface EnemyDef extends Definition {
@@ -178,6 +181,20 @@ export interface GameMeta {
   startingGold: number
 }
 
+/** Combat constants tunable per game — engine falls back to classic defaults. */
+export interface CombatTuning {
+  critChance?: number            // default 0.10
+  critMult?: number              // default 1.5
+  baseMissChance?: number        // default 0.05
+  outmatchedMissChance?: number  // default 0.25 (defense > attack × 1.5)
+  variance?: number              // default 0.3 (damage spread fraction)
+  defendMult?: number            // default 0.5 (damage taken while defending)
+  backRankMeleeMult?: number     // default 0.5 (per back rank, dealt and taken)
+  fleeBase?: number              // default 0.5
+  fleeSpeedFactor?: number       // default 0.04 (per point of speed advantage)
+  fleeRetryBonus?: number        // default 0.2 (per failed attempt)
+}
+
 export interface FormulaOverrides {
   maxHp?: string
   maxMp?: string
@@ -203,6 +220,7 @@ export interface Ruleset {
   lootTables: LootTableDef[]
   shops: ShopDef[]
   formulas?: FormulaOverrides
+  combatTuning?: CombatTuning
 }
 
 // ── L2: Cell entities (world placement) ──────────────────────────────────────

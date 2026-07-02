@@ -3,7 +3,7 @@
  * No DOM, no React. All mutations return new state objects.
  */
 
-import type { Character, ActiveStatus, EnemyAbility, Effect, Formation, ItemInstance, Ruleset } from './engine-types'
+import type { Character, ActiveStatus, CombatTuning, EnemyAbility, Effect, Formation, ItemInstance, Ruleset } from './engine-types'
 import { resolveLootTable } from './event-engine'
 import { deriveMaxHp, deriveMaxMp, xpToNextLevel } from './engine-types'
 import type { ResolvedEncounter } from './engine-types'
@@ -77,6 +77,8 @@ export interface CombatState {
   eventSeq: number
   /** Items rolled from enemy loot tables at the moment of victory. */
   drops: { item: string; qty: number }[]
+  /** Battle round (1-based); advances when the turn order wraps around. */
+  round: number
 }
 
 // ── Seeded RNG (mulberry32) ───────────────────────────────────────────────────
@@ -86,6 +88,25 @@ function nextRand(box: { s: number }): number {
   t = Math.imul(t ^ (t >>> 15), t | 1)
   t ^= t + Math.imul(t ^ (t >>> 7), t | 61)
   return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+}
+
+// ── Tunable combat constants (Ruleset.combatTuning overrides these) ──────────
+
+const TUNING_DEFAULTS: Required<CombatTuning> = {
+  critChance: 0.10,
+  critMult: 1.5,
+  baseMissChance: 0.05,
+  outmatchedMissChance: 0.25,
+  variance: 0.3,
+  defendMult: 0.5,
+  backRankMeleeMult: 0.5,
+  fleeBase: 0.5,
+  fleeSpeedFactor: 0.04,
+  fleeRetryBonus: 0.2,
+}
+
+function tuning(ruleset: Ruleset): Required<CombatTuning> {
+  return { ...TUNING_DEFAULTS, ...(ruleset.combatTuning ?? {}) }
 }
 
 // ── Dice ──────────────────────────────────────────────────────────────────────
@@ -170,6 +191,7 @@ function resolveCombatEffects(
   const log: CombatLogEntry[] = []
   const events: CombatEvent[] = []
   const casterName = cur[casterIdx]?.name ?? '?'
+  const t = tuning(ruleset)
 
   for (const eff of effects) {
     const idxs = targetIdxs.length > 0 ? targetIdxs : [casterIdx]
@@ -181,13 +203,13 @@ function resolveCombatEffects(
       if (eff.t === 'damage') {
         if (!target.alive) continue
         const base = rollDice(eff.amount, rng)
-        const crit = eff.canCrit !== false && rng() < 0.1
-        const raw = Math.max(1, Math.round(base * (crit ? 1.5 : 1)))
+        const crit = eff.canCrit !== false && rng() < t.critChance
+        const raw = Math.max(1, Math.round(base * (crit ? t.critMult : 1)))
         // Resistance is the fraction blocked; negative values are weaknesses
         const resist = target.resistances?.[eff.dmgType] ?? 0
         const afterResist = Math.max(0, Math.round(raw * (1 - resist)))
         const dmg = target.defending && afterResist > 0
-          ? Math.max(1, Math.floor(afterResist / 2))
+          ? Math.max(1, Math.floor(afterResist * t.defendMult))
           : afterResist
         const newHp = Math.max(0, target.hp - dmg)
         cur = cur.map((a, i) => i === tIdx ? { ...a, hp: newHp, alive: newHp > 0 } : a)
@@ -357,6 +379,7 @@ function advanceTurn(state: CombatState, ruleset: Ruleset, rng: () => number): C
 
   const nextIdx = nextAliveTurn(state.actors, state.turnIdx)
   const phase: CombatPhase = state.actors[nextIdx].kind === 'party' ? 'player_action' : 'enemy_turn'
+  const round = nextIdx <= state.turnIdx ? state.round + 1 : state.round
 
   const { actors: ticked, log: tickLog, blocked } = tickStatuses(nextIdx, state.actors, ruleset, rng)
   // Guard stance ends when the actor's own turn comes back around
@@ -366,10 +389,10 @@ function advanceTurn(state: CombatState, ruleset: Ruleset, rng: () => number): C
   if (blocked) {
     const blockedEntry: CombatLogEntry = { text: `${tickedActors[nextIdx].name} cannot act.`, kind: 'info' }
     // Recursively advance past the blocked actor
-    return advanceTurn({ ...state, actors: tickedActors, log: [...newLog, blockedEntry], turnIdx: nextIdx, phase }, ruleset, rng)
+    return advanceTurn({ ...state, actors: tickedActors, log: [...newLog, blockedEntry], turnIdx: nextIdx, phase, round }, ruleset, rng)
   }
 
-  return { ...state, actors: tickedActors, log: newLog, turnIdx: nextIdx, phase }
+  return { ...state, actors: tickedActors, log: newLog, turnIdx: nextIdx, phase, round }
 }
 
 /** Stamp an action's results onto the outgoing state: advance the RNG stream,
@@ -387,21 +410,26 @@ function finishAction(
 
 interface HitResult { damage: number; crit: boolean; miss: boolean; weak?: boolean; resisted?: boolean }
 
-function calcHit(attacker: CombatActor, defender: CombatActor, rng: () => number): HitResult {
-  const missChance = defender.defense > attacker.attack * 1.5 ? 0.25 : 0.05
+function calcHit(
+  attacker: CombatActor,
+  defender: CombatActor,
+  rng: () => number,
+  t: Required<CombatTuning>,
+): HitResult {
+  const missChance = defender.defense > attacker.attack * 1.5 ? t.outmatchedMissChance : t.baseMissChance
   if (rng() < missChance) return { damage: 0, crit: false, miss: true }
-  const crit = rng() < 0.1
+  const crit = rng() < t.critChance
   const base = Math.max(1, attacker.attack - Math.floor(defender.defense / 2))
-  const variance = rng() * 0.3
-  let raw = Math.max(1, Math.round(base * (1 + variance) * (crit ? 1.5 : 1)))
+  const variance = rng() * t.variance
+  let raw = Math.max(1, Math.round(base * (1 + variance) * (crit ? t.critMult : 1)))
   // Row rules: melee dealt from the back rank and melee taken in the back
-  // rank are each halved (spells/effects ignore rank)
-  if (attacker.rank === 1) raw = Math.max(1, Math.floor(raw / 2))
-  if (defender.rank === 1) raw = Math.max(1, Math.floor(raw / 2))
+  // rank are each reduced (spells/effects ignore rank)
+  if (attacker.rank === 1) raw = Math.max(1, Math.floor(raw * t.backRankMeleeMult))
+  if (defender.rank === 1) raw = Math.max(1, Math.floor(raw * t.backRankMeleeMult))
   // Physical resistance (negative = weakness, ≥1 = immune)
   const resist = defender.resistances?.['physical'] ?? 0
   raw = Math.max(0, Math.round(raw * (1 - resist)))
-  const damage = defender.defending && raw > 0 ? Math.max(1, Math.floor(raw / 2)) : raw
+  const damage = defender.defending && raw > 0 ? Math.max(1, Math.floor(raw * t.defendMult)) : raw
   return { damage, crit, miss: false, weak: resist < 0, resisted: resist > 0 }
 }
 
@@ -490,6 +518,7 @@ export function initCombat(
     events: [],
     eventSeq: 0,
     drops: [],
+    round: 1,
   }
 }
 
@@ -507,7 +536,7 @@ export function resolvePlayerAttack(
 
   const box = { s: state.rngState }
   const rand = rng ?? (() => nextRand(box))
-  const result = calcHit(attacker, defender, rand)
+  const result = calcHit(attacker, defender, rand, tuning(ruleset))
   const newHp = Math.max(0, defender.hp - result.damage)
   const died = newHp === 0
 
@@ -598,7 +627,9 @@ export function resolvePlayerFlee(
   const partySpd = alive.filter(a => a.kind === 'party').map(a => a.speed)
   const avgParty = partySpd.reduce((t, v) => t + v, 0) / Math.max(1, partySpd.length)
   const maxEnemy = alive.filter(a => a.kind === 'enemy').reduce((m, a) => Math.max(m, a.speed), 0)
-  const chance = Math.min(0.95, Math.max(0.15, 0.5 + (avgParty - maxEnemy) * 0.04 + (attempts - 1) * 0.2))
+  const t = tuning(ruleset)
+  const chance = Math.min(0.95, Math.max(0.15,
+    t.fleeBase + (avgParty - maxEnemy) * t.fleeSpeedFactor + (attempts - 1) * t.fleeRetryBonus))
 
   if (rand() < chance) {
     return finishAction({
@@ -693,7 +724,13 @@ export function resolveEnemyTurn(
 
   // Try to use an enemy ability
   const enemyDef = enemy.defId ? ruleset.enemies.find(e => e.id === enemy.defId) : null
-  const abilities: EnemyAbility[] | undefined = enemyDef?.abilities
+  // Boss phases: abilities may be gated on the caster's HP or the round number
+  const abilities: EnemyAbility[] | undefined = enemyDef?.abilities?.filter(ab => {
+    if (!ab.when) return true
+    if (ab.when.selfHpBelow !== undefined && enemy.maxHp > 0 && enemy.hp / enemy.maxHp >= ab.when.selfHpBelow) return false
+    if (ab.when.roundAtLeast !== undefined && state.round < ab.when.roundAtLeast) return false
+    return true
+  })
 
   if (abilities?.length) {
     const totalWeight = abilities.reduce((s, a) => s + a.weight, 0)
@@ -736,7 +773,7 @@ export function resolveEnemyTurn(
   const { a: defender, i: targetIdx } = enemyDef?.targeting === 'weakest'
     ? partyTargets.reduce((m, t) => (t.a.hp < m.a.hp ? t : m), partyTargets[0])
     : partyTargets[Math.floor(rand() * partyTargets.length)]
-  const result = calcHit(enemy, defender, rand)
+  const result = calcHit(enemy, defender, rand, tuning(ruleset))
   const newHp = Math.max(0, defender.hp - result.damage)
   const died = newHp === 0
 

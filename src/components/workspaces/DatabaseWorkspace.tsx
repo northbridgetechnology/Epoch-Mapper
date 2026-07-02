@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { Plus, Trash2, Package, List, Skull, Swords, Sparkles, Zap, Store } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { Effect, EnemyDef, EncounterTableDef, ItemDef, LootTableDef, ShopDef, SpellDef, StatusEffectDef, Ruleset } from '@/lib/engine-types'
+import { SimulatePanel } from '@/components/SimulatePanel'
 import { SchemaForm } from '../forms/SchemaForm'
 import { EffectBuilder } from '../forms/EffectBuilder'
 import { ITEM_SCHEMA, LOOT_TABLE_SCHEMA, blankItem } from '@/lib/item-schema'
@@ -536,6 +537,8 @@ function EncounterTableEditor({
           ))}
         </div>
       </div>
+
+      <SimulatePanel tableId={table.id} ruleset={ruleset} />
     </div>
   )
 }
