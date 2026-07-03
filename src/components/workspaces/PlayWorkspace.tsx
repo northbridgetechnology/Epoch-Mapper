@@ -7,6 +7,7 @@ import { baseDef, overlayDef, edgeDef, boundaryKey, DEFAULT_CELL, MIN_CELL, MAX_
 import type { CellData, MapData, MarkerDef, EdgeDir } from '@/lib/types'
 import { getTheme, type MapThemeDef } from '@/lib/themes'
 import { getSubcubeDef } from '@/lib/subcube-defs'
+import { pixelSprite, pixelSpriteRect, spriteAspect } from '@/lib/pixel-sprites'
 import type { BoundaryData, CellEntity, Character, Facing, ItemInstance, Ruleset } from '@/lib/engine-types'
 import { objectUsedFlagKey, effectiveDoorState } from '@/lib/event-engine'
 import type { BattleViewState } from '@/lib/battle-scene'
@@ -305,24 +306,11 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
     const on = !!flags[sw.flag]
     const fw = near.x2 - near.x1
     const fh = near.y2 - near.y1
-    const cx = near.x1 + fw / 2
-    const cy = near.y1 + fh * 0.54
-    const pw = Math.max(4, fw * 0.09)
-    const ph = Math.max(6, fh * 0.16)
-    const tipX = on ? cx + pw * 0.42 : cx - pw * 0.42
-    const tipY = on ? cy + ph * 0.34 : cy - ph * 0.34
-    nodes.push(
-      <g key={`swl_${d}_${s}`} opacity={Math.max(0.3, 1 - depthFog(d))}>
-        <rect x={cx - pw / 2} y={cy - ph / 2} width={pw} height={ph} rx={1.5}
-          fill={pal.sideWall(d)} stroke={pal.wallEdge(d)} strokeWidth={0.8} />
-        <line x1={cx} y1={cy} x2={tipX} y2={tipY}
-          stroke={`hsl(30 30% ${Math.max(18, 42 - d * 4)}%)`}
-          strokeWidth={Math.max(1.5, pw * 0.18)} strokeLinecap="round" />
-        <circle cx={tipX} cy={tipY} r={Math.max(1.5, pw * 0.17)}
-          fill={on ? 'hsl(150 60% 45%)' : 'hsl(0 70% 52%)'} />
-        <circle cx={cx} cy={cy} r={Math.max(1, pw * 0.10)} fill={pal.wallEdge(d)} />
-      </g>,
-    )
+    const size = Math.max(8, Math.min(fw * 0.16, fh * 0.24))
+    const spr = pixelSprite(on ? 'lever_on' : 'lever_off',
+      near.x1 + fw / 2, near.y1 + fh * 0.52, size,
+      `swl_${d}_${s}`, Math.max(0.3, 1 - depthFog(d)))
+    if (spr) nodes.push(spr)
   }
 
   // ── 1. Ceiling base ──────────────────────────────────────────────────────────
@@ -520,7 +508,10 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
               const glowColor = obj.trigger === 'onInteract' ? 'rgba(56,189,248,0.30)' : obj.trigger === 'onView' ? 'rgba(52,211,153,0.30)' : 'rgba(251,191,36,0.30)'
               objNodes.push(<circle key={`scg_${d}_${s}_${obj.id}`} cx={screenX} cy={screenY} r={emojiSize * 0.75} fill={glowColor} opacity={opacity} />)
             }
-            objNodes.push(<text key={`sc_${d}_${s}_${obj.id}`} x={screenX} y={screenY} textAnchor="middle" dominantBaseline="middle" fontSize={emojiSize} opacity={opacity} style={{ userSelect: 'none' }}>{def.icon}</text>)
+            objNodes.push(
+            pixelSprite(obj.kind, screenX, screenY, emojiSize * 1.5, `sc_${d}_${s}_${obj.id}`, opacity)
+            ?? <text key={`sc_${d}_${s}_${obj.id}`} x={screenX} y={screenY} textAnchor="middle" dominantBaseline="middle" fontSize={emojiSize} opacity={opacity} style={{ userSelect: 'none' }}>{def.icon}</text>,
+          )
           }
           nodes.push(<g key={`scw_${d}_${s}`} clipPath={`url(#${clipId})`}>{objNodes}</g>)
         }
@@ -549,6 +540,7 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
           <rect key={`dth_${d}_${s}`} x={near.x1}        y={near.y2 - thresh} width={fw} height={thresh} fill={pal.frontWall(d)} />,
           <rect key={`dao_${d}_${s}`} x={near.x1} y={near.y1 - fh * 0.08} width={fw} height={fh * 0.08} fill="url(#ao-up)" />,
           <rect key={`dp_${d}_${s}`}  x={dpx} y={dpy} width={dpw} height={dph} fill={`hsl(28 45% ${woodL}%)`} />,
+          pixelSpriteRect('door_panel', dpx, dpy, dpw, dph, `dpt_${d}_${s}`, 0.9),
           <line key={`dpl1_${d}_${s}`} x1={dpx + dpw * 0.35} y1={dpy + dph * 0.04} x2={dpx + dpw * 0.35} y2={dpy + dph * 0.96} stroke="rgba(0,0,0,0.28)" strokeWidth={0.7} />,
           <line key={`dpl2_${d}_${s}`} x1={dpx + dpw * 0.65} y1={dpy + dph * 0.04} x2={dpx + dpw * 0.65} y2={dpy + dph * 0.96} stroke="rgba(0,0,0,0.28)" strokeWidth={0.7} />,
           <circle key={`dph_${d}_${s}`} cx={dpx + dpw * 0.74} cy={dpy + dph * 0.52} r={Math.max(1.5, fw * 0.028)} fill={locked ? '#b91c1c' : `hsl(44 80% ${Math.max(30, 50 - d * 4)}%)`} />,
@@ -608,141 +600,26 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
       const cx = (face.x1 + face.x2) / 2
       const entFog = depthFog(d)
 
-      // Chest geometry — flat-bottomed body with a low domed lid
-      const cW  = faceW * 0.46
-      const cH  = faceH * 0.30
-      const fb  = face.y2                  // floor line
-      const fl  = cx - cW / 2
-      const fr  = cx + cW / 2
-      const bodyH  = cH * 0.62
-      const bodyT  = fb - bodyH            // lid seam / top of body
-      const domeH  = cH * 0.38
-      const lidTop = bodyT - domeH         // apex of the closed dome
-      const bandW  = cW * 0.09
-      const bandXs = [fl + cW * 0.16 - bandW / 2, fr - cW * 0.16 - bandW / 2]
-      const rivR   = Math.max(0.8, cW * 0.013)
-      const domePath = `M ${fl},${fb} L ${fl},${bodyT} C ${fl},${lidTop} ${fr},${lidTop} ${fr},${bodyT} L ${fr},${fb} Z`
-      const uid = `${d}_${s}`
-      const clipKey = `chshape_${uid}`
-
-      // Depth-scaled palette + shared gradients (wood grain, metal sheen, gold)
-      const wL = Math.max(10, 30 - d * 3)
-      const mL = Math.max(18, 36 - d * 4)
-      const woodDk  = `hsl(26 40% ${Math.max(4, wL - 7)}%)`
-      const woodMd  = `hsl(30 46% ${wL + 5}%)`
-      const woodLt  = `hsl(34 52% ${wL + 15}%)`
-      const metalDk = `hsl(215 18% ${Math.max(8, mL - 8)}%)`
-      const metalLt = `hsl(210 16% ${mL + 16}%)`
-      const goldCol = `hsl(45 82% ${Math.max(40, 58 - d * 3)}%)`
-      const goldDk  = `hsl(38 72% ${Math.max(28, 42 - d * 3)}%)`
+      // Pixel-sprite chest, bottom-anchored on the cell floor
+      const cW = faceW * 0.5
+      const chestKind = isOpen ? 'chest_open' : 'chest'
+      const chH = cW * (spriteAspect(chestKind) ?? 0.8)
+      const fb = face.y2
       nodes.push(
-        <defs key={`chgrad${uid}`}>
-          <linearGradient id={`chw_${uid}`} x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor={woodLt} />
-            <stop offset="55%" stopColor={woodMd} />
-            <stop offset="100%" stopColor={woodDk} />
-          </linearGradient>
-          <linearGradient id={`chm_${uid}`} x1="0" y1="0" x2="1" y2="0">
-            <stop offset="0%" stopColor={metalDk} />
-            <stop offset="50%" stopColor={metalLt} />
-            <stop offset="100%" stopColor={metalDk} />
-          </linearGradient>
-          <radialGradient id={`chg_${uid}`} cx="50%" cy="35%" r="70%">
-            <stop offset="0%" stopColor={goldCol} />
-            <stop offset="100%" stopColor={goldDk} />
-          </radialGradient>
-        </defs>,
-        // Ground-contact shadow
-        <ellipse key={`chsh${uid}`} cx={cx} cy={fb} rx={cW * 0.56} ry={cH * 0.07} fill="rgba(0,0,0,0.45)" />,
+        <ellipse key={`chsh_${d}_${s}`} cx={cx} cy={fb - chH * 0.04}
+          rx={cW * 0.55} ry={chH * 0.12} fill="rgba(0,0,0,0.45)" />,
       )
-
-      if (!isOpen) {
-        // Closed chest — low dome, riveted iron bands, hasp with lock ───────
-        nodes.push(
-          <defs key={`chdef${uid}`}>
-            <clipPath id={clipKey}><path d={domePath} /></clipPath>
-          </defs>,
-          <path key={`chbody${uid}`} d={domePath} fill={`url(#chw_${uid})`} />,
-          <g key={`chdetail${uid}`} clipPath={`url(#${clipKey})`}>
-            {/* vertical plank joints */}
-            <line x1={fl + cW * 0.33} y1={lidTop} x2={fl + cW * 0.33} y2={fb} stroke="rgba(0,0,0,0.30)" strokeWidth={0.8} />
-            <line x1={fl + cW * 0.66} y1={lidTop} x2={fl + cW * 0.66} y2={fb} stroke="rgba(0,0,0,0.30)" strokeWidth={0.8} />
-            {/* sheen across the dome */}
-            <path d={`M ${fl + cW * 0.08},${bodyT} C ${fl + cW * 0.08},${lidTop + domeH * 0.16} ${fr - cW * 0.08},${lidTop + domeH * 0.16} ${fr - cW * 0.08},${bodyT}`}
-              fill="none" stroke="rgba(255,235,180,0.13)" strokeWidth={domeH * 0.30} />
-            {/* seam shadow under the lid */}
-            <rect x={fl} y={bodyT} width={cW} height={cH * 0.05} fill="rgba(0,0,0,0.35)" />
-            {/* iron bands + base plate */}
-            <rect x={bandXs[0]} y={lidTop} width={bandW} height={fb - lidTop} fill={`url(#chm_${uid})`} />
-            <rect x={bandXs[1]} y={lidTop} width={bandW} height={fb - lidTop} fill={`url(#chm_${uid})`} />
-            <rect x={fl} y={fb - cH * 0.09} width={cW} height={cH * 0.09} fill={metalDk} opacity={0.85} />
-          </g>,
-          // Rivets on the bands
-          <circle key={`chr1${uid}`} cx={bandXs[0] + bandW / 2} cy={bodyT + bodyH * 0.28} r={rivR} fill={metalLt} />,
-          <circle key={`chr2${uid}`} cx={bandXs[1] + bandW / 2} cy={bodyT + bodyH * 0.28} r={rivR} fill={metalLt} />,
-          <circle key={`chr3${uid}`} cx={bandXs[0] + bandW / 2} cy={fb - bodyH * 0.24} r={rivR} fill={metalLt} />,
-          <circle key={`chr4${uid}`} cx={bandXs[1] + bandW / 2} cy={fb - bodyH * 0.24} r={rivR} fill={metalLt} />,
-          <path key={`chout${uid}`} d={domePath} fill="none" stroke={woodDk} strokeWidth={1.2} />,
-          // Hasp plate over the seam + gold catch
-          <rect key={`chhasp${uid}`} x={cx - cW * 0.055} y={bodyT - cH * 0.09} width={cW * 0.11} height={cH * 0.22} fill={`url(#chm_${uid})`} rx={1.5} />,
-          <rect key={`chcatch${uid}`} x={cx - cW * 0.035} y={bodyT + cH * 0.02} width={cW * 0.07} height={cH * 0.10} fill={goldCol} rx={1} />,
-          isLocked && <path key={`chls${uid}`}
-            d={`M${cx - cW * 0.030},${bodyT - cH * 0.09} a${cW * 0.030},${cH * 0.09} 0 0,1 ${cW * 0.06},0`}
-            fill="none" stroke={goldCol} strokeWidth={Math.max(1, cW * 0.018)} />,
-        )
-      } else {
-        // Open chest — lid tipped back (foreshortened arc), treasure over rim ─
-        const lidH = cH * 0.46
-        const lfl = fl + cW * 0.04
-        const lfr = fr - cW * 0.04
-        const inset = cW * 0.06
-        const lidOuter = `M ${lfl},${bodyT} C ${lfl},${bodyT - lidH} ${lfr},${bodyT - lidH} ${lfr},${bodyT} Z`
-        const lidInner = `M ${lfl + inset},${bodyT} C ${lfl + inset},${bodyT - lidH * 0.78} ${lfr - inset},${bodyT - lidH * 0.78} ${lfr - inset},${bodyT} Z`
-        nodes.push(
-          // Lid underside: wooden rim around a darker interior panel
-          <path key={`chlidr${uid}`} d={lidOuter} fill={woodMd} />,
-          <path key={`chlidi${uid}`} d={lidInner} fill={woodDk} />,
-          <path key={`chlido${uid}`} d={lidOuter} fill="none" stroke={woodDk} strokeWidth={1} />,
-          // Treasure mound rising above the rim, with a couple of coins
-          <path key={`chtre${uid}`}
-            d={`M ${fl + cW * 0.07},${bodyT} Q ${cx - cW * 0.18},${bodyT - cH * 0.14} ${cx},${bodyT - cH * 0.10} Q ${cx + cW * 0.22},${bodyT - cH * 0.15} ${fr - cW * 0.07},${bodyT} Z`}
-            fill={`url(#chg_${uid})`} />,
-          <circle key={`chc1${uid}`} cx={cx - cW * 0.16} cy={bodyT - cH * 0.055} r={Math.max(1, cW * 0.022)} fill={goldCol} stroke={goldDk} strokeWidth={0.5} />,
-          <circle key={`chc2${uid}`} cx={cx + cW * 0.10} cy={bodyT - cH * 0.075} r={Math.max(1, cW * 0.022)} fill={goldCol} stroke={goldDk} strokeWidth={0.5} />,
-          // Body front: planks, bands, base plate, rim shadow
-          <rect key={`chbody${uid}`} x={fl} y={bodyT} width={cW} height={bodyH} fill={`url(#chw_${uid})`} />,
-          <line key={`chpl1${uid}`} x1={fl + cW * 0.33} y1={bodyT} x2={fl + cW * 0.33} y2={fb} stroke="rgba(0,0,0,0.30)" strokeWidth={0.8} />,
-          <line key={`chpl2${uid}`} x1={fl + cW * 0.66} y1={bodyT} x2={fl + cW * 0.66} y2={fb} stroke="rgba(0,0,0,0.30)" strokeWidth={0.8} />,
-          <rect key={`chb1${uid}`} x={bandXs[0]} y={bodyT} width={bandW} height={bodyH} fill={`url(#chm_${uid})`} />,
-          <rect key={`chb2${uid}`} x={bandXs[1]} y={bodyT} width={bandW} height={bodyH} fill={`url(#chm_${uid})`} />,
-          <rect key={`chbase${uid}`} x={fl} y={fb - cH * 0.09} width={cW} height={cH * 0.09} fill={metalDk} opacity={0.85} />,
-          <rect key={`chrim${uid}`} x={fl + cW * 0.02} y={bodyT} width={cW * 0.96} height={cH * 0.045} fill="rgba(0,0,0,0.55)" />,
-          <rect key={`chout${uid}`} x={fl} y={bodyT} width={cW} height={bodyH} fill="none" stroke={woodDk} strokeWidth={1.2} />,
-        )
-      }
-
-      // Depth fog over chest area
-      if (entFog > 0) {
-        const fogTop = isOpen ? bodyT - cH * 0.50 : lidTop
-        nodes.push(
-          <polygon key={`chfog${d}`}
-            points={`${fl},${fogTop} ${fr},${fogTop} ${fr},${fb} ${fl},${fb}`}
-            fill={`rgba(0,0,0,${entFog * 0.55})`} />,
-        )
-      }
-
-      // Lock indicator text overlay when locked
+      const chestSpr = pixelSpriteRect(chestKind, cx - cW / 2, fb - chH, cW, chH,
+        `chest_${d}_${s}`, Math.max(0.35, 1 - entFog * 0.8))
+      if (chestSpr) nodes.push(chestSpr)
       if (isLocked) {
-        const iconSz = Math.max(8, faceW * 0.09)
         nodes.push(
-          <text key={`chlockicon${d}`}
-            x={cx} y={bodyT + bodyH * 0.45}
+          <text key={`chlock_${d}_${s}`} x={cx} y={fb - chH * 0.42}
             textAnchor="middle" dominantBaseline="middle"
-            fontSize={iconSz} opacity={Math.max(0.5, 1 - entFog * 0.6)}
-          >🔒</text>,
+            fontSize={Math.max(8, cW * 0.18)} opacity={Math.max(0.5, 1 - entFog * 0.6)}
+            style={{ userSelect: 'none' }}>🔒</text>,
         )
       }
-
       return
     }
 
