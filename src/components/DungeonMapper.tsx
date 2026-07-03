@@ -26,7 +26,7 @@ import { DatabaseWorkspace } from './workspaces/DatabaseWorkspace'
 import { PlayWorkspace } from './workspaces/PlayWorkspace'
 import { SettingsWorkspace } from './workspaces/SettingsWorkspace'
 import type { BoundaryData, Character, CellEntity, DoorDef, DoorState, Facing, Formation, ItemInstance, ResolvedEncounter, Ruleset, SwitchDef } from '@/lib/engine-types'
-import { makeDefaultRuleset } from '@/lib/default-ruleset'
+import { makeDefaultRuleset, normalizeRuleset } from '@/lib/default-ruleset'
 import { savePartyTemplate, loadPartyTemplate } from '@/lib/save-state'
 import { checkCellForEncounter, resolveEncounterTable, visitedFlagKey } from '@/lib/encounter-engine'
 import { EncounterModal } from './EncounterModal'
@@ -285,7 +285,7 @@ export function DungeonMapper({
     setRomHash(session.romHash ?? '')
     setCustomMarkers(session.customMarkers ?? [])
     setMaps(session.maps)
-    if (session.ruleset) setRuleset(session.ruleset)
+    if (session.ruleset) setRuleset(normalizeRuleset(session.ruleset))
     setActiveIdx(0)
     // Custom marker IDs are monotonic within a session and never reused (§5.3).
     // Recover the counter from a persisted value, falling back to max(used)+1.
@@ -418,7 +418,7 @@ export function DungeonMapper({
       setShopId(result.openShop)
     }
     if (result.dialogueNode) {
-      const def = ruleset.npcs.find(n => n.id === result.dialogueNode)
+      const def = (ruleset.npcs ?? []).find(n => n.id === result.dialogueNode)
       if (def) {
         const mergedCtx = { ...makeEventContext(), flags: { ...flagsRef.current, ...result.flagSets } }
         const line = pickNpcLine(def, mergedCtx)
@@ -426,7 +426,7 @@ export function DungeonMapper({
       }
     }
     for (const qu of result.questUpdates) {
-      const q = ruleset.quests.find(x => x.id === qu.quest)
+      const q = (ruleset.quests ?? []).find(x => x.id === qu.quest)
       const done = q && qu.stage >= q.stages.length
       toast(done ? `📜 Quest complete — ${q?.name ?? qu.quest}` : `📜 Journal updated — ${q?.name ?? qu.quest}`)
     }
@@ -621,7 +621,7 @@ export function DungeonMapper({
     if (!aheadCell?.entities?.length) return
     for (const ent of aheadCell.entities) {
       if (ent.t !== 'object' || ent.object.kind !== 'npc' || !ent.object.npc) continue
-      const def = ruleset.npcs.find(n => n.id === ent.object.npc)
+      const def = (ruleset.npcs ?? []).find(n => n.id === ent.object.npc)
       if (!def) continue
       const ctx = makeEventContext()
       const line = pickNpcLine(def, ctx, { bark: true })
@@ -775,7 +775,7 @@ export function DungeonMapper({
           return
         }
         if (obj.kind === 'npc' && obj.npc) {
-          const def = ruleset.npcs.find(n => n.id === obj.npc)
+          const def = (ruleset.npcs ?? []).find(n => n.id === obj.npc)
           if (def) {
             const line = pickNpcLine(def, ctx)
             if (line) setDialogue({ npcId: def.id, lineId: line.id })
@@ -1208,9 +1208,9 @@ export function DungeonMapper({
     if (world && (world.npcs.length || world.quests.length || world.events.length)) {
       setRuleset(r => ({
         ...r,
-        npcs: [...r.npcs.filter(n => !world.npcs.some(w => w.id === n.id)), ...world.npcs],
-        quests: [...r.quests.filter(q => !world.quests.some(w => w.id === q.id)), ...world.quests],
-        events: [...r.events.filter(e => !world.events.some(w => w.id === e.id)), ...world.events],
+        npcs: [...(r.npcs ?? []).filter(n => !world.npcs.some(w => w.id === n.id)), ...world.npcs],
+        quests: [...(r.quests ?? []).filter(q => !world.quests.some(w => w.id === q.id)), ...world.quests],
+        events: [...(r.events ?? []).filter(e => !world.events.some(w => w.id === e.id)), ...world.events],
       }))
     }
 
@@ -1920,7 +1920,7 @@ export function DungeonMapper({
 
       {/* NPC dialogue (listening) overlay */}
       {dialogue && activeMap && (() => {
-        const npcDef = ruleset.npcs.find(n => n.id === dialogue.npcId)
+        const npcDef = (ruleset.npcs ?? []).find(n => n.id === dialogue.npcId)
         const line = npcDef?.lines.find(l => l.id === dialogue.lineId)
         if (!npcDef || !line) return null
         return (

@@ -101,7 +101,7 @@ export type {
 export { deriveMaxHp, deriveMaxMp, xpToNextLevel } from './lib/engine-types'
 
 // Default ruleset
-export { makeDefaultRuleset, DEFAULT_ATTRIBUTES, DEFAULT_CLASSES, DEFAULT_RACES, DEFAULT_SPELLS, DEFAULT_STATUS_EFFECTS } from './lib/default-ruleset'
+export { makeDefaultRuleset, normalizeRuleset, DEFAULT_ATTRIBUTES, DEFAULT_CLASSES, DEFAULT_RACES, DEFAULT_SPELLS, DEFAULT_STATUS_EFFECTS } from './lib/default-ruleset'
 
 // .epochsave codec + party persistence
 export {

@@ -1521,6 +1521,26 @@ export const DEFAULT_SHOPS: ShopDef[] = [
 
 // ── Ruleset ────────────────────────────────────────────────────────────────────
 
+/**
+ * Backfill collections added after a ruleset was saved — drafts and imports
+ * from older versions lack newer tables (events/npcs/quests, etc.).
+ */
+export function normalizeRuleset(r: Ruleset): Ruleset {
+  return {
+    ...r,
+    items: r.items ?? [],
+    spells: r.spells ?? [],
+    statusEffects: r.statusEffects ?? [],
+    enemies: r.enemies ?? [],
+    encounterTables: r.encounterTables ?? [],
+    lootTables: r.lootTables ?? [],
+    shops: r.shops ?? [],
+    events: r.events ?? [],
+    npcs: r.npcs ?? [],
+    quests: r.quests ?? [],
+  }
+}
+
 export function makeDefaultRuleset(startMapId = 'map1'): Ruleset {
   return {
     meta: {
