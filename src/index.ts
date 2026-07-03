@@ -14,6 +14,10 @@ export { Toolbar } from './components/Toolbar'
 // PDF export
 export { exportMapsAsPdf } from './lib/dungeon-export'
 
+// Procedural generation
+export { buildBaseMap, buildGeneratedMap, buildGeneratedWorld, SIZE_DIM } from './lib/map-generator'
+export type { NewMapConfig, MapSize, GeneratedWorld } from './lib/map-generator'
+
 // .epochmap codec
 export {
   parseDotEpochmap,

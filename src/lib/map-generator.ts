@@ -5,9 +5,18 @@
  */
 
 import { BASE, EDGE, OVERLAY, CHUNK_SIZE, boundaryKey } from './constants'
-import type { CellMap, MapData, EdgeDir } from './types'
-import type { BoundaryData, CellEntity, Ruleset } from './engine-types'
+import type { CellMap, MapData, EdgeDir, SubcubeObject, SubcubePos } from './types'
+import type { BoundaryData, CellEntity, EventDef, NpcDef, QuestDef, Ruleset } from './engine-types'
 import { uid } from './utils'
+
+/** Everything a generated map contributes: the map itself plus the ruleset
+ *  content (NPCs, quest, events) that its story wiring references. */
+export interface GeneratedWorld {
+  map: MapData
+  npcs: NpcDef[]
+  quests: QuestDef[]
+  events: EventDef[]
+}
 
 export type MapSize = 'small' | 'medium' | 'large'
 
@@ -161,7 +170,12 @@ export function buildBaseMap(name: string, config: NewMapConfig): MapData {
 
 // ── BSP dungeon map ────────────────────────────────────────────────────────────
 
+/** Back-compat wrapper: generated map only, ruleset additions discarded. */
 export function buildGeneratedMap(name: string, config: NewMapConfig, ruleset: Ruleset): MapData {
+  return buildGeneratedWorld(name, config, ruleset).map
+}
+
+export function buildGeneratedWorld(name: string, config: NewMapConfig, ruleset: Ruleset): GeneratedWorld {
   const rng   = makePrng(config.seed)
   const dim   = SIZE_DIM[config.size]
   const minLeaf = dim <= 40 ? 10 : dim <= 64 ? 12 : 14
@@ -297,15 +311,6 @@ export function buildGeneratedMap(name: string, config: NewMapConfig, ruleset: R
       cells[ck] = { ...existing, entities: [...(existing.entities ?? []), chestEnt] }
     }
 
-    // NPC (25% per room with width > 5)
-    if (rng() < 0.25 && room.w > 5) {
-      const nx = room.x + room.w - 2
-      const ny = room.y + 1
-      const nk = `${nx},${ny}`
-      const nc = cells[nk] ?? { base: BASE.FLOOR, overlays: [] }
-      if (!nc.overlays?.length) cells[nk] = { ...nc, overlays: [OVERLAY.NPC] }
-    }
-
     // Save point (one per map)
     if (!savePointPlaced && rng() < 0.35) {
       const rc = center(room)
@@ -318,10 +323,217 @@ export function buildGeneratedMap(name: string, config: NewMapConfig, ruleset: R
     }
   }
 
+  // ── Sub-cube dressing: torches, clutter, webs, vermin ──────────────────────
+  const addSubcube = (key: string, kind: string, pos: SubcubePos) => {
+    const c = cells[key]
+    if (!c) return
+    const obj: SubcubeObject = { id: uid(), kind, pos }
+    cells[key] = { ...c, subcubeObjects: [...(c.subcubeObjects ?? []), obj] }
+  }
+  const side = (): 0 | 2 => (rng() < 0.5 ? 0 : 2)
+
+  for (const leaf of withRooms) {
+    const room = leaf.room
+    // wall lights along the top edge
+    for (let rx = room.x; rx < room.x + room.w; rx++) {
+      if (rng() < 0.15) addSubcube(`${rx},${room.y}`, rng() < 0.6 ? 'torch' : 'sconce', { x: side(), y: 1, z: 2 })
+    }
+    // corner clutter + cobwebs
+    if (rng() < 0.35) addSubcube(`${room.x},${room.y}`, rng() < 0.5 ? 'barrel' : 'crate', { x: 0, y: 0, z: 2 })
+    if (rng() < 0.25) addSubcube(`${room.x + room.w - 1},${room.y + room.h - 1}`, 'cobweb', { x: 2, y: 2, z: 2 })
+    if (rng() < 0.15 && room.w >= 6 && room.h >= 6) {
+      const c = center(room)
+      addSubcube(`${c.x},${c.y}`, 'pillar', { x: 1, y: 0, z: 1 })
+    }
+  }
+  for (const key of Object.keys(cells)) {
+    if (roomCells.has(key)) continue
+    const roll = rng()
+    if (roll < 0.03)      addSubcube(key, 'cobweb', { x: side(), y: 2, z: 1 })
+    else if (roll < 0.05) addSubcube(key, 'rat',    { x: 1, y: 0, z: 1 })
+    else if (roll < 0.07) addSubcube(key, 'chains', { x: side(), y: 1, z: 1 })
+  }
+  // the boss den is dressed to read dangerous
+  addSubcube(`${bossC.x - 1},${bossC.y}`, 'bones', { x: 1, y: 0, z: 1 })
+  addSubcube(`${bossC.x},${bossC.y - 1}`, 'altar', { x: 1, y: 0, z: 2 })
+
+  // ── Story wiring: sealed vault, twin levers, hermit, quest ─────────────────
+  const npcs: NpcDef[] = []
+  const quests: QuestDef[] = []
+  const events: EventDef[] = []
+  const OPP: Record<EdgeDir, EdgeDir> = { N: 'S', S: 'N', E: 'W', W: 'E' }
+  const inRect = (r: Rect, x: number, y: number) => x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h
+
+  const puzzleRooms = sideRooms.length >= 3 ? sideRooms : []
+  if (puzzleRooms.length >= 3) {
+    const seedTag = config.seed >>> 0
+    const qid = `q.vault_${seedTag}`
+    const flagA = `${qid}.lever_a`
+    const flagB = `${qid}.lever_b`
+
+    // Vault: the side room farthest from the start
+    let vaultLeaf = puzzleRooms[0]
+    let vMax = -1
+    for (const l of puzzleRooms) {
+      const c = center(l.room)
+      const d = dist2(c.x, c.y, startC.x, startC.y)
+      if (d > vMax) { vMax = d; vaultLeaf = l }
+    }
+    const vault = vaultLeaf.room
+    const vaultC = center(vault)
+
+    // Seal every entrance (room-edge cell with corridor floor outside)
+    let sealed = 0
+    for (let ry = vault.y; ry < vault.y + vault.h; ry++) {
+      for (let rx = vault.x; rx < vault.x + vault.w; rx++) {
+        for (const dir of DIRS) {
+          const [dx, dy] = DELTA[dir]
+          const nx = rx + dx, ny = ry + dy
+          if (inRect(vault, nx, ny) || !cells[`${nx},${ny}`]) continue
+          boundaries[boundaryKey(rx, ry, dir)] = {
+            wall: EDGE.DOOR,
+            door: { state: 'locked', requiredFlags: [flagA, flagB] },
+          }
+          sealed++
+        }
+      }
+    }
+
+    // Twin levers mounted in two other rooms (on existing wall stripes)
+    const hosts = puzzleRooms.filter(l => l !== vaultLeaf)
+    const placeSwitch = (leaf: LeafWithRoom, flag: string): boolean => {
+      const room = leaf.room
+      const spots: { x: number; y: number; dir: EdgeDir }[] = []
+      for (let ry = room.y; ry < room.y + room.h; ry++) {
+        for (let rx = room.x; rx < room.x + room.w; rx++) {
+          for (const dir of DIRS) {
+            const [dx, dy] = DELTA[dir]
+            if (!cells[`${rx + dx},${ry + dy}`]) spots.push({ x: rx, y: ry, dir })
+          }
+        }
+      }
+      if (spots.length === 0) return false
+      const spot = pickRandom(rng, spots)
+      const bk = boundaryKey(spot.x, spot.y, spot.dir)
+      boundaries[bk] = {
+        ...(boundaries[bk] ?? { wall: EDGE.WALL }),
+        switch: { id: uid(), flag, mode: 'toggle', facing: OPP[spot.dir] },
+      }
+      return true
+    }
+    const okA = placeSwitch(hosts[0], flagA)
+    const okB = placeSwitch(hosts[1 % hosts.length], flagB)
+
+    if (sealed > 0 && okA && okB) {
+      // Guaranteed hoard + claim event inside the vault
+      const vk = `${vaultC.x},${vaultC.y}`
+      const vc = cells[vk] ?? { base: BASE.FLOOR, overlays: [] }
+      const hoard: CellEntity = {
+        t: 'object',
+        object: { kind: 'chest', id: uid(), ...(lootIds.length > 0 ? { loot: pickRandom(rng, lootIds) } : {}) },
+      }
+      const claim: CellEntity = {
+        t: 'event',
+        event: {
+          id: `${qid}.claim`, name: 'Vault claimed', trigger: 'onEnter', once: true,
+          conditions: [{ c: 'questStage', quest: qid, min: 2 }],
+          effects: [{ t: 'questStage', quest: qid, stage: 3 }],
+        },
+      }
+      cells[vk] = { ...vc, entities: [...(vc.entities ?? []), hoard, claim] }
+
+      quests.push({
+        id: qid, name: 'The Sealed Vault',
+        description: 'Rumors of a hoard behind twin levers.',
+        stages: [
+          { id: 's1', description: 'An old hermit spoke of a vault sealed by twin levers, hidden in separate halls.' },
+          { id: 's2', description: 'Stone released somewhere in the deep — find the vault and claim its hoard.' },
+          { id: 's3', description: 'The vault yielded its hoard.' },
+        ],
+      })
+
+      events.push({
+        id: `${qid}.open`, name: 'Vault unsealed', trigger: 'onFlag', once: true,
+        conditions: [
+          { c: 'flag', flag: flagA, equals: true },
+          { c: 'flag', flag: flagB, equals: true },
+        ],
+        effects: [
+          { t: 'message', text: 'A deep rumble rolls through the halls — somewhere, stone releases.' },
+          { t: 'questStage', quest: qid, stage: 2 },
+        ],
+      })
+
+      // The hermit who starts it all, placed beside the party start
+      const hermitId = `npc.hermit_${seedTag}`
+      npcs.push({
+        id: hermitId, name: 'Old Hermit', portrait: '🧙',
+        description: 'A stooped figure who has watched these halls too long.',
+        level: 3, attributes: {},
+        lines: [
+          { id: 'hail', text: ['…another one comes.'], bark: true, once: true },
+          {
+            id: 'rumor',
+            text: ['A vault lies sealed in these halls.', 'Twin levers, twin rooms. Throw them both, and the stone will yield.'],
+            effects: [{ t: 'questStage', quest: qid, stage: 1 }],
+          },
+          {
+            id: 'opened', priority: 5,
+            text: ['You woke the vault. Claim what is owed — before something else does.'],
+            conditions: [{ c: 'questStage', quest: qid, min: 2 }],
+          },
+          {
+            id: 'done', priority: 9,
+            text: ['Spend it well, wanderer.'],
+            conditions: [{ c: 'questStage', quest: qid, min: 3 }],
+          },
+        ],
+      })
+      const hermitSpots = [
+        `${startC.x + 1},${startC.y}`, `${startC.x - 1},${startC.y}`,
+        `${startC.x},${startC.y + 1}`, `${startC.x},${startC.y - 1}`,
+      ]
+      for (const hk of hermitSpots) {
+        const hc = cells[hk]
+        if (hc && !hc.overlays?.length && !hc.entities?.length) {
+          cells[hk] = { ...hc, entities: [{ t: 'object', object: { kind: 'npc', id: uid(), npc: hermitId } }] }
+          break
+        }
+      }
+    }
+  }
+
+  // A wandering flavour NPC in a random side room (when space allows)
+  if (sideRooms.length > 0 && rng() < 0.6) {
+    const seedTag = config.seed >>> 0
+    const wandererId = `npc.wanderer_${seedTag}`
+    npcs.push({
+      id: wandererId, name: 'Wanderer', portrait: '🧝',
+      description: 'A traveller with no destination left.',
+      level: 1, attributes: {},
+      lines: [
+        { id: 'hail', text: ['Keep your torch lit.'], bark: true, once: true },
+        { id: 'talk', text: ['These halls change when levers turn.', 'I have heard doors sigh open three rooms away.'] },
+      ],
+    })
+    const wl = pickRandom(rng, sideRooms)
+    const wc = center(wl.room)
+    const wk = `${wc.x},${wc.y - 1}`
+    const wcell = cells[wk]
+    if (wcell && !wcell.entities?.length) {
+      cells[wk] = { ...wcell, entities: [{ t: 'object', object: { kind: 'npc', id: uid(), npc: wandererId } }] }
+    }
+  }
+
   return {
-    id: uid(), name, cells, boundaries,
-    playerX: startC.x, playerY: startC.y,
-    revealedChunks: allChunkKeys(dim),
-    seed: config.seed,
+    map: {
+      id: uid(), name, cells, boundaries,
+      playerX: startC.x, playerY: startC.y,
+      revealedChunks: allChunkKeys(dim),
+      seed: config.seed,
+    },
+    npcs,
+    quests,
+    events,
   }
 }

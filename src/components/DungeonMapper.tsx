@@ -18,7 +18,7 @@ import { Map, Database, Users, Play, Settings } from 'lucide-react'
 import { Toolbar } from './Toolbar'
 import { WelcomeModal } from './WelcomeModal'
 import { NewMapModal } from './NewMapModal'
-import { buildBaseMap, buildGeneratedMap, type NewMapConfig } from '@/lib/map-generator'
+import { buildBaseMap, buildGeneratedWorld, type NewMapConfig } from '@/lib/map-generator'
 import { CellTooltip } from './CellTooltip'
 import { MarkerPalette } from './MarkerPalette'
 import { PartyWorkspace } from './workspaces/PartyWorkspace'
@@ -1200,9 +1200,19 @@ export function DungeonMapper({
   const doNew = useCallback(() => { setNewMapMode('session') }, [])
 
   const handleNewMapConfirm = useCallback((config: NewMapConfig) => {
-    const map = config.generate
-      ? buildGeneratedMap(config.name, config, ruleset)
-      : buildBaseMap(config.name, config)
+    const world = config.generate ? buildGeneratedWorld(config.name, config, ruleset) : null
+    const map = world ? world.map : buildBaseMap(config.name, config)
+
+    // Generated story content (NPCs, quest, events) joins the ruleset so the
+    // map's dialogue, levers, and journal entries work out of the box
+    if (world && (world.npcs.length || world.quests.length || world.events.length)) {
+      setRuleset(r => ({
+        ...r,
+        npcs: [...r.npcs.filter(n => !world.npcs.some(w => w.id === n.id)), ...world.npcs],
+        quests: [...r.quests.filter(q => !world.quests.some(w => w.id === q.id)), ...world.quests],
+        events: [...r.events.filter(e => !world.events.some(w => w.id === e.id)), ...world.events],
+      }))
+    }
 
     if (newMapMode === 'session') {
       historyRef.current = []
