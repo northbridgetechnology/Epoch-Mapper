@@ -2334,6 +2334,15 @@ function Viewport(props: ViewportProps) {
                       <span className="absolute top-0 right-0 z-10 block w-0 h-0 border-t-[6px] border-l-[6px] border-t-amber-300 border-l-transparent" />
                     )}
 
+                    {/* quest reference marker (editor-only aid — never shown in play) */}
+                    {cell.entities && cellSize >= 14 && JSON.stringify(cell.entities).includes('questStage') && (
+                      <span
+                        title="References a quest"
+                        className="absolute bottom-0 right-0 z-10 leading-none pointer-events-none"
+                        style={{ fontSize: Math.max(7, cellSize * 0.3) }}
+                      >📜</span>
+                    )}
+
                     {/* boundary edges */}
                     {(['N', 'S', 'E', 'W'] as EdgeDir[]).map((dir) => {
                       const b = map.boundaries?.[boundaryKey(x, y, dir)]

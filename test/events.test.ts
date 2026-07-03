@@ -11,8 +11,12 @@ import {
   applyFlagWriteWithReactions,
   questStageFlagKey,
   visitedEventFlagKey,
+  pickNpcLine,
+  finishNpcLine,
+  npcLineHeardFlagKey,
   type EventContext,
 } from '../src/lib/event-engine'
+import type { NpcDef } from '../src/lib/engine-types'
 import type { CellData } from '../src/lib/types'
 import type { CellEvent, Ruleset } from '../src/lib/engine-types'
 
@@ -138,6 +142,39 @@ test('first teleport wins when two events both teleport', () => {
   )
   const r = runCellEvents(cell, 'onEnter', ctx(), ruleset)
   assert.equal(r.teleportTo?.mapId, 'm1')
+})
+
+// ── NPC lines ─────────────────────────────────────────────────────────────────
+
+const guard: NpcDef = {
+  id: 'npc.guard', name: 'Guard', lines: [
+    { id: 'default', text: ['Move along.'] },
+    { id: 'warn', text: ['The crypt is open?!', 'Fool.'], priority: 5,
+      conditions: [{ c: 'flag', flag: 'crypt.open', equals: true }] },
+    { id: 'secret', text: ['Take this.'], priority: 9, once: true,
+      conditions: [{ c: 'flag', flag: 'crypt.open', equals: true }],
+      effects: [{ t: 'gold', amount: 25 }] },
+    { id: 'hail', text: ['Halt!'], bark: true, once: true },
+  ],
+} as NpcDef
+
+test('pickNpcLine: highest passing priority wins, default as fallback', () => {
+  assert.equal(pickNpcLine(guard, ctx())?.id, 'default')
+  assert.equal(pickNpcLine(guard, ctx({ 'crypt.open': true }))?.id, 'secret')
+  const heardSecret = ctx({ 'crypt.open': true, [npcLineHeardFlagKey('npc.guard', 'secret')]: true })
+  assert.equal(pickNpcLine(guard, heardSecret)?.id, 'warn')   // once line spent → next priority
+})
+
+test('pickNpcLine: barks are picked separately from spoken lines', () => {
+  assert.equal(pickNpcLine(guard, ctx(), { bark: true })?.id, 'hail')
+  assert.equal(pickNpcLine(guard, ctx({ [npcLineHeardFlagKey('npc.guard', 'hail')]: true }), { bark: true }), null)
+})
+
+test('finishNpcLine marks the line heard and applies its effects', () => {
+  const line = guard.lines.find(l => l.id === 'secret')!
+  const r = finishNpcLine(guard, line, null, ctx({ 'crypt.open': true }), ruleset)
+  assert.equal(r.flagSets[npcLineHeardFlagKey('npc.guard', 'secret')], true)
+  assert.equal(r.goldDelta, 25)
 })
 
 console.log(`\n${passed} passed`)

@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ArrowUp, ArrowDown, ArrowLeft, ArrowRight, ZoomIn, ZoomOut, Coins, Map, Eye } from 'lucide-react'
+import { ArrowUp, ArrowDown, ArrowLeft, ArrowRight, ZoomIn, ZoomOut, Coins, Map, Eye, ScrollText } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { baseDef, overlayDef, edgeDef, boundaryKey, DEFAULT_CELL, MIN_CELL, MAX_CELL, BASE, EDGE } from '@/lib/constants'
 import type { CellData, MapData, MarkerDef, EdgeDir } from '@/lib/types'
@@ -12,6 +12,7 @@ import { objectUsedFlagKey, effectiveDoorState } from '@/lib/event-engine'
 import type { BattleViewState } from '@/lib/battle-scene'
 import type { CombatState } from '@/lib/combat-engine'
 import { useBattleController, BattleHud, BattleOutcomeOverlay } from '@/components/BattleHud'
+import { JournalOverlay } from '@/components/JournalOverlay'
 
 // ── Props ─────────────────────────────────────────────────────────────────────
 
@@ -1152,6 +1153,20 @@ export function PlayWorkspace({
   // Battles play out in first person — snap to the 3D view when one starts
   useEffect(() => { if (combat) setView('3d') }, [combat])
 
+  // Journal (J) — quests + lore, derived from save flags
+  const [showJournal, setShowJournal] = useState(false)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.key === 'j' || e.key === 'J') && !e.metaKey && !e.ctrlKey) {
+        const tag = (e.target as HTMLElement)?.tagName
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
+        setShowJournal(v => !v)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
   const viewRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
     if (!bumpTrigger) return
@@ -1185,6 +1200,13 @@ export function PlayWorkspace({
           <span className="text-amber-400/70 font-mono">{facing}</span>
         </div>
         <div className="flex items-center gap-1">
+          <button
+            onClick={() => setShowJournal(v => !v)}
+            title="Journal (J)"
+            className="flex items-center gap-1 px-2 h-6 rounded text-xs text-white/40 hover:text-white hover:bg-white/10 transition-colors"
+          >
+            <ScrollText className="w-3.5 h-3.5" />
+          </button>
           <button
             onClick={() => setView(v => v === '3d' ? 'map' : '3d')}
             title={view === '3d' ? 'Switch to map view' : 'Switch to 3D view'}
@@ -1220,6 +1242,7 @@ export function PlayWorkspace({
             ruleset={ruleset}
           />
           {combat && <BattleOutcomeOverlay state={combat} ruleset={ruleset} onContinue={onCombatEnd} />}
+          {showJournal && <JournalOverlay ruleset={ruleset} flags={flags} onClose={() => setShowJournal(false)} />}
         </div>
       ) : (
         <DungeonViewport
