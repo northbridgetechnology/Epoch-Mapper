@@ -8,7 +8,7 @@ import type { CellData, MapData, MarkerDef, EdgeDir } from '@/lib/types'
 import { getTheme, type MapThemeDef } from '@/lib/themes'
 import { getSubcubeDef } from '@/lib/subcube-defs'
 import type { BoundaryData, CellEntity, Character, Facing, ItemInstance, Ruleset } from '@/lib/engine-types'
-import { objectUsedFlagKey } from '@/lib/event-engine'
+import { objectUsedFlagKey, effectiveDoorState } from '@/lib/event-engine'
 import type { BattleViewState } from '@/lib/battle-scene'
 import type { CombatState } from '@/lib/combat-engine'
 import { useBattleController, BattleHud, BattleOutcomeOverlay } from '@/components/BattleHud'
@@ -239,16 +239,18 @@ function isWall(map: MapData, x: number, y: number): boolean {
 function hasBoundaryWall(
   map: MapData, x: number, y: number, dir: EdgeDir,
   revealedBoundaries?: Set<string>,
+  flags?: Record<string, boolean | number | string>,
 ): boolean {
   const bk = boundaryKey(x, y, dir)
   const b = map.boundaries?.[bk]
   if (!b) return false
+  const doorOpen = b.door ? effectiveDoorState(b.door, flags ?? {}) === 'open' : false
   if (b.wall !== undefined) {
     if (b.wall === EDGE.ILLUSORY) return revealedBoundaries ? !revealedBoundaries.has(bk) : true
-    if (b.wall === EDGE.DOOR) return b.door ? b.door.state !== 'open' : true
+    if (b.wall === EDGE.DOOR) return b.door ? !doorOpen : true
     return true
   }
-  return b.door !== undefined && b.door.state !== 'open'
+  return b.door !== undefined && !doorOpen
 }
 
 // ── SVG component ──────────────────────────────────────────────────────────────
@@ -277,7 +279,7 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
   function hasSideWallAt(d: number, s: number, side: 'left' | 'right'): boolean {
     const [cx, cy] = cellAt(d, s)
     const dir = side === 'right' ? rightOf(facing) : leftOf(facing)
-    if (hasBoundaryWall(map, cx, cy, dir, revealedBoundaries)) return true
+    if (hasBoundaryWall(map, cx, cy, dir, revealedBoundaries, flags)) return true
     const sideS = side === 'right' ? s + 1 : s - 1
     if (sideS < -MAX_S || sideS > MAX_S) return true
     const [sx, sy] = cellAt(d, sideS)
@@ -285,6 +287,41 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
   }
 
   const nodes: React.ReactNode[] = []
+
+  // ── Wall-mounted switch lever ────────────────────────────────────────────────
+  // Drawn on a visible wall face when its boundary carries a switch whose face
+  // points toward the player (mounted side only). Plate colours derive from
+  // the theme palette so the mount matches the surrounding wall.
+  const OPP_DIR: Record<EdgeDir, EdgeDir> = { N: 'S', S: 'N', E: 'W', W: 'E' }
+  function drawWallSwitch(
+    ncx: number, ncy: number,
+    near: { x1: number; y1: number; x2: number; y2: number },
+    d: number, s: number,
+  ) {
+    const sw = map.boundaries?.[boundaryKey(ncx, ncy, frontOf(facing))]?.switch
+    if (!sw || sw.facing !== OPP_DIR[facing as unknown as EdgeDir]) return
+    const on = !!flags[sw.flag]
+    const fw = near.x2 - near.x1
+    const fh = near.y2 - near.y1
+    const cx = near.x1 + fw / 2
+    const cy = near.y1 + fh * 0.54
+    const pw = Math.max(4, fw * 0.09)
+    const ph = Math.max(6, fh * 0.16)
+    const tipX = on ? cx + pw * 0.42 : cx - pw * 0.42
+    const tipY = on ? cy + ph * 0.34 : cy - ph * 0.34
+    nodes.push(
+      <g key={`swl_${d}_${s}`} opacity={Math.max(0.3, 1 - depthFog(d))}>
+        <rect x={cx - pw / 2} y={cy - ph / 2} width={pw} height={ph} rx={1.5}
+          fill={pal.sideWall(d)} stroke={pal.wallEdge(d)} strokeWidth={0.8} />
+        <line x1={cx} y1={cy} x2={tipX} y2={tipY}
+          stroke={`hsl(30 30% ${Math.max(18, 42 - d * 4)}%)`}
+          strokeWidth={Math.max(1.5, pw * 0.18)} strokeLinecap="round" />
+        <circle cx={tipX} cy={tipY} r={Math.max(1.5, pw * 0.17)}
+          fill={on ? 'hsl(150 60% 45%)' : 'hsl(0 70% 52%)'} />
+        <circle cx={cx} cy={cy} r={Math.max(1, pw * 0.10)} fill={pal.wallEdge(d)} />
+      </g>,
+    )
+  }
 
   // ── 1. Ceiling base ──────────────────────────────────────────────────────────
   // Bands from screen-top (closest overhead) toward horizon (d=MAX_D)
@@ -399,6 +436,7 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
           <rect key={`fwao_${d}_${s}`} x={near.x1} y={near.y1 - fh * 0.08} width={fw} height={fh * 0.08} fill="url(#ao-up)" />,
           fog > 0 && <rect key={`fwf_${d}_${s}`} x={near.x1} y={near.y1} width={fw} height={fh} fill={`rgba(0,0,0,${fog})`} />,
         )
+        drawWallSwitch(ncx, ncy, near, d, s)
         continue
       }
 
@@ -489,14 +527,15 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
       // Near boundary between (d-1,s) and (d,s): wall / door / revealed illusion
       const bk = boundaryKey(ncx, ncy, frontOf(facing))
       const fb = map.boundaries?.[bk] ?? null
-      const blocked = hasBoundaryWall(map, ncx, ncy, frontOf(facing), revealedBoundaries)
+      const blocked = hasBoundaryWall(map, ncx, ncy, frontOf(facing), revealedBoundaries, flags)
       const ghost = fb?.wall === EDGE.ILLUSORY && (revealedBoundaries?.has(bk) ?? false)
       const isDoor = fb?.wall === EDGE.DOOR
 
+      const doorEff = fb?.door ? effectiveDoorState(fb.door, flags) : undefined
       if (ghost) {
         nodes.push(<rect key={`fwg_${d}_${s}`} x={near.x1} y={near.y1} width={fw} height={fh} fill="rgba(160,200,255,0.12)" />)
       } else if (blocked && isDoor) {
-        const locked = (fb?.door?.state ?? 'closed') === 'locked'
+        const locked = (doorEff ?? 'closed') === 'locked'
         const jamb = fw * 0.10, lintel = fh * 0.08, thresh = fh * 0.04
         const dpx = near.x1 + jamb, dpy = near.y1 + lintel
         const dpw = fw - jamb * 2,  dph = fh - lintel - thresh
@@ -521,7 +560,8 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
           <rect key={`bwao_${d}_${s}`} x={near.x1} y={near.y1 - fh * 0.08} width={fw} height={fh * 0.08} fill="url(#ao-up)" />,
           fog > 0 && <rect key={`bwf_${d}_${s}`} x={near.x1} y={near.y1} width={fw} height={fh} fill={`rgba(0,0,0,${fog})`} />,
         )
-      } else if (isDoor && fb?.door?.state === 'open') {
+        drawWallSwitch(ncx, ncy, near, d, s)
+      } else if (isDoor && doorEff === 'open') {
         const jamb = fw * 0.10, lintel = fh * 0.08, thresh = fh * 0.04
         nodes.push(
           <rect key={`djlo_${d}_${s}`} x={near.x1}        y={near.y1} width={jamb} height={fh}     fill={pal.frontWall(d)} />,

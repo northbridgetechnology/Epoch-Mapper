@@ -26,6 +26,10 @@ function entityLabel(ent: CellEntity): string {
 }
 
 function boundaryLabel(b: BoundaryData): string {
+  if (b.switch) {
+    const base = b.door ? `Door (${b.door.state})` : b.wall !== undefined ? edgeDef(b.wall).label : 'Wall'
+    return `${base} · Switch`
+  }
   if (b.door) return `Door (${b.door.state})`
   if (b.wall !== undefined) return edgeDef(b.wall).label
   if (b.blocked) return 'Impassable'

@@ -11,6 +11,28 @@ import type {
   Character, Ruleset, Facing,
 } from './engine-types'
 
+// ── Doors ─────────────────────────────────────────────────────────────────────
+
+/**
+ * Resolve a door's live state, honouring switch-puzzle locks.
+ * - requiredFlags (or legacy keyFlag) unset → sealed ('locked')
+ * - all flags set → held 'open' (re-seals if a toggle switch flips off)
+ * - stored state 'open' (key bypass / author) always wins
+ */
+export function effectiveDoorState(
+  door: import('./engine-types').DoorDef,
+  flags: Record<string, boolean | number | string>,
+): import('./engine-types').DoorState {
+  const required = door.requiredFlags?.length
+    ? door.requiredFlags
+    : door.keyFlag ? [door.keyFlag] : null
+  if (required) {
+    if (door.state === 'open') return 'open'
+    return required.every(f => !!flags[f]) ? 'open' : 'locked'
+  }
+  return door.state
+}
+
 // ── Context ───────────────────────────────────────────────────────────────────
 
 export interface EventContext {

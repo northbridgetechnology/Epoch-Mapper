@@ -25,7 +25,7 @@ import { PartyWorkspace } from './workspaces/PartyWorkspace'
 import { DatabaseWorkspace } from './workspaces/DatabaseWorkspace'
 import { PlayWorkspace } from './workspaces/PlayWorkspace'
 import { SettingsWorkspace } from './workspaces/SettingsWorkspace'
-import type { BoundaryData, Character, CellEntity, DoorDef, DoorState, Facing, Formation, ItemInstance, ResolvedEncounter, Ruleset } from '@/lib/engine-types'
+import type { BoundaryData, Character, CellEntity, DoorDef, DoorState, Facing, Formation, ItemInstance, ResolvedEncounter, Ruleset, SwitchDef } from '@/lib/engine-types'
 import { makeDefaultRuleset } from '@/lib/default-ruleset'
 import { savePartyTemplate, loadPartyTemplate } from '@/lib/save-state'
 import { checkCellForEncounter, resolveEncounterTable, visitedFlagKey } from '@/lib/encounter-engine'
@@ -33,7 +33,7 @@ import { EncounterModal } from './EncounterModal'
 import { initCombat, applyCombatOutcome, consumeCombatItems, type CombatState } from '@/lib/combat-engine'
 import { CellInspector } from './CellInspector'
 import { ShopModal } from './ShopModal'
-import { getTriggeredEvents, resolveExploreEffects, getInteractableObjects, objectUsedFlagKey, resolveLootTable, type ExploreEffect, type EventContext } from '@/lib/event-engine'
+import { getTriggeredEvents, resolveExploreEffects, getInteractableObjects, objectUsedFlagKey, resolveLootTable, effectiveDoorState, type ExploreEffect, type EventContext } from '@/lib/event-engine'
 
 const DRAFT_KEY = 'epochmapper.draft'
 const WELCOME_KEY = 'epochmapper.welcomed'
@@ -103,7 +103,7 @@ function newSession(): EpochmapFile {
 
 // ── Edge stripe ────────────────────────────────────────────────────────────────
 
-function EdgeStripe({ dir, type, cellSize }: { dir: EdgeDir; type: number; cellSize: number }) {
+function EdgeStripe({ dir, type, cellSize, hasSwitch }: { dir: EdgeDir; type: number; cellSize: number; hasSwitch?: boolean }) {
   const color = edgeDef(type).color
   const w = Math.max(2, Math.round(cellSize / 8))
   const gap = type === 0 ? 0 : Math.round(cellSize * 0.18)
@@ -112,7 +112,18 @@ function EdgeStripe({ dir, type, cellSize }: { dir: EdgeDir; type: number; cellS
   if (dir === 'S') Object.assign(style, { bottom: 0, left: gap, right: gap, height: w })
   if (dir === 'W') Object.assign(style, { left: 0, top: gap, bottom: gap, width: w })
   if (dir === 'E') Object.assign(style, { right: 0, top: gap, bottom: gap, width: w })
-  return <div style={style} />
+  if (!hasSwitch) return <div style={style} />
+  const dotSize = Math.max(4, Math.round(cellSize / 5))
+  const dot: React.CSSProperties = {
+    position: 'absolute', width: dotSize, height: dotSize, borderRadius: '9999px',
+    backgroundColor: 'hsl(44 90% 55%)', border: '1px solid rgba(0,0,0,0.6)',
+    pointerEvents: 'none', zIndex: 12,
+  }
+  if (dir === 'N') Object.assign(dot, { top: -dotSize / 2 + w / 2, left: '50%', transform: 'translateX(-50%)' })
+  if (dir === 'S') Object.assign(dot, { bottom: -dotSize / 2 + w / 2, left: '50%', transform: 'translateX(-50%)' })
+  if (dir === 'W') Object.assign(dot, { left: -dotSize / 2 + w / 2, top: '50%', transform: 'translateY(-50%)' })
+  if (dir === 'E') Object.assign(dot, { right: -dotSize / 2 + w / 2, top: '50%', transform: 'translateY(-50%)' })
+  return <><div style={style} /><div style={dot} /></>
 }
 
 function edgeZoneStyle(zone: EdgeDir): React.CSSProperties {
@@ -217,6 +228,9 @@ export function DungeonMapper({
   // Refs so the keyboard handler can read current modal state without stale closures
   const combatStateRef = useRef<CombatState | null>(null)
   combatStateRef.current = combatState
+  const flagsRef = useRef<Record<string, boolean | number | string>>({})
+  flagsRef.current = flags
+
   const shopIdRef = useRef<string | null>(null)
   shopIdRef.current = shopId
   const activeEncounterRef = useRef<ResolvedEncounter | null>(null)
@@ -468,9 +482,10 @@ export function DungeonMapper({
         if (b) {
           const illusoryRevealed = b.wall === EDGE.ILLUSORY && revealedBoundariesRef.current.has(bk)
           const isDoorEdge = b.wall === EDGE.DOOR
-          const wallBlocked = b.wall !== undefined && b.wall !== EDGE.ILLUSORY && !(isDoorEdge && b.door?.state === 'open')
+          const doorOpen = b.door ? effectiveDoorState(b.door, flagsRef.current) === 'open' : false
+          const wallBlocked = b.wall !== undefined && b.wall !== EDGE.ILLUSORY && !(isDoorEdge && doorOpen)
           const illusoryBlocked = b.wall === EDGE.ILLUSORY && !illusoryRevealed
-          const doorBlocked = !isDoorEdge && b.door !== undefined && b.door.state !== 'open'
+          const doorBlocked = !isDoorEdge && b.door !== undefined && !doorOpen
           if (wallBlocked || illusoryBlocked || doorBlocked) return
         }
       }
@@ -574,9 +589,42 @@ export function DungeonMapper({
         toast('The wall shimmers and fades...')
         return
       }
+      // Wall switch — usable from the mounted side only
+      if (boundary.switch) {
+        const sw = boundary.switch
+        const OPP: Record<EdgeDir, EdgeDir> = { N: 'S', S: 'N', E: 'W', W: 'E' }
+        if (sw.facing === OPP[facingDir]) {
+          const wasOn = !!flags[sw.flag]
+          if (sw.mode === 'once' && wasOn) {
+            toast('The lever is stuck fast.')
+            return
+          }
+          setFlags(prev => ({ ...prev, [sw.flag]: !wasOn }))
+          toast(wasOn
+            ? 'You hear a heavy thud echo through the halls…'
+            : 'You hear something click in the distance…')
+          return
+        }
+      }
+
       // Door interaction
       if (boundary.door) {
         const door = boundary.door
+        const eff = effectiveDoorState(door, flags)
+        // Switch-sealed doors are driven by their flags, not manual opening
+        if ((door.requiredFlags?.length || door.keyFlag) && door.state !== 'open') {
+          if (eff === 'open') {
+            toast('The door is held open by some mechanism.')
+          } else if (door.keyItem && inventory.some(item => item.def === door.keyItem)) {
+            updateActiveMap(m => ({
+              boundaries: { ...(m.boundaries ?? {}), [bk]: { ...boundary, door: { ...door, state: 'open' as const } } }
+            }))
+            toast('Door unlocked!')
+          } else {
+            toast('The door is sealed shut. Something must unlock it…')
+          }
+          return
+        }
         if (door.state === 'closed') {
           updateActiveMap(m => ({
             boundaries: { ...(m.boundaries ?? {}), [bk]: { ...boundary, door: { ...door, state: 'open' as const } } }
@@ -1897,6 +1945,19 @@ function BoundaryInspector({ bk, x, y, dir, boundary, ruleset, onChange, onClose
     onChange(bk, { ...boundary, door: { ...door, keyItem: itemId || undefined } })
   }
 
+  function setRequiredFlags(raw: string) {
+    const requiredFlags = raw.split(',').map(f => f.trim()).filter(Boolean)
+    onChange(bk, { ...boundary, door: { ...door, requiredFlags: requiredFlags.length ? requiredFlags : undefined } })
+  }
+
+  const OPP: Record<EdgeDir, EdgeDir> = { N: 'S', S: 'N', E: 'W', W: 'E' }
+  function setSwitch(sw: SwitchDef | null) {
+    const next = { ...boundary } as BoundaryData
+    if (sw) next.switch = sw
+    else delete next.switch
+    onChange(bk, next)
+  }
+
   return (
     <aside className="w-72 shrink-0 border-l border-white/10 flex flex-col bg-zinc-950">
       <div className="flex items-center gap-2 px-4 py-3 border-b border-white/10">
@@ -1955,11 +2016,76 @@ function BoundaryInspector({ bk, x, y, dir, boundary, ruleset, onChange, onClose
                 </option>
               ))}
             </select>
-            {!door.keyItem && (
-              <p className="text-xs text-amber-400/50 mt-1.5">No key set — door cannot be opened.</p>
+            {!door.keyItem && !door.requiredFlags?.length && (
+              <p className="text-xs text-amber-400/50 mt-1.5">No key or switch flags set — door cannot be opened.</p>
             )}
+
+            <div className="mt-3">
+              <div className="text-xs font-semibold text-white/40 uppercase tracking-wider mb-2">Required Switch Flags</div>
+              <input
+                type="text"
+                value={(door.requiredFlags ?? []).join(', ')}
+                onChange={e => setRequiredFlags(e.target.value)}
+                placeholder="switch.a, switch.b"
+                className="w-full rounded bg-zinc-800 border border-white/10 text-sm text-white/80 px-2 py-1.5 focus:outline-none focus:border-amber-500/40 font-mono"
+              />
+              <p className="text-xs text-white/25 mt-1.5 leading-relaxed">
+                Door stays sealed until ALL flags are on; it re-seals if a toggle
+                switch turns one off. A carried key still opens it permanently.
+              </p>
+            </div>
           </div>
         )}
+
+        {/* Wall switch */}
+        <div>
+          <div className="text-xs font-semibold text-white/40 uppercase tracking-wider mb-2">Wall Switch</div>
+          {boundary.switch ? (
+            <div className="space-y-2">
+              <input
+                type="text"
+                value={boundary.switch.flag}
+                onChange={e => setSwitch({ ...boundary.switch!, flag: e.target.value })}
+                placeholder="switch.a"
+                className="w-full rounded bg-zinc-800 border border-white/10 text-sm text-white/80 px-2 py-1.5 focus:outline-none focus:border-amber-500/40 font-mono"
+              />
+              <div className="flex gap-2">
+                <select
+                  value={boundary.switch.mode}
+                  onChange={e => setSwitch({ ...boundary.switch!, mode: e.target.value as 'toggle' | 'once' })}
+                  className="flex-1 rounded bg-zinc-800 border border-white/10 text-sm text-white/80 px-2 py-1.5 focus:outline-none"
+                >
+                  <option value="toggle">Toggle (flips back)</option>
+                  <option value="once">Once (latches on)</option>
+                </select>
+                <select
+                  value={boundary.switch.facing}
+                  onChange={e => setSwitch({ ...boundary.switch!, facing: e.target.value as EdgeDir })}
+                  className="flex-1 rounded bg-zinc-800 border border-white/10 text-sm text-white/80 px-2 py-1.5 focus:outline-none"
+                >
+                  <option value={OPP[dir]}>This side ({OPP[dir]}-facing)</option>
+                  <option value={dir}>Far side ({dir}-facing)</option>
+                </select>
+              </div>
+              <button
+                onClick={() => setSwitch(null)}
+                className="w-full py-1 rounded text-xs border border-red-500/20 text-red-400/60 hover:text-red-300 hover:border-red-500/40 transition-colors"
+              >
+                Remove Switch
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={() => setSwitch({ id: `sw_${x}_${y}_${dir}`, flag: `switch.${x}_${y}`, mode: 'toggle', facing: OPP[dir] })}
+              className="w-full py-1.5 rounded text-xs font-medium border border-amber-500/20 text-amber-300/70 hover:text-amber-200 hover:border-amber-500/40 transition-colors"
+            >
+              + Add Switch (mounted this side)
+            </button>
+          )}
+          <p className="text-xs text-white/25 mt-1.5 leading-relaxed">
+            A lever on the wall face. Interact from the mounted side to flip its flag.
+          </p>
+        </div>
 
         {/* Remove */}
         <div className="pt-3 border-t border-white/8">
@@ -2123,7 +2249,7 @@ function Viewport(props: ViewportProps) {
                       const b = map.boundaries?.[boundaryKey(x, y, dir)]
                       if (!b) return null
                       const type = b.wall !== undefined ? b.wall : b.door ? 1 : 0
-                      return <EdgeStripe key={dir} dir={dir} type={type} cellSize={cellSize} />
+                      return <EdgeStripe key={dir} dir={dir} type={type} cellSize={cellSize} hasSwitch={!!b.switch} />
                     })}
 
                     {/* edge hover highlight */}

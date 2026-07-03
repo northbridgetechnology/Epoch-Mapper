@@ -47,7 +47,7 @@
     "lint": "eslint .",
     "build:lib": "tsup && node scripts/add-use-client.mjs",
     "prepare": "node -e \"process.exit(require('fs').existsSync('node_modules/tsup')?0:1)\" && npm run build:lib || echo \"skip build:lib (devDeps absent)\"",
-    "test": "tsx test/codec.test.ts && tsx test/markers.test.ts && tsx test/combat.test.ts",
+    "test": "tsx test/codec.test.ts && tsx test/markers.test.ts && tsx test/combat.test.ts && tsx test/switches.test.ts",
     "test:codec": "tsx test/codec.test.ts",
     "test:markers": "tsx test/markers.test.ts",
     "prepublishOnly": "npm run build:lib"

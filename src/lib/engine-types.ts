@@ -397,9 +397,28 @@ export type DoorState = 'open' | 'closed' | 'locked'
 export interface DoorDef {
   state: DoorState
   keyItem?: DefRef<ItemDef>
+  /** Legacy single-flag requirement — treated as requiredFlags[0]. */
   keyFlag?: string
+  /** Switch-puzzle lock: sealed until ALL these flags are truthy, then held
+   *  open (and re-seals live if a toggle switch turns one off). A carried
+   *  keyItem still opens the door permanently as a bypass. */
+  requiredFlags?: string[]
   toggleFlag?: string
   oneWay?: boolean
+}
+
+/** A lever mounted on one face of a wall boundary. Interacting from the
+ *  mounted side toggles (or latches) its flag. */
+export interface SwitchDef {
+  id: string
+  /** Save-state flag this switch drives. */
+  flag: string
+  /** 'toggle' flips freely; 'once' latches on and stays on. */
+  mode: 'toggle' | 'once'
+  /** Compass direction the switch face points — i.e. toward the cell it is
+   *  usable/visible from. A switch on the N edge of a cell that should be
+   *  used from that cell faces S. */
+  facing: import('./types').EdgeDir
 }
 
 /**
@@ -410,6 +429,8 @@ export interface BoundaryData {
   /** Visual wall type ID matching EDGE_TYPES (0=standard wall, 1=locked-door, etc). */
   wall?: number
   door?: DoorDef
+  /** Wall-mounted lever (see SwitchDef). */
+  switch?: SwitchDef
   secret?: boolean
   revealFlag?: string
   blocked?: boolean
