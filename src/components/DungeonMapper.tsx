@@ -33,6 +33,7 @@ import { EncounterModal } from './EncounterModal'
 import { DialogueOverlay } from './DialogueOverlay'
 import { initCombat, applyCombatOutcome, consumeCombatItems, type CombatState } from '@/lib/combat-engine'
 import { CellInspector } from './CellInspector'
+import { usePanelWidth } from './ui/ResizablePanel'
 import { ShopModal } from './ShopModal'
 import { runCellEvents, applyFlagWriteWithReactions, resolveExploreEffects, pickNpcLine, finishNpcLine, getInteractableObjects, objectUsedFlagKey, resolveLootTable, effectiveDoorState, type ExploreEffect, type EventContext } from '@/lib/event-engine'
 
@@ -217,6 +218,8 @@ export function DungeonMapper({
   const [combatState, setCombatState] = useState<CombatState | null>(null)
   const handleCombatAction = useCallback((next: CombatState) => setCombatState(next), [])
   const [inspectedCell, setInspectedCell] = useState<{ x: number; y: number } | null>(null)
+  const [paletteW, paletteHandle] = usePanelWidth('palette', 'left', 320)
+  const [cellInspW, cellInspHandle] = usePanelWidth('cell-inspector', 'right', 340)
   const [shopId, setShopId] = useState<string | null>(null)
   const [facing, setFacing] = useState<Facing>('N')
   const facingRef = useRef<Facing>('N')
@@ -1008,8 +1011,9 @@ export function DungeonMapper({
       if (!dir) return
       const bk = boundaryKey(x, y, dir)
       const existing = activeMap.boundaries?.[bk]
-      if (existing?.wall === EDGE.DOOR) {
-        // Clicking an existing door opens the boundary inspector instead of toggling
+      if (existing && (existing.wall === EDGE.DOOR || existing.door || existing.switch)) {
+        // Configured boundary (door and/or switch): open the inspector rather
+        // than silently overwriting its configuration
         setInspectedBoundary({ bk, x, y, dir, boundary: existing })
         return
       }
@@ -1019,7 +1023,7 @@ export function DungeonMapper({
         writeBoundary(bk, newBoundary)
         setInspectedBoundary({ bk, x, y, dir, boundary: newBoundary })
       } else {
-        writeBoundary(bk, existing?.wall === activeTool.value ? null : { wall: activeTool.value })
+        writeBoundary(bk, existing?.wall === activeTool.value ? null : { ...existing, wall: activeTool.value })
       }
       return
     }
@@ -1589,7 +1593,8 @@ export function DungeonMapper({
 
       <div className="flex-1 flex min-h-0">
         {/* Left sidebar: map list + tool palette */}
-        <aside className="w-80 shrink-0 border-r border-white/10 flex flex-col bg-zinc-950 overflow-y-auto">
+        <aside className="relative shrink-0 border-r border-white/10 flex flex-col bg-zinc-950 overflow-y-auto" style={{ width: paletteW }}>
+          {paletteHandle}
           {/* Maps */}
           <div className="p-4 border-b border-white/10">
             <div className="flex items-center justify-between mb-2.5">
@@ -1770,13 +1775,29 @@ export function DungeonMapper({
 
         {/* Right: Cell Inspector panel */}
         {inspectedCell && activeMap && (
-          <aside className="w-80 shrink-0 border-l border-white/10 flex flex-col bg-zinc-950 overflow-y-auto">
+          <aside className="relative shrink-0 border-l border-white/10 flex flex-col bg-zinc-950 overflow-y-auto" style={{ width: cellInspW }}>
+            {cellInspHandle}
             <CellInspector
               x={inspectedCell.x}
               y={inspectedCell.y}
               cell={activeMap.cells[`${inspectedCell.x},${inspectedCell.y}`] ?? { base: 0, overlays: [] }}
               maps={maps}
               ruleset={ruleset}
+              boundaries={{
+                N: activeMap.boundaries?.[boundaryKey(inspectedCell.x, inspectedCell.y, 'N')],
+                S: activeMap.boundaries?.[boundaryKey(inspectedCell.x, inspectedCell.y, 'S')],
+                E: activeMap.boundaries?.[boundaryKey(inspectedCell.x, inspectedCell.y, 'E')],
+                W: activeMap.boundaries?.[boundaryKey(inspectedCell.x, inspectedCell.y, 'W')],
+              }}
+              onEditBoundary={(dir) => {
+                const bk = boundaryKey(inspectedCell.x, inspectedCell.y, dir)
+                let b = activeMap.boundaries?.[bk]
+                if (!b) {
+                  b = { wall: EDGE.WALL }
+                  writeBoundary(bk, b)
+                }
+                setInspectedBoundary({ bk, x: inspectedCell.x, y: inspectedCell.y, dir, boundary: b })
+              }}
               onChange={(entities: CellEntity[]) => {
                 const key = `${inspectedCell.x},${inspectedCell.y}`
                 const cur = activeMap.cells[key] ?? { base: 0, overlays: [] }
@@ -2093,8 +2114,11 @@ function BoundaryInspector({ bk, x, y, dir, boundary, ruleset, onChange, onClose
     onChange(bk, next)
   }
 
+  const [panelW, panelHandle] = usePanelWidth('boundary-inspector', 'right', 300)
+
   return (
-    <aside className="w-72 shrink-0 border-l border-white/10 flex flex-col bg-zinc-950">
+    <aside className="relative shrink-0 border-l border-white/10 flex flex-col bg-zinc-950" style={{ width: panelW }}>
+      {panelHandle}
       <div className="flex items-center gap-2 px-4 py-3 border-b border-white/10">
         <span className="text-lg">🚪</span>
         <div>

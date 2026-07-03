@@ -4,8 +4,10 @@ import { useState } from 'react'
 import { Plus, Trash2, X, ChevronDown, ChevronRight } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type {
-  CellEntity, CellEvent, Condition, Effect, ObjectInstance, Ruleset,
+  BoundaryData, CellEntity, CellEvent, Condition, Effect, ObjectInstance, Ruleset,
 } from '@/lib/engine-types'
+import type { EdgeDir } from '@/lib/types'
+import { edgeDef } from '@/lib/constants'
 import type { CellData, MapData, SubcubeObject } from '@/lib/types'
 import { SUBCUBE_KIND_DEFS, getSubcubeDef } from '@/lib/subcube-defs'
 import { EffectBuilder } from './forms/EffectBuilder'
@@ -760,10 +762,29 @@ interface CellInspectorProps {
   ruleset: Ruleset
   onChange: (entities: CellEntity[]) => void
   onSubcubeChange?: (objs: SubcubeObject[]) => void
+  /** The cell's four boundaries, for the edit-boundary section. */
+  boundaries?: Partial<Record<EdgeDir, BoundaryData>>
+  /** Opens the boundary inspector for an edge (creating a wall if empty). */
+  onEditBoundary?: (dir: EdgeDir) => void
   onClose: () => void
 }
 
-export function CellInspector({ x, y, cell, maps, ruleset, onChange, onSubcubeChange, onClose }: CellInspectorProps) {
+function boundarySummary(b?: BoundaryData): string {
+  if (!b) return '—'
+  const parts: string[] = []
+  if (b.door) {
+    const flags = b.door.requiredFlags?.length
+      ? ` · ${b.door.requiredFlags.length} flag${b.door.requiredFlags.length > 1 ? 's' : ''}`
+      : ''
+    parts.push(`Door (${b.door.state})${flags}`)
+  } else if (b.wall !== undefined) {
+    parts.push(edgeDef(b.wall).label)
+  }
+  if (b.switch) parts.push(`Switch → ${b.switch.flag}`)
+  return parts.join(' · ') || 'Boundary'
+}
+
+export function CellInspector({ x, y, cell, maps, ruleset, onChange, onSubcubeChange, boundaries, onEditBoundary, onClose }: CellInspectorProps) {
   const entities = cell.entities ?? []
   const [expanded, setExpanded] = useState<number | null>(entities.length === 1 ? 0 : null)
   const [showAddMenu, setShowAddMenu] = useState(false)
@@ -788,7 +809,7 @@ export function CellInspector({ x, y, cell, maps, ruleset, onChange, onSubcubeCh
   }
 
   return (
-    <div className="w-80 flex-shrink-0 border-l border-white/10 bg-zinc-950 flex flex-col min-h-0">
+    <div className="w-full flex-1 bg-zinc-950 flex flex-col min-h-0">
       {/* Header */}
       <div className="flex items-center justify-between px-3 py-2.5 border-b border-white/10">
         <div>
@@ -807,6 +828,30 @@ export function CellInspector({ x, y, cell, maps, ruleset, onChange, onSubcubeCh
           ruleset={ruleset}
           onChange={onSubcubeChange}
         />
+      )}
+
+      {/* Boundaries: doors / switches on the four edges */}
+      {boundaries && onEditBoundary && (
+        <div className="p-2 border-b border-white/10 space-y-1">
+          <div className="text-[10px] font-semibold text-white/40 uppercase tracking-wide px-1">Boundaries</div>
+          {(['N', 'E', 'S', 'W'] as EdgeDir[]).map(dir => {
+            const b = boundaries[dir]
+            return (
+              <div key={dir} className="flex items-center gap-2 px-1.5 py-1 rounded bg-zinc-900/60 border border-white/5 text-xs">
+                <span className="w-4 text-center font-mono text-white/40 flex-shrink-0">{dir}</span>
+                <span className={cn('flex-1 truncate', b ? 'text-white/65' : 'text-white/25')}>
+                  {boundarySummary(b)}
+                </span>
+                <button
+                  onClick={() => onEditBoundary(dir)}
+                  className="px-1.5 py-0.5 rounded text-[10px] flex-shrink-0 text-amber-300/80 hover:text-amber-200 hover:bg-amber-500/10"
+                >
+                  {b ? 'Edit' : 'Add'}
+                </button>
+              </div>
+            )
+          })}
+        </div>
       )}
 
       {/* Entity list */}
