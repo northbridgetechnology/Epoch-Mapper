@@ -1827,6 +1827,7 @@ export function DungeonMapper({
               availW={viewportSize.width}
               availH={viewportSize.height}
               map={activeMap}
+              ruleset={ruleset}
               cellSize={cellSize}
               cameraOffset={cameraOffset}
               isPanning={isPanning}
@@ -1993,11 +1994,45 @@ function FlashOverlay() {
 
 // ── Viewport (camera window) ────────────────────────────────────────────────────
 
+// ── Cell entity badges (editor map view) ─────────────────────────────────────
+// Zone encounters are everywhere, so they get a faint dot; deliberate content
+// (fixed encounters, objects, events) gets a kind-specific glyph strip.
+const OBJECT_GLYPHS: Record<string, string> = {
+  chest: '📦', npc: '🧑', shop: '🏪', sign: '🪧',
+  trap: '☠️', teleporter: '🌀', lever: '🎚️', door: '🚪',
+}
+
+function cellEntityBadges(cell: CellData, ruleset: Ruleset): { zoneEncounter: boolean; glyphs: string[] } {
+  const glyphs: string[] = []
+  let zoneEncounter = false
+  for (const ent of cell.entities ?? []) {
+    switch (ent.t) {
+      case 'encounter':
+        if (ent.mode === 'zone') zoneEncounter = true
+        else glyphs.push('⚔️')
+        break
+      case 'partyStart': glyphs.push('🏁'); break
+      case 'mapLink':    glyphs.push('🚪'); break
+      case 'event':      glyphs.push('⚡'); break
+      case 'object': {
+        if (ent.object.kind === 'npc' && ent.object.npc) {
+          glyphs.push((ruleset.npcs ?? []).find(n => n.id === ent.object.npc)?.portrait ?? '🧑')
+        } else {
+          glyphs.push(OBJECT_GLYPHS[ent.object.kind] ?? '📦')
+        }
+        break
+      }
+    }
+  }
+  return { zoneEncounter, glyphs }
+}
+
 interface ViewportProps {
   layout: 'fill' | 'fixed'
   availW: number
   availH: number
   map: MapData
+  ruleset: Ruleset
   cellSize: number
   cameraOffset: { x: number; y: number }
   isPanning: boolean
@@ -2343,6 +2378,41 @@ function Viewport(props: ViewportProps) {
                     {cell.note && (
                       <span className="absolute top-0 right-0 z-10 block w-0 h-0 border-t-[6px] border-l-[6px] border-t-amber-300 border-l-transparent" />
                     )}
+
+                    {/* entity badges: zone-encounter dot + kind glyph strip */}
+                    {cell.entities && cell.entities.length > 0 && (() => {
+                      const b = cellEntityBadges(cell, props.ruleset)
+                      const dotSize = Math.max(3, Math.round(cellSize * 0.16))
+                      return (
+                        <>
+                          {b.zoneEncounter && (
+                            <span
+                              title="Encounter zone"
+                              className="absolute top-[1px] left-[1px] z-10 rounded-full pointer-events-none"
+                              style={{ width: dotSize, height: dotSize, backgroundColor: 'rgba(239,68,68,0.75)' }}
+                            />
+                          )}
+                          {b.glyphs.length > 0 && (cellSize >= 14 ? (
+                            <span
+                              className="absolute bottom-0 left-0 z-10 flex items-end leading-none pointer-events-none"
+                              style={{ fontSize: Math.max(7, cellSize * 0.28) }}
+                            >
+                              {b.glyphs.slice(0, 2).join('')}
+                              {b.glyphs.length > 2 && (
+                                <span className="text-white/80 font-semibold" style={{ fontSize: Math.max(6, cellSize * 0.2) }}>
+                                  +{b.glyphs.length - 2}
+                                </span>
+                              )}
+                            </span>
+                          ) : (
+                            <span
+                              className="absolute bottom-[1px] left-[1px] z-10 rounded-full pointer-events-none"
+                              style={{ width: dotSize, height: dotSize, backgroundColor: 'rgba(34,211,238,0.8)' }}
+                            />
+                          ))}
+                        </>
+                      )
+                    })()}
 
                     {/* quest reference marker (editor-only aid — never shown in play) */}
                     {cell.entities && cellSize >= 14 && JSON.stringify(cell.entities).includes('questStage') && (
