@@ -30,10 +30,11 @@ import { makeDefaultRuleset } from '@/lib/default-ruleset'
 import { savePartyTemplate, loadPartyTemplate } from '@/lib/save-state'
 import { checkCellForEncounter, resolveEncounterTable, visitedFlagKey } from '@/lib/encounter-engine'
 import { EncounterModal } from './EncounterModal'
+import { DialogueOverlay } from './DialogueOverlay'
 import { initCombat, applyCombatOutcome, consumeCombatItems, type CombatState } from '@/lib/combat-engine'
 import { CellInspector } from './CellInspector'
 import { ShopModal } from './ShopModal'
-import { runCellEvents, applyFlagWriteWithReactions, resolveExploreEffects, getInteractableObjects, objectUsedFlagKey, resolveLootTable, effectiveDoorState, type ExploreEffect, type EventContext } from '@/lib/event-engine'
+import { runCellEvents, applyFlagWriteWithReactions, resolveExploreEffects, pickNpcLine, finishNpcLine, getInteractableObjects, objectUsedFlagKey, resolveLootTable, effectiveDoorState, type ExploreEffect, type EventContext } from '@/lib/event-engine'
 
 const DRAFT_KEY = 'epochmapper.draft'
 const WELCOME_KEY = 'epochmapper.welcomed'
@@ -230,6 +231,11 @@ export function DungeonMapper({
   combatStateRef.current = combatState
   const flagsRef = useRef<Record<string, boolean | number | string>>({})
   flagsRef.current = flags
+  const [dialogue, setDialogue] = useState<{ npcId: string; lineId: string } | null>(null)
+  const dialogueRef = useRef<typeof dialogue>(null)
+  dialogueRef.current = dialogue
+  // Barks fire once per session per line (heard-flags handle 'once' lines)
+  const sessionBarksRef = useRef<Set<string>>(new Set())
 
   const shopIdRef = useRef<string | null>(null)
   shopIdRef.current = shopId
@@ -411,6 +417,14 @@ export function DungeonMapper({
     if (result.openShop) {
       setShopId(result.openShop)
     }
+    if (result.dialogueNode) {
+      const def = ruleset.npcs.find(n => n.id === result.dialogueNode)
+      if (def) {
+        const mergedCtx = { ...makeEventContext(), flags: { ...flagsRef.current, ...result.flagSets } }
+        const line = pickNpcLine(def, mergedCtx)
+        if (line) setDialogue({ npcId: def.id, lineId: line.id })
+      }
+    }
     for (const qu of result.questUpdates) {
       const q = ruleset.quests.find(x => x.id === qu.quest)
       const done = q && qu.stage >= q.stages.length
@@ -498,7 +512,7 @@ export function DungeonMapper({
         }))
       }
     }
-  }, [updateActiveMap, revealAround, ruleset, setInventory, setGold, setFlags, setShopId, setActiveEncounter, setParty])
+  }, [updateActiveMap, revealAround, ruleset, setInventory, setGold, setFlags, setShopId, setActiveEncounter, setParty, setMaps])
 
   const makeEventContext = useCallback((): EventContext => ({
     flags,
@@ -598,6 +612,29 @@ export function DungeonMapper({
     const [dx, dy] = FORWARD_DXY[facingRef.current]
     movePlayer(-dx, -dy)
   }, [movePlayer])
+
+  // ── NPC barks: ambient lines when an NPC comes into view (cell ahead) ───────
+  useEffect(() => {
+    if (!activeMap || combatStateRef.current || dialogueRef.current) return
+    const [fdx, fdy] = FORWARD_DXY[facing]
+    const aheadCell = activeMap.cells[`${activeMap.playerX + fdx},${activeMap.playerY + fdy}`]
+    if (!aheadCell?.entities?.length) return
+    for (const ent of aheadCell.entities) {
+      if (ent.t !== 'object' || ent.object.kind !== 'npc' || !ent.object.npc) continue
+      const def = ruleset.npcs.find(n => n.id === ent.object.npc)
+      if (!def) continue
+      const ctx = makeEventContext()
+      const line = pickNpcLine(def, ctx, { bark: true })
+      if (!line) continue
+      const sessionKey = `${def.id}.${line.id}`
+      if (sessionBarksRef.current.has(sessionKey)) continue
+      sessionBarksRef.current.add(sessionKey)
+      toast(`${def.portrait ?? '🧑'} ${def.name}: “${line.text[0]}”`)
+      applyExploreEffect(finishNpcLine(def, line, aheadCell, ctx, ruleset))
+      break
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeMap?.playerX, activeMap?.playerY, facing])
 
   const handleInteract = useCallback(() => {
     if (!activeMap) return
@@ -736,6 +773,15 @@ export function DungeonMapper({
           const result = resolveExploreEffects(obj.onInteract, ctx, Math.random, ruleset)
           applyExploreEffect(result)
           return
+        }
+        if (obj.kind === 'npc' && obj.npc) {
+          const def = ruleset.npcs.find(n => n.id === obj.npc)
+          if (def) {
+            const line = pickNpcLine(def, ctx)
+            if (line) setDialogue({ npcId: def.id, lineId: line.id })
+            else toast(`${def.name} has nothing more to say.`)
+            return
+          }
         }
         if (obj.shop) { setShopId(obj.shop); return }
         if (obj.dialogue) { toast(obj.dialogue); return }
@@ -1299,7 +1345,7 @@ export function DungeonMapper({
 
       if (workspaceRef.current === 'play') {
         // Block movement while any overlay (combat/shop/encounter) is active — those handle keys themselves
-        if (combatStateRef.current || shopIdRef.current || activeEncounterRef.current) return
+        if (combatStateRef.current || shopIdRef.current || activeEncounterRef.current || dialogueRef.current) return
         // Blobber controls: W=forward, S=back, A=turn-left, D=turn-right
         if (e.key === 'w' || e.key === 'W' || e.key === 'ArrowUp') { e.preventDefault(); stepForward(); return }
         if (e.key === 's' || e.key === 'S' || e.key === 'ArrowDown') { e.preventDefault(); stepBack(); return }
@@ -1861,6 +1907,24 @@ export function DungeonMapper({
         />
       )}
       </div>{/* end Map workspace */}
+
+      {/* NPC dialogue (listening) overlay */}
+      {dialogue && activeMap && (() => {
+        const npcDef = ruleset.npcs.find(n => n.id === dialogue.npcId)
+        const line = npcDef?.lines.find(l => l.id === dialogue.lineId)
+        if (!npcDef || !line) return null
+        return (
+          <DialogueOverlay
+            npc={npcDef}
+            line={line}
+            onFinish={() => {
+              const cell = activeMap.cells[`${activeMap.playerX},${activeMap.playerY}`] ?? null
+              applyExploreEffect(finishNpcLine(npcDef, line, cell, makeEventContext(), ruleset))
+              setDialogue(null)
+            }}
+          />
+        )
+      })()}
 
       {/* Encounter modal (shown over any workspace) */}
       {activeEncounter && (

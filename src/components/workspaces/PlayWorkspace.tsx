@@ -263,9 +263,10 @@ interface FirstPersonViewProps {
   revealedBoundaries?: Set<string>
   flags: Record<string, boolean | number | string>
   battle?: BattleViewState | null
+  ruleset?: Ruleset
 }
 
-function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedBoundaries, flags, battle }: FirstPersonViewProps) {
+function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedBoundaries, flags, battle, ruleset }: FirstPersonViewProps) {
   const [fd0, fd1] = facingDelta(facing)
   const [rd0, rd1] = rightDelta(facing)
   const px = map.playerX
@@ -744,6 +745,32 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
       return
     }
 
+    // ── NPC standing in the cell ─────────────────────────────────────────────
+    const npcEnt = (frontCell.entities ?? []).find(
+      (e): e is Extract<CellEntity, { t: 'object' }> => e.t === 'object' && e.object.kind === 'npc',
+    )
+    if (npcEnt) {
+      const def = npcEnt.object.npc ? ruleset?.npcs.find(n => n.id === npcEnt.object.npc) : undefined
+      const face = entFace
+      const fw2 = face.x2 - face.x1
+      const fh2 = face.y2 - face.y1
+      const ncx = (face.x1 + face.x2) / 2
+      const floor2 = face.y2
+      const size = Math.max(10, fh2 * 0.30)
+      const npcFog = Math.max(0.35, 1 - depthFog(d) * 1.4)
+      nodes.push(
+        <g key={`npc_${d}_${s}`} opacity={npcFog}>
+          <ellipse cx={ncx} cy={floor2 - fh2 * 0.02} rx={size * 0.42} ry={size * 0.10} fill="rgba(0,0,0,0.45)" />
+          <text x={ncx} y={floor2 - size * 0.55} textAnchor="middle" dominantBaseline="middle"
+            fontSize={size} style={{ userSelect: 'none' }}>{def?.portrait ?? '🧑'}</text>
+          <text x={ncx} y={floor2 - size * 1.18} textAnchor="middle"
+            fontSize={Math.max(6, size * 0.16)} fill="rgba(255,255,255,0.8)"
+            style={{ userSelect: 'none' }}>{def?.name ?? 'Stranger'}</text>
+        </g>,
+      )
+      return
+    }
+
     // ── Overlay icon fallback ────────────────────────────────────────────────
     const icons = (frontCell.overlays ?? [])
       .map(o => overlayDef(o, customOverlay)?.icon)
@@ -1190,6 +1217,7 @@ export function PlayWorkspace({
             revealedBoundaries={revealedBoundaries}
             flags={flags}
             battle={battleView}
+            ruleset={ruleset}
           />
           {combat && <BattleOutcomeOverlay state={combat} ruleset={ruleset} onContinue={onCombatEnd} />}
         </div>

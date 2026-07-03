@@ -131,6 +131,10 @@ export { ITEM_SCHEMA, LOOT_TABLE_SCHEMA, blankItem, blankLootTable } from './lib
 // Enemy + encounter-table schema helpers (Phase E3)
 export { ENEMY_SCHEMA, ENCOUNTER_TABLE_SCHEMA, blankEnemy, blankEncounterTable } from './lib/enemy-schema'
 
+// NPC / global event / quest schema helpers
+export { NPC_SCHEMA, EVENT_SCHEMA, QUEST_SCHEMA, blankNpc, blankEventDef, blankQuest } from './lib/npc-schema'
+export { DialogueOverlay } from './components/DialogueOverlay'
+
 // Spell + status-effect schema helpers (Phase E5)
 export { SPELL_SCHEMA, STATUS_SCHEMA, blankSpell, blankStatusEffect } from './lib/spell-schema'
 
@@ -139,7 +143,7 @@ export { applyEffectToChar, applyConsumable } from './lib/apply-effects'
 
 // Encounter engine (Phase E3)
 export { resolveEncounterTable, checkCellForEncounter, visitedFlagKey } from './lib/encounter-engine'
-export type { ResolvedEncounter, EnemyInstance, CellEntity, ObjectInstance, Condition, CellEvent, BoundaryData, DoorDef, DoorState, Facing, SwitchDef } from './lib/engine-types'
+export type { ResolvedEncounter, EnemyInstance, CellEntity, ObjectInstance, Condition, CellEvent, BoundaryData, DoorDef, DoorState, Facing, SwitchDef, EventDef, NpcDef, NpcLine, QuestDef, QuestStage } from './lib/engine-types'
 
 // Encounter modal (Phase E3)
 export { EncounterModal } from './components/EncounterModal'
@@ -179,6 +183,13 @@ export {
   objectUsedFlagKey,
   resolveLootTable,
   effectiveDoorState,
+  runCellEvents,
+  expandReactive,
+  applyFlagWriteWithReactions,
+  questStageFlagKey,
+  pickNpcLine,
+  finishNpcLine,
+  npcLineHeardFlagKey,
 } from './lib/event-engine'
 export type { EventContext, ExploreEffect } from './lib/event-engine'
 

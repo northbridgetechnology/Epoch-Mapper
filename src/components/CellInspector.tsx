@@ -111,7 +111,7 @@ function ConditionRow({
   )
 }
 
-function ConditionBuilder({
+export function ConditionBuilder({
   conditions,
   ruleset,
   onChange,
@@ -273,6 +273,25 @@ function ObjectEntityEditor({
             onChange={e => update({ id: e.target.value })}
             className={cn(INPUT, 'w-full')} />
         </div>
+      </div>
+
+      {obj.kind === 'npc' && (
+        <div>
+          <label className={LABEL}>NPC Definition</label>
+          <select value={obj.npc ?? ''} onChange={e => update({ npc: e.target.value || undefined })}
+            className={cn(INPUT, 'w-full')}>
+            <option value="">— pick NPC —</option>
+            {(ruleset.npcs ?? []).map(n => (
+              <option key={n.id} value={n.id}>{n.portrait ? `${n.portrait} ` : ''}{n.name}</option>
+            ))}
+          </select>
+          <p className="text-[10px] text-white/25 mt-1">
+            Lines, portrait, and stats come from the NPC entry in the Database workspace.
+          </p>
+        </div>
+      )}
+
+      <div className="hidden">
       </div>
 
       {/* Locked */}

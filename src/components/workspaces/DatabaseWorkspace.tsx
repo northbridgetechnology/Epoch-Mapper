@@ -1,9 +1,11 @@
 'use client'
 
 import { useState } from 'react'
-import { Plus, Trash2, Package, List, Skull, Swords, Sparkles, Zap, Store } from 'lucide-react'
+import { Plus, Trash2, Package, List, Skull, Swords, Sparkles, Zap, Store, Users, Puzzle, ScrollText } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import type { Effect, EnemyDef, EncounterTableDef, ItemDef, LootTableDef, ShopDef, SpellDef, StatusEffectDef, Ruleset } from '@/lib/engine-types'
+import type { Effect, EnemyDef, EncounterTableDef, EventDef, ItemDef, LootTableDef, NpcDef, NpcLine, QuestDef, ShopDef, SpellDef, StatusEffectDef, Ruleset } from '@/lib/engine-types'
+import { NPC_SCHEMA, EVENT_SCHEMA, QUEST_SCHEMA, blankNpc, blankEventDef, blankQuest } from '@/lib/npc-schema'
+import { ConditionBuilder } from '@/components/CellInspector'
 import { SimulatePanel } from '@/components/SimulatePanel'
 import { SchemaForm } from '../forms/SchemaForm'
 import { EffectBuilder } from '../forms/EffectBuilder'
@@ -12,7 +14,7 @@ import { ENEMY_SCHEMA, ENCOUNTER_TABLE_SCHEMA, blankEnemy } from '@/lib/enemy-sc
 import { SPELL_SCHEMA, STATUS_SCHEMA, blankSpell, blankStatusEffect } from '@/lib/spell-schema'
 import { SHOP_SCHEMA, blankShop } from '@/lib/shop-schema'
 
-type Category = 'items' | 'loot_tables' | 'bestiary' | 'encounters' | 'spells' | 'status_effects' | 'shops'
+type Category = 'items' | 'loot_tables' | 'bestiary' | 'encounters' | 'spells' | 'status_effects' | 'shops' | 'npcs' | 'events' | 'quests'
 
 const CATEGORIES: { id: Category; icon: React.ReactNode; label: string }[] = [
   { id: 'items',          icon: <Package className="w-4 h-4" />,  label: 'Items' },
@@ -22,6 +24,9 @@ const CATEGORIES: { id: Category; icon: React.ReactNode; label: string }[] = [
   { id: 'spells',         icon: <Sparkles className="w-4 h-4" />, label: 'Spells' },
   { id: 'status_effects', icon: <Zap className="w-4 h-4" />,      label: 'Status Effects' },
   { id: 'shops',          icon: <Store className="w-4 h-4" />,    label: 'Shops' },
+  { id: 'npcs',           icon: <Users className="w-4 h-4" />,      label: 'NPCs' },
+  { id: 'events',         icon: <Puzzle className="w-4 h-4" />,     label: 'Events' },
+  { id: 'quests',         icon: <ScrollText className="w-4 h-4" />, label: 'Quests' },
 ]
 
 // ── Item entry list ───────────────────────────────────────────────────────────
@@ -849,6 +854,215 @@ let _spellSeq = 1
 let _statusSeq = 1
 let _shopSeq = 1
 
+// ── Generic def list (NPCs / Events / Quests) ─────────────────────────────────
+
+function GenericDefList({ label, entries, selectedId, onSelect, onAdd, onDelete }: {
+  label: string
+  entries: { id: string; icon: string; name: string }[]
+  selectedId: string | null
+  onSelect: (id: string) => void
+  onAdd: () => void
+  onDelete: (id: string) => void
+}) {
+  return (
+    <div className="flex flex-col h-full min-h-0">
+      <div className="flex items-center justify-between px-3 py-2 border-b border-white/10">
+        <span className="text-xs font-semibold text-white/50 uppercase tracking-wide">{label}</span>
+        <button onClick={onAdd} className="flex items-center gap-1 px-1.5 py-0.5 rounded text-xs text-amber-300/80 hover:text-amber-200 hover:bg-amber-500/10">
+          <Plus className="w-3 h-3" /> New
+        </button>
+      </div>
+      <div className="flex-1 overflow-y-auto">
+        {entries.length === 0 && (
+          <div className="text-xs text-white/25 text-center py-6">Nothing yet — click New</div>
+        )}
+        {entries.map(e => (
+          <div key={e.id}
+            onClick={() => onSelect(e.id)}
+            className={cn(
+              'flex items-center gap-2 px-3 py-1.5 cursor-pointer group text-xs',
+              selectedId === e.id ? 'bg-amber-600/15 text-amber-200' : 'text-white/70 hover:bg-white/5',
+            )}
+          >
+            <span className="w-5 text-center">{e.icon}</span>
+            <span className="flex-1 truncate">{e.name}</span>
+            <button onClick={ev => { ev.stopPropagation(); onDelete(e.id) }}
+              className="opacity-0 group-hover:opacity-100 p-0.5 rounded text-white/30 hover:text-red-400">
+              <Trash2 className="w-3 h-3" />
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// ── NPC editor: base fields + lines ───────────────────────────────────────────
+
+function NpcLineEditor({ line, ruleset, onChange, onRemove }: {
+  line: NpcLine
+  ruleset: Ruleset
+  onChange: (l: NpcLine) => void
+  onRemove: () => void
+}) {
+  return (
+    <div className="rounded bg-zinc-800 border border-white/10 p-2.5 space-y-2">
+      <div className="flex items-center gap-2">
+        <input type="text" value={line.id} placeholder="line_id"
+          onChange={e => onChange({ ...line, id: e.target.value })}
+          className="w-28 px-1.5 py-0.5 rounded bg-zinc-700 border border-white/10 text-xs font-mono text-white/80 focus:outline-none" />
+        <label className="flex items-center gap-1 text-xs text-white/50">
+          Priority
+          <input type="number" value={line.priority ?? 0}
+            onChange={e => onChange({ ...line, priority: e.target.valueAsNumber || 0 })}
+            className="w-14 px-1.5 py-0.5 rounded bg-zinc-700 border border-white/10 text-xs font-mono text-white/80 focus:outline-none" />
+        </label>
+        <label className="flex items-center gap-1 text-xs text-white/50">
+          <input type="checkbox" checked={line.once ?? false}
+            onChange={e => onChange({ ...line, once: e.target.checked || undefined })} /> Once
+        </label>
+        <label className="flex items-center gap-1 text-xs text-white/50" title="Plays automatically when the NPC comes into view">
+          <input type="checkbox" checked={line.bark ?? false}
+            onChange={e => onChange({ ...line, bark: e.target.checked || undefined })} /> Bark
+        </label>
+        <button onClick={onRemove} className="ml-auto p-0.5 rounded text-white/30 hover:text-red-400">
+          <Trash2 className="w-3 h-3" />
+        </button>
+      </div>
+      <textarea
+        value={line.text.join('\n\n')}
+        onChange={e => onChange({ ...line, text: e.target.value.split(/\n{2,}/) })}
+        placeholder={'What the NPC says… Blank line = new page.'}
+        rows={3}
+        className="w-full px-2 py-1.5 rounded bg-zinc-900 border border-white/10 text-xs text-white/85 italic leading-relaxed focus:outline-none focus:border-amber-500/40"
+      />
+      <ConditionBuilder conditions={line.conditions ?? []} ruleset={ruleset}
+        onChange={cs => onChange({ ...line, conditions: cs.length ? cs : undefined })} />
+      <EffectBuilder label="After the line (effects)" effects={line.effects ?? []} ruleset={ruleset}
+        onChange={effs => onChange({ ...line, effects: effs.length ? effs : undefined })} />
+    </div>
+  )
+}
+
+function NpcEditor({ npc, ruleset, onChange }: {
+  npc: NpcDef
+  ruleset: Ruleset
+  onChange: (n: NpcDef) => void
+}) {
+  return (
+    <div className="p-4 space-y-4 overflow-y-auto h-full">
+      <SchemaForm
+        schema={NPC_SCHEMA}
+        value={npc as unknown as Record<string, unknown>}
+        onChange={v => onChange({ ...npc, ...(v as Partial<NpcDef>) })}
+      />
+      <div className="pt-2 border-t border-white/10">
+        <div className="flex items-center justify-between mb-1.5">
+          <span className="text-xs font-medium text-white/50 uppercase tracking-wide">
+            Lines <span className="normal-case text-white/30">(highest passing priority is spoken)</span>
+          </span>
+          <button
+            onClick={() => onChange({ ...npc, lines: [...(npc.lines ?? []), { id: `line_${(npc.lines ?? []).length + 1}`, text: ['…'] }] })}
+            className="flex items-center gap-1 px-2 py-0.5 rounded text-xs text-amber-300/80 hover:text-amber-200 hover:bg-amber-500/10"
+          >
+            <Plus className="w-3 h-3" /> Add Line
+          </button>
+        </div>
+        <div className="space-y-2">
+          {(npc.lines ?? []).map((line, i) => (
+            <NpcLineEditor key={i} line={line} ruleset={ruleset}
+              onChange={l => onChange({ ...npc, lines: npc.lines.map((x, j) => j === i ? l : x) })}
+              onRemove={() => onChange({ ...npc, lines: npc.lines.filter((_, j) => j !== i) })}
+            />
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Global event editor ───────────────────────────────────────────────────────
+
+function EventDefEditor({ def, ruleset, onChange }: {
+  def: EventDef
+  ruleset: Ruleset
+  onChange: (e: EventDef) => void
+}) {
+  return (
+    <div className="p-4 space-y-4 overflow-y-auto h-full">
+      <SchemaForm
+        schema={EVENT_SCHEMA}
+        value={def as unknown as Record<string, unknown>}
+        onChange={v => onChange({ ...def, ...(v as Partial<EventDef>) })}
+      />
+      <div className="pt-2 border-t border-white/10 space-y-3">
+        <ConditionBuilder conditions={def.conditions ?? []} ruleset={ruleset}
+          onChange={cs => onChange({ ...def, conditions: cs.length ? cs : undefined })} />
+        <EffectBuilder label="Effects" effects={def.effects} ruleset={ruleset}
+          onChange={effs => onChange({ ...def, effects: effs })} />
+        <p className="text-[10px] text-white/25 leading-relaxed">
+          Manual events run when invoked by a Run Event effect (from any cell, NPC line,
+          or other event, on any map). On-Flag events fire automatically the moment their
+          conditions newly pass after a flag changes.
+        </p>
+      </div>
+    </div>
+  )
+}
+
+// ── Quest editor: base fields + stages ────────────────────────────────────────
+
+function QuestEditor({ quest, ruleset, onChange }: {
+  quest: QuestDef
+  ruleset: Ruleset
+  onChange: (q: QuestDef) => void
+}) {
+  return (
+    <div className="p-4 space-y-4 overflow-y-auto h-full">
+      <SchemaForm
+        schema={QUEST_SCHEMA}
+        value={quest as unknown as Record<string, unknown>}
+        onChange={v => onChange({ ...quest, ...(v as Partial<QuestDef>) })}
+      />
+      <div className="pt-2 border-t border-white/10">
+        <div className="flex items-center justify-between mb-1.5">
+          <span className="text-xs font-medium text-white/50 uppercase tracking-wide">
+            Stages <span className="normal-case text-white/30">(reaching the last stage completes the quest)</span>
+          </span>
+          <button
+            onClick={() => onChange({ ...quest, stages: [...quest.stages, { id: `s${quest.stages.length + 1}`, description: '' }] })}
+            className="flex items-center gap-1 px-2 py-0.5 rounded text-xs text-amber-300/80 hover:text-amber-200 hover:bg-amber-500/10"
+          >
+            <Plus className="w-3 h-3" /> Add Stage
+          </button>
+        </div>
+        <div className="space-y-2">
+          {quest.stages.map((st, i) => (
+            <div key={i} className="rounded bg-zinc-800 border border-white/10 p-2.5 space-y-2">
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-semibold text-amber-300/70 w-14">Stage {i + 1}</span>
+                <input type="text" value={st.id} placeholder="stage_id"
+                  onChange={e => onChange({ ...quest, stages: quest.stages.map((x, j) => j === i ? { ...x, id: e.target.value } : x) })}
+                  className="w-24 px-1.5 py-0.5 rounded bg-zinc-700 border border-white/10 text-xs font-mono text-white/80 focus:outline-none" />
+                <button
+                  onClick={() => onChange({ ...quest, stages: quest.stages.filter((_, j) => j !== i) })}
+                  className="ml-auto p-0.5 rounded text-white/30 hover:text-red-400"
+                ><Trash2 className="w-3 h-3" /></button>
+              </div>
+              <textarea value={st.description} rows={2}
+                placeholder="Journal text while this is the current stage…"
+                onChange={e => onChange({ ...quest, stages: quest.stages.map((x, j) => j === i ? { ...x, description: e.target.value } : x) })}
+                className="w-full px-2 py-1.5 rounded bg-zinc-900 border border-white/10 text-xs text-white/85 focus:outline-none focus:border-amber-500/40" />
+              <EffectBuilder label="On reaching this stage" effects={st.effects ?? []} ruleset={ruleset}
+                onChange={effs => onChange({ ...quest, stages: quest.stages.map((x, j) => j === i ? { ...x, effects: effs.length ? effs : undefined } : x) })} />
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export function DatabaseWorkspace({ ruleset, onRulesetChange }: DatabaseWorkspaceProps) {
   const [category, setCategory] = useState<Category>('items')
   const [selectedId, setSelectedId] = useState<string | null>(
@@ -1032,6 +1246,52 @@ export function DatabaseWorkspace({ ruleset, onRulesetChange }: DatabaseWorkspac
     if (selectedId === id) setSelectedId(next[0]?.id ?? null)
   }
 
+  const selectedNpc = (ruleset.npcs ?? []).find(n => n.id === selectedId) ?? null
+  const selectedEvent = (ruleset.events ?? []).find(e => e.id === selectedId) ?? null
+  const selectedQuest = (ruleset.quests ?? []).find(q => q.id === selectedId) ?? null
+
+  function addNpc() {
+    const id = `npc.npc_${(ruleset.npcs ?? []).length + 1}_${Date.now() % 1000}`
+    onRulesetChange({ ...ruleset, npcs: [...(ruleset.npcs ?? []), blankNpc(id)] })
+    setSelectedId(id); setCategory('npcs')
+  }
+  function updateNpc(n: NpcDef) {
+    onRulesetChange({ ...ruleset, npcs: (ruleset.npcs ?? []).map(x => x.id === n.id ? n : x) })
+  }
+  function deleteNpc(id: string) {
+    const next = (ruleset.npcs ?? []).filter(n => n.id !== id)
+    onRulesetChange({ ...ruleset, npcs: next })
+    if (selectedId === id) setSelectedId(next[0]?.id ?? null)
+  }
+
+  function addEventDef() {
+    const id = `ev.event_${(ruleset.events ?? []).length + 1}_${Date.now() % 1000}`
+    onRulesetChange({ ...ruleset, events: [...(ruleset.events ?? []), blankEventDef(id)] })
+    setSelectedId(id); setCategory('events')
+  }
+  function updateEventDef(e: EventDef) {
+    onRulesetChange({ ...ruleset, events: (ruleset.events ?? []).map(x => x.id === e.id ? e : x) })
+  }
+  function deleteEventDef(id: string) {
+    const next = (ruleset.events ?? []).filter(e => e.id !== id)
+    onRulesetChange({ ...ruleset, events: next })
+    if (selectedId === id) setSelectedId(next[0]?.id ?? null)
+  }
+
+  function addQuest() {
+    const id = `q.quest_${(ruleset.quests ?? []).length + 1}_${Date.now() % 1000}`
+    onRulesetChange({ ...ruleset, quests: [...(ruleset.quests ?? []), blankQuest(id)] })
+    setSelectedId(id); setCategory('quests')
+  }
+  function updateQuest(q: QuestDef) {
+    onRulesetChange({ ...ruleset, quests: (ruleset.quests ?? []).map(x => x.id === q.id ? q : x) })
+  }
+  function deleteQuest(id: string) {
+    const next = (ruleset.quests ?? []).filter(q => q.id !== id)
+    onRulesetChange({ ...ruleset, quests: next })
+    if (selectedId === id) setSelectedId(next[0]?.id ?? null)
+  }
+
   function handleCategoryChange(cat: Category) {
     setCategory(cat)
     if (cat === 'items')          setSelectedId(ruleset.items[0]?.id ?? null)
@@ -1041,6 +1301,9 @@ export function DatabaseWorkspace({ ruleset, onRulesetChange }: DatabaseWorkspac
     if (cat === 'spells')         setSelectedId(ruleset.spells[0]?.id ?? null)
     if (cat === 'status_effects') setSelectedId(ruleset.statusEffects[0]?.id ?? null)
     if (cat === 'shops')          setSelectedId(ruleset.shops[0]?.id ?? null)
+    if (cat === 'npcs')           setSelectedId((ruleset.npcs ?? [])[0]?.id ?? null)
+    if (cat === 'events')         setSelectedId((ruleset.events ?? [])[0]?.id ?? null)
+    if (cat === 'quests')         setSelectedId((ruleset.quests ?? [])[0]?.id ?? null)
   }
 
   return (
@@ -1087,6 +1350,18 @@ export function DatabaseWorkspace({ ruleset, onRulesetChange }: DatabaseWorkspac
         {category === 'shops' && (
           <ShopList shops={ruleset.shops} selectedId={selectedId} onSelect={setSelectedId} onAdd={addShop} onDelete={deleteShop} />
         )}
+        {category === 'npcs' && (
+          <GenericDefList label="NPCs" entries={(ruleset.npcs ?? []).map(n => ({ id: n.id, icon: n.portrait ?? '🧑', name: n.name }))}
+            selectedId={selectedId} onSelect={setSelectedId} onAdd={addNpc} onDelete={deleteNpc} />
+        )}
+        {category === 'events' && (
+          <GenericDefList label="Events" entries={(ruleset.events ?? []).map(e => ({ id: e.id, icon: e.trigger === 'onFlag' ? '⚡' : '🧩', name: e.name }))}
+            selectedId={selectedId} onSelect={setSelectedId} onAdd={addEventDef} onDelete={deleteEventDef} />
+        )}
+        {category === 'quests' && (
+          <GenericDefList label="Quests" entries={(ruleset.quests ?? []).map(q => ({ id: q.id, icon: '📜', name: q.name }))}
+            selectedId={selectedId} onSelect={setSelectedId} onAdd={addQuest} onDelete={deleteQuest} />
+        )}
       </div>
 
       {/* Detail editor */}
@@ -1105,6 +1380,12 @@ export function DatabaseWorkspace({ ruleset, onRulesetChange }: DatabaseWorkspac
           <StatusEditor status={selectedStatus} onChange={updateStatus} />
         ) : category === 'shops' && selectedShop ? (
           <ShopEditor shop={selectedShop} ruleset={ruleset} onChange={updateShop} />
+        ) : category === 'npcs' && selectedNpc ? (
+          <NpcEditor npc={selectedNpc} ruleset={ruleset} onChange={updateNpc} />
+        ) : category === 'events' && selectedEvent ? (
+          <EventDefEditor def={selectedEvent} ruleset={ruleset} onChange={updateEventDef} />
+        ) : category === 'quests' && selectedQuest ? (
+          <QuestEditor quest={selectedQuest} ruleset={ruleset} onChange={updateQuest} />
         ) : (
           <div className="h-full flex items-center justify-center text-white/20 text-sm flex-col gap-2">
             <Package className="w-8 h-8 opacity-30" />
