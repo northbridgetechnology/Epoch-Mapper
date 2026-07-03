@@ -50,6 +50,9 @@ export type Effect =
   | { t: 'openShop'; shop: DefRef<ShopDef> }
   | { t: 'dialogue'; node: string }
   | { t: 'reveal'; radius: number }
+  | { t: 'runEvent'; event: DefRef<EventDef> }
+  | { t: 'questStage'; quest: DefRef<QuestDef>; stage: number }
+  | { t: 'moveNpc'; npc: DefRef<NpcDef>; mapId?: string; x: number; y: number }
 
 // ── Stat modifier ──────────────────────────────────────────────────────────────
 
@@ -168,6 +171,58 @@ export interface ShopDef extends Definition {
   stock: { item: DefRef<ItemDef>; price?: number; qty?: number }[]
 }
 
+/** Reusable named event in the global library (Database workspace).
+ *  'manual' events run only when invoked via a runEvent effect;
+ *  'onFlag' events auto-fire when their conditions newly pass. */
+export interface EventDef extends Definition {
+  trigger?: 'manual' | 'onFlag'
+  conditions?: Condition[]
+  effects: Effect[]
+  once?: boolean
+}
+
+/** One thing an NPC can say. The highest-priority line whose conditions pass
+ *  is spoken on interact; bark lines instead play when the NPC comes into view. */
+export interface NpcLine {
+  id: string
+  /** Pages of text, advanced one at a time. */
+  text: string[]
+  conditions?: Condition[]
+  priority?: number
+  once?: boolean
+  /** Plays automatically when the NPC enters the player's view. */
+  bark?: boolean
+  /** Applied after the final page is dismissed. */
+  effects?: Effect[]
+}
+
+/** A character-shaped NPC. Stats mirror the player Character model so NPCs
+ *  can later fight, join the party, or trade without a schema change. */
+export interface NpcDef extends Definition {
+  portrait?: string
+  classId?: DefRef<ClassDef>
+  raceId?: DefRef<RaceDef>
+  level?: number
+  attributes?: Record<string, number>
+  equipment?: Partial<Record<ItemSlot, ItemInstance>>
+  knownSpells?: DefRef<SpellDef>[]
+  lines: NpcLine[]
+}
+
+export interface QuestStage {
+  id: string
+  /** Journal text shown while this is the current stage. */
+  description: string
+  /** Applied when the quest advances TO this stage. */
+  effects?: Effect[]
+}
+
+/** Quest state lives in save flags as `quest.<id>.stage` (1-based); the quest
+ *  is complete when the stage reaches stages.length. */
+export interface QuestDef extends Definition {
+  stages: QuestStage[]
+}
+
 export interface GameMeta {
   title: string
   author?: string
@@ -219,6 +274,9 @@ export interface Ruleset {
   encounterTables: EncounterTableDef[]
   lootTables: LootTableDef[]
   shops: ShopDef[]
+  events: EventDef[]
+  npcs: NpcDef[]
+  quests: QuestDef[]
   formulas?: FormulaOverrides
   combatTuning?: CombatTuning
 }
@@ -229,6 +287,8 @@ export interface Ruleset {
 export interface ObjectInstance {
   kind: 'chest' | 'door' | 'lever' | 'sign' | 'npc' | 'shop' | 'trap' | 'teleporter'
   id: string
+  /** For kind 'npc': the NpcDef this placement represents. */
+  npc?: DefRef<NpcDef>
   locked?: { key: DefRef<ItemDef> }
   loot?: DefRef<LootTableDef>
   shop?: DefRef<ShopDef>
@@ -243,10 +303,14 @@ export type Condition =
   | { c: 'hasItem'; item: DefRef<ItemDef>; qty?: number }
   | { c: 'partyLevel'; min: number }
   | { c: 'random'; chance: number }
+  | { c: 'questStage'; quest: DefRef<QuestDef>; min?: number; equals?: number }
 
 /** A trigger + conditions + effects triple placed on a cell. */
 export interface CellEvent {
   id: string
+  /** Author-facing label for organisation. */
+  name?: string
+  /** onFlag events fire when their conditions NEWLY pass after a flag write. */
   trigger: 'onEnter' | 'onInteract' | 'onFlag'
   conditions?: Condition[]
   effects: Effect[]

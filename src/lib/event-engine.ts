@@ -11,6 +11,11 @@ import type {
   Character, Ruleset, Facing,
 } from './engine-types'
 
+/** Save-flag key holding a quest's current stage (1-based number). */
+export function questStageFlagKey(questId: string): string {
+  return `quest.${questId}.stage`
+}
+
 // ── Doors ─────────────────────────────────────────────────────────────────────
 
 /**
@@ -58,10 +63,16 @@ export interface ExploreEffect {
   openShop?: string
   startCombat?: string
   revealRadius?: number
+  /** Quest stages advanced during this resolution (for journal toasts). */
+  questUpdates: { quest: string; stage: number }[]
+  /** NPC placements to relocate (cross-map when mapId is set). */
+  npcMoves: { npc: string; mapId?: string; x: number; y: number }[]
+  /** NPC to open the dialogue overlay for (first dialogue effect wins). */
+  dialogueNode?: string
 }
 
 function emptyExploreEffect(): ExploreEffect {
-  return { flagSets: {}, messages: [], goldDelta: 0, itemsGained: [], itemsLost: [] }
+  return { flagSets: {}, messages: [], goldDelta: 0, itemsGained: [], itemsLost: [], questUpdates: [], npcMoves: [] }
 }
 
 // ── Condition evaluation ──────────────────────────────────────────────────────
@@ -87,6 +98,11 @@ export function checkConditions(
         return ctx.party.some(c => c.alive && c.level >= cond.min)
       case 'random':
         return rng() < cond.chance
+      case 'questStage': {
+        const stage = Number(ctx.flags[questStageFlagKey(cond.quest)] ?? 0)
+        if (cond.equals !== undefined) return stage === cond.equals
+        return stage >= (cond.min ?? 1)
+      }
     }
   })
 }
@@ -97,12 +113,33 @@ export function checkConditions(
  * Resolves an Effect[] in the exploration context (out of combat).
  * Combat-only effects (damage, status, cure, reviveRandom) are ignored here.
  */
+/** Flags as they stand mid-resolution: base context + accumulated writes. */
+function flagsNow(ctx: EventContext, acc: ExploreEffect): Record<string, boolean | number | string> {
+  return { ...ctx.flags, ...acc.flagSets }
+}
+
+const MAX_EVENT_DEPTH = 8
+
 export function resolveExploreEffects(
   effects: Effect[],
   ctx: EventContext,
-  _rng: () => number = Math.random,
+  rng: () => number = Math.random,
+  ruleset?: Ruleset,
 ): ExploreEffect {
   const result = emptyExploreEffect()
+  applyEffectsInto(result, effects, ctx, ruleset, rng, 0)
+  return result
+}
+
+function applyEffectsInto(
+  result: ExploreEffect,
+  effects: Effect[],
+  ctx: EventContext,
+  ruleset: Ruleset | undefined,
+  rng: () => number,
+  depth: number,
+): void {
+  if (depth > MAX_EVENT_DEPTH) return
 
   for (const eff of effects) {
     switch (eff.t) {
@@ -122,13 +159,13 @@ export function resolveExploreEffects(
         result.flagSets[eff.flag] = eff.value
         break
       case 'teleport':
-        result.teleportTo = { mapId: eff.mapId, x: eff.x, y: eff.y, facing: eff.facing }
+        if (!result.teleportTo) result.teleportTo = { mapId: eff.mapId, x: eff.x, y: eff.y, facing: eff.facing }
         break
       case 'openShop':
-        result.openShop = eff.shop
+        if (!result.openShop) result.openShop = eff.shop
         break
       case 'startCombat':
-        result.startCombat = eff.encounter
+        if (!result.startCombat) result.startCombat = eff.encounter
         break
       case 'reveal':
         result.revealRadius = Math.max(result.revealRadius ?? 0, eff.radius)
@@ -142,12 +179,135 @@ export function resolveExploreEffects(
         // Out-of-combat healing applied by DungeonMapper
         result.flagSets[`_${eff.t}`] = String(eff.amount)
         break
+      case 'dialogue':
+        if (!result.dialogueNode) result.dialogueNode = eff.node
+        break
+      case 'runEvent': {
+        const def = ruleset?.events?.find(ev => ev.id === eff.event)
+        if (!def) break
+        const fl = flagsNow(ctx, result)
+        const onceKey = visitedEventFlagKey(def.id)
+        if (def.once && fl[onceKey]) break
+        if (!checkConditions(def.conditions, { ...ctx, flags: fl }, rng)) break
+        if (def.once) result.flagSets[onceKey] = true
+        applyEffectsInto(result, def.effects, ctx, ruleset, rng, depth + 1)
+        break
+      }
+      case 'questStage': {
+        const key = questStageFlagKey(eff.quest)
+        const cur = Number(flagsNow(ctx, result)[key] ?? 0)
+        if (eff.stage <= cur) break   // quests never regress
+        result.flagSets[key] = eff.stage
+        result.questUpdates.push({ quest: eff.quest, stage: eff.stage })
+        const stageDef = ruleset?.quests?.find(q => q.id === eff.quest)?.stages[eff.stage - 1]
+        if (stageDef?.effects?.length) {
+          applyEffectsInto(result, stageDef.effects, ctx, ruleset, rng, depth + 1)
+        }
+        break
+      }
+      case 'moveNpc':
+        result.npcMoves.push({ npc: eff.npc, mapId: eff.mapId, x: eff.x, y: eff.y })
+        break
       default:
         break
     }
   }
+}
 
-  return result
+// ── Sequential cell-event runner + reactive onFlag expansion ──────────────────
+
+function runOneEvent(
+  acc: ExploreEffect,
+  ev: CellEvent,
+  ctx: EventContext,
+  ruleset: Ruleset,
+  rng: () => number,
+): boolean {
+  const fl = flagsNow(ctx, acc)
+  const onceKey = visitedEventFlagKey(ev.id)
+  if (ev.once && fl[onceKey]) return false
+  if (!checkConditions(ev.conditions, { ...ctx, flags: fl }, rng)) return false
+  if (ev.once) acc.flagSets[onceKey] = true
+  applyEffectsInto(acc, ev.effects, ctx, ruleset, rng, 0)
+  return true
+}
+
+/**
+ * Run a cell's events for a trigger SEQUENTIALLY in stored order, threading
+ * flag writes between them (an early event's setFlag can satisfy a later
+ * event's condition in the same step), then expand reactive onFlag events.
+ */
+export function runCellEvents(
+  cell: CellData,
+  trigger: 'onEnter' | 'onInteract',
+  ctx: EventContext,
+  ruleset: Ruleset,
+  rng: () => number = Math.random,
+): ExploreEffect {
+  const acc = emptyExploreEffect()
+  for (const entity of cell.entities ?? []) {
+    if (entity.t !== 'event' || entity.event.trigger !== trigger) continue
+    runOneEvent(acc, entity.event, ctx, ruleset, rng)
+  }
+  expandReactive(acc, cell, ctx, ruleset, rng)
+  return acc
+}
+
+/**
+ * Fire onFlag events (on the given cell + the global library) whose conditions
+ * NEWLY pass given the accumulated flag writes — edge-triggered, each event at
+ * most once per expansion, capped rounds so cycles terminate.
+ */
+export function expandReactive(
+  acc: ExploreEffect,
+  cell: CellData | null,
+  ctx: EventContext,
+  ruleset: Ruleset,
+  rng: () => number = Math.random,
+): void {
+  const fired = new Set<string>()
+  let prevFlags = ctx.flags
+  for (let round = 0; round < MAX_EVENT_DEPTH; round++) {
+    const now = flagsNow(ctx, acc)
+    const candidates: CellEvent[] = []
+    for (const entity of cell?.entities ?? []) {
+      if (entity.t === 'event' && entity.event.trigger === 'onFlag') candidates.push(entity.event)
+    }
+    for (const g of ruleset.events ?? []) {
+      if (g.trigger === 'onFlag') {
+        candidates.push({ id: g.id, trigger: 'onFlag', conditions: g.conditions, effects: g.effects, once: g.once })
+      }
+    }
+    let any = false
+    for (const ev of candidates) {
+      if (fired.has(ev.id)) continue
+      const onceKey = visitedEventFlagKey(ev.id)
+      if (ev.once && now[onceKey]) continue
+      if (!checkConditions(ev.conditions, { ...ctx, flags: now }, rng)) continue
+      if (checkConditions(ev.conditions, { ...ctx, flags: prevFlags }, rng)) continue  // not newly passing
+      fired.add(ev.id)
+      if (ev.once) acc.flagSets[onceKey] = true
+      applyEffectsInto(acc, ev.effects, ctx, ruleset, rng, 0)
+      any = true
+    }
+    if (!any) break
+    prevFlags = now
+  }
+}
+
+/** A single flag write (e.g. a wall switch) plus its reactive consequences. */
+export function applyFlagWriteWithReactions(
+  flag: string,
+  value: boolean | number | string,
+  cell: CellData | null,
+  ctx: EventContext,
+  ruleset: Ruleset,
+  rng: () => number = Math.random,
+): ExploreEffect {
+  const acc = emptyExploreEffect()
+  acc.flagSets[flag] = value
+  expandReactive(acc, cell, ctx, ruleset, rng)
+  return acc
 }
 
 // ── Triggered events ──────────────────────────────────────────────────────────

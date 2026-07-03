@@ -33,7 +33,7 @@ import { EncounterModal } from './EncounterModal'
 import { initCombat, applyCombatOutcome, consumeCombatItems, type CombatState } from '@/lib/combat-engine'
 import { CellInspector } from './CellInspector'
 import { ShopModal } from './ShopModal'
-import { getTriggeredEvents, resolveExploreEffects, getInteractableObjects, objectUsedFlagKey, resolveLootTable, effectiveDoorState, type ExploreEffect, type EventContext } from '@/lib/event-engine'
+import { runCellEvents, applyFlagWriteWithReactions, resolveExploreEffects, getInteractableObjects, objectUsedFlagKey, resolveLootTable, effectiveDoorState, type ExploreEffect, type EventContext } from '@/lib/event-engine'
 
 const DRAFT_KEY = 'epochmapper.draft'
 const WELCOME_KEY = 'epochmapper.welcomed'
@@ -411,6 +411,43 @@ export function DungeonMapper({
     if (result.openShop) {
       setShopId(result.openShop)
     }
+    for (const qu of result.questUpdates) {
+      const q = ruleset.quests.find(x => x.id === qu.quest)
+      const done = q && qu.stage >= q.stages.length
+      toast(done ? `📜 Quest complete — ${q?.name ?? qu.quest}` : `📜 Journal updated — ${q?.name ?? qu.quest}`)
+    }
+    if (result.npcMoves.length > 0) {
+      setMaps(prev => prev.map(m => {
+        let changed = false
+        const cells = { ...m.cells }
+        let carried: import('@/lib/engine-types').CellEntity | null = null
+        // Strip the NPC from any cell it currently occupies
+        for (const move of result.npcMoves) {
+          for (const [key, cell] of Object.entries(cells)) {
+            const idx = (cell.entities ?? []).findIndex(
+              e => e.t === 'object' && e.object.kind === 'npc' && e.object.npc === move.npc,
+            )
+            if (idx >= 0) {
+              carried = cell.entities![idx]
+              cells[key] = { ...cell, entities: cell.entities!.filter((_, i) => i !== idx) }
+              changed = true
+            }
+          }
+          // Insert at destination if this map is the target
+          const targetHere = move.mapId ? m.id === move.mapId : m.id === (prev.find(mm => mm.id === m.id)?.id)
+          const isDest = move.mapId ? m.id === move.mapId : true
+          if (isDest && carried) {
+            const dk = `${move.x},${move.y}`
+            const dest = cells[dk] ?? { base: 1, overlays: [] }
+            cells[dk] = { ...dest, entities: [...(dest.entities ?? []), carried] }
+            carried = null
+            changed = true
+          }
+          void targetHere
+        }
+        return changed ? { ...m, cells } : m
+      }))
+    }
     if (result.startCombat) {
       const tableId = result.startCombat
       const table = ruleset.encounterTables.find(t => t.id === tableId)
@@ -537,21 +574,9 @@ export function DungeonMapper({
           }
         }
 
-        // onEnter events
+        // onEnter events — sequential, with reactive onFlag expansion
         const ctx = makeEventContext()
-        const triggered = getTriggeredEvents(cell, 'onEnter', ctx)
-        if (triggered.length > 0) {
-          const allEffects = triggered.flatMap(({ event }) => event.effects)
-          const result = resolveExploreEffects(allEffects, ctx)
-          const newFlags: Record<string, boolean | number | string> = {}
-          for (const { event, flagKey } of triggered) {
-            if (event.once) newFlags[flagKey] = true
-          }
-          if (Object.keys(newFlags).length > 0) {
-            setFlags(prev => ({ ...prev, ...newFlags }))
-          }
-          applyExploreEffect(result)
-        }
+        applyExploreEffect(runCellEvents(cell, 'onEnter', ctx, ruleset))
       }
     },
     [activeMap, maps, updateActiveMap, revealAround, ruleset, flags, makeEventContext, applyExploreEffect, setActiveIdx, setFacing],
@@ -599,7 +624,8 @@ export function DungeonMapper({
             toast('The lever is stuck fast.')
             return
           }
-          setFlags(prev => ({ ...prev, [sw.flag]: !wasOn }))
+          const curCell = activeMap.cells[`${activeMap.playerX},${activeMap.playerY}`] ?? null
+          applyExploreEffect(applyFlagWriteWithReactions(sw.flag, !wasOn, curCell, makeEventContext(), ruleset))
           toast(wasOn
             ? 'You hear a heavy thud echo through the halls…'
             : 'You hear something click in the distance…')
@@ -707,7 +733,7 @@ export function DungeonMapper({
         }
         // Generic onInteract effects
         if (obj.onInteract?.length) {
-          const result = resolveExploreEffects(obj.onInteract, ctx)
+          const result = resolveExploreEffects(obj.onInteract, ctx, Math.random, ruleset)
           applyExploreEffect(result)
           return
         }
@@ -721,18 +747,18 @@ export function DungeonMapper({
     const cell = activeMap.cells[cellKey]
     if (!cell) return
 
-    const triggered = getTriggeredEvents(cell, 'onInteract', ctx)
-    if (triggered.length > 0) {
-      const allEffects = triggered.flatMap(({ event }) => event.effects)
-      const result = resolveExploreEffects(allEffects, ctx)
-      const newFlags: Record<string, boolean | number | string> = {}
-      for (const { event, flagKey } of triggered) {
-        if (event.once) newFlags[flagKey] = true
-      }
-      if (Object.keys(newFlags).length > 0) {
-        setFlags(prev => ({ ...prev, ...newFlags }))
-      }
-      applyExploreEffect(result)
+    const interactResult = runCellEvents(cell, 'onInteract', ctx, ruleset)
+    const interactedSomething =
+      Object.keys(interactResult.flagSets).length > 0 ||
+      interactResult.messages.length > 0 ||
+      interactResult.goldDelta !== 0 ||
+      interactResult.itemsGained.length > 0 ||
+      interactResult.teleportTo !== undefined ||
+      interactResult.startCombat !== undefined ||
+      interactResult.openShop !== undefined ||
+      interactResult.dialogueNode !== undefined
+    if (interactedSomething) {
+      applyExploreEffect(interactResult)
       return
     }
 
@@ -740,7 +766,7 @@ export function DungeonMapper({
     const objects = getInteractableObjects(cell)
     for (const obj of objects) {
       if (obj.onInteract?.length) {
-        const result = resolveExploreEffects(obj.onInteract, ctx)
+        const result = resolveExploreEffects(obj.onInteract, ctx, Math.random, ruleset)
         applyExploreEffect(result)
       } else if (obj.shop) {
         setShopId(obj.shop)

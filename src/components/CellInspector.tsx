@@ -35,6 +35,7 @@ function ConditionRow({
           else if (c === 'hasItem')    onChange({ c, item: '', qty: 1 })
           else if (c === 'partyLevel') onChange({ c, min: 1 })
           else if (c === 'random')     onChange({ c, chance: 0.5 })
+          else if (c === 'questStage') onChange({ c, quest: '', min: 1 })
         }}
         className="px-1.5 py-0.5 rounded bg-zinc-700 border border-white/10 text-xs text-white/90 focus:outline-none"
       >
@@ -42,6 +43,7 @@ function ConditionRow({
         <option value="hasItem">Has Item</option>
         <option value="partyLevel">Party Level ≥</option>
         <option value="random">Random chance</option>
+        <option value="questStage">Quest Stage ≥</option>
       </select>
 
       {cond.c === 'flag' && (
@@ -80,6 +82,20 @@ function ConditionRow({
         <input type="number" min={1} value={cond.min}
           onChange={e => onChange({ ...cond, min: Math.max(1, e.target.valueAsNumber || 1) })}
           className={cn(INPUT, 'w-14')} />
+      )}
+
+      {cond.c === 'questStage' && (
+        <>
+          <select value={cond.quest} onChange={e => onChange({ ...cond, quest: e.target.value })}
+            className={cn(INPUT, 'min-w-[8rem]')}>
+            <option value="">— pick quest —</option>
+            {(ruleset.quests ?? []).map(q => <option key={q.id} value={q.id}>{q.name}</option>)}
+          </select>
+          <span className="text-xs text-white/30">≥ stage</span>
+          <input type="number" min={1} value={cond.min ?? 1}
+            onChange={e => onChange({ ...cond, min: Math.max(1, e.target.valueAsNumber || 1) })}
+            className={cn(INPUT, 'w-14')} />
+        </>
       )}
 
       {cond.c === 'random' && (
@@ -339,6 +355,12 @@ function EventEntityEditor({
 
   return (
     <div className="space-y-3 pt-2">
+      <div>
+        <label className={LABEL}>Name (organisation)</label>
+        <input type="text" value={ev.name ?? ''} placeholder="Crypt gate opens"
+          onChange={e => update({ name: e.target.value || undefined })}
+          className={cn(INPUT, 'w-full')} />
+      </div>
       <div className="flex gap-3">
         <div className="flex-1">
           <label className={LABEL}>Event ID</label>
@@ -352,6 +374,7 @@ function EventEntityEditor({
             className={INPUT}>
             <option value="onEnter">On Enter</option>
             <option value="onInteract">On Interact (E)</option>
+            <option value="onFlag">On Flag (reactive)</option>
             <option value="onFlag">On Flag</option>
           </select>
         </div>
@@ -790,6 +813,24 @@ export function CellInspector({ x, y, cell, maps, ruleset, onChange, onSubcubeCh
                 <div className="text-xs font-semibold text-white/80">{ENTITY_LABELS[ent.t]}</div>
                 <div className="text-[10px] text-white/35 truncate">{entitySummary(ent)}</div>
               </div>
+              <span className="opacity-0 group-hover:opacity-100 flex flex-col flex-shrink-0">
+                <button title="Move up (events run top-to-bottom)"
+                  onClick={e => {
+                    e.stopPropagation()
+                    if (idx === 0) return
+                    const next = [...entities]; [next[idx - 1], next[idx]] = [next[idx], next[idx - 1]]
+                    onChange(next)
+                  }}
+                  className="p-0 leading-none text-[9px] text-white/30 hover:text-amber-300">▲</button>
+                <button title="Move down"
+                  onClick={e => {
+                    e.stopPropagation()
+                    if (idx === entities.length - 1) return
+                    const next = [...entities]; [next[idx + 1], next[idx]] = [next[idx], next[idx + 1]]
+                    onChange(next)
+                  }}
+                  className="p-0 leading-none text-[9px] text-white/30 hover:text-amber-300">▼</button>
+              </span>
               <button
                 onClick={e => { e.stopPropagation(); removeEntity(idx) }}
                 className="opacity-0 group-hover:opacity-100 p-0.5 rounded text-white/30 hover:text-red-400"

@@ -1542,6 +1542,9 @@ export function makeDefaultRuleset(startMapId = 'map1'): Ruleset {
     enemies: DEFAULT_ENEMIES,
     encounterTables: DEFAULT_ENCOUNTER_TABLES,
     lootTables: DEFAULT_LOOT_TABLES,
+    events: [],
+    npcs: [],
+    quests: [],
     shops: DEFAULT_SHOPS,
   }
 }

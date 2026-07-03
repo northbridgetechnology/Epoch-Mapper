@@ -29,6 +29,11 @@ const ALL_VERBS = [
   { t: 'openShop',    label: '🏪 Open Shop',          group: 'World' },
   // Narrative
   { t: 'message',     label: '💬 Message',            group: 'Narrative' },
+  { t: 'dialogue',    label: '🗣️ NPC Speaks',         group: 'Narrative' },
+  // Scripting
+  { t: 'runEvent',    label: '🧩 Run Event',          group: 'Scripting' },
+  { t: 'questStage',  label: '📜 Quest Stage',        group: 'Scripting' },
+  { t: 'moveNpc',     label: '🚶 Move NPC',           group: 'Scripting' },
 ] as const
 
 type Verb = typeof ALL_VERBS[number]['t']
@@ -51,6 +56,10 @@ function blankEffect(verb: Verb): Effect {
     case 'reveal':       return { t: 'reveal', radius: 3 }
     case 'openShop':     return { t: 'openShop', shop: '' }
     case 'message':      return { t: 'message', text: '' }
+    case 'dialogue':     return { t: 'dialogue', node: '' }
+    case 'runEvent':     return { t: 'runEvent', event: '' }
+    case 'questStage':   return { t: 'questStage', quest: '', stage: 1 }
+    case 'moveNpc':      return { t: 'moveNpc', npc: '', x: 0, y: 0 }
     default:             return { t: 'message', text: '' }
   }
 }
@@ -88,6 +97,22 @@ function effectLabel(e: Effect, ruleset: Ruleset): string {
       return `Open shop: ${name}`
     }
     case 'message':   return `Message: "${e.text?.slice(0, 24)}"`
+    case 'dialogue': {
+      const name = ruleset.npcs?.find(n => n.id === e.node)?.name ?? e.node
+      return `NPC speaks: ${name}`
+    }
+    case 'runEvent': {
+      const name = ruleset.events?.find(ev => ev.id === e.event)?.name ?? e.event
+      return `Run event: ${name}`
+    }
+    case 'questStage': {
+      const name = ruleset.quests?.find(q => q.id === e.quest)?.name ?? e.quest
+      return `Quest "${name}" → stage ${e.stage}`
+    }
+    case 'moveNpc': {
+      const name = ruleset.npcs?.find(n => n.id === e.npc)?.name ?? e.npc
+      return `Move ${name} to ${e.mapId ? `${e.mapId} ` : ''}(${e.x},${e.y})`
+    }
     default:          return (e as Effect).t
   }
 }
@@ -117,6 +142,54 @@ function EffectRow({ effect, ruleset, onChange, onRemove }: EffectRowProps) {
 
       {/* Param fields */}
       <div className="flex-1 flex flex-wrap gap-2 min-w-0">
+        {e.t === 'runEvent' && (
+          <select value={e.event} onChange={ev => onChange({ ...e, event: ev.target.value })}
+            className={cn(INPUT_CLS, 'min-w-[10rem]')}>
+            <option value="">— pick event —</option>
+            {(ruleset.events ?? []).map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
+          </select>
+        )}
+        {e.t === 'questStage' && (
+          <>
+            <select value={e.quest} onChange={ev => onChange({ ...e, quest: ev.target.value })}
+              className={cn(INPUT_CLS, 'min-w-[9rem]')}>
+              <option value="">— pick quest —</option>
+              {(ruleset.quests ?? []).map(q => <option key={q.id} value={q.id}>{q.name}</option>)}
+            </select>
+            <div className="flex items-center gap-1">
+              <span className="text-xs text-white/40">Stage</span>
+              <input type="number" min={1} value={e.stage}
+                onChange={ev => onChange({ ...e, stage: Math.max(1, ev.target.valueAsNumber || 1) })}
+                className={cn(INPUT_CLS, 'w-14')} />
+            </div>
+          </>
+        )}
+        {e.t === 'dialogue' && (
+          <select value={e.node} onChange={ev => onChange({ ...e, node: ev.target.value })}
+            className={cn(INPUT_CLS, 'min-w-[9rem]')}>
+            <option value="">— pick NPC —</option>
+            {(ruleset.npcs ?? []).map(n => <option key={n.id} value={n.id}>{n.portrait ?? ''} {n.name}</option>)}
+          </select>
+        )}
+        {e.t === 'moveNpc' && (
+          <>
+            <select value={e.npc} onChange={ev => onChange({ ...e, npc: ev.target.value })}
+              className={cn(INPUT_CLS, 'min-w-[9rem]')}>
+              <option value="">— pick NPC —</option>
+              {(ruleset.npcs ?? []).map(n => <option key={n.id} value={n.id}>{n.portrait ?? ''} {n.name}</option>)}
+            </select>
+            <input type="text" value={e.mapId ?? ''} placeholder="map id (blank = any)"
+              onChange={ev => onChange({ ...e, mapId: ev.target.value || undefined })}
+              className={cn(INPUT_CLS, 'w-32')} />
+            <div className="flex items-center gap-1">
+              <span className="text-xs text-white/40">X</span>
+              <input type="number" value={e.x} onChange={ev => onChange({ ...e, x: ev.target.valueAsNumber || 0 })} className={cn(INPUT_CLS, 'w-14')} />
+              <span className="text-xs text-white/40">Y</span>
+              <input type="number" value={e.y} onChange={ev => onChange({ ...e, y: ev.target.valueAsNumber || 0 })} className={cn(INPUT_CLS, 'w-14')} />
+            </div>
+          </>
+        )}
+
         {/* Dice amount: heal / restoreMp */}
         {(e.t === 'heal' || e.t === 'restoreMp') && (
           <div className="flex items-center gap-1">
