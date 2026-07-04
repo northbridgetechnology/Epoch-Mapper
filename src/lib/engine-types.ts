@@ -445,6 +445,8 @@ export type FieldType =
   | 'dice'
   | 'effects'
   | 'modifiers'
+  /** Pixel-sprite picker: built-in kind name or an uploaded PNG stored as a data URI. */
+  | 'sprite'
 
 export interface FieldSchema {
   key: string

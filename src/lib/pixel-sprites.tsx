@@ -1030,6 +1030,62 @@ export function pixelSprite(
   return pixelSpriteRect(kind, cx - size / 2, cy - h / 2, size, h, key, opacity)
 }
 
+/** True when a sprite value is a creator-uploaded bitmap (data URI) rather than a built-in kind. */
+export function isBitmapSprite(sprite: string | undefined | null): sprite is string {
+  return typeof sprite === 'string' && sprite.startsWith('data:image/')
+}
+
+/** All built-in sprite kind names (for pickers / datalists). */
+export function spriteKinds(): string[] {
+  return Object.keys(SPRITES)
+}
+
+/**
+ * Center-anchored bitmap billboard for creator-uploaded sprites.
+ * The image keeps its own aspect inside a `size`×`size` box, feet on the box bottom,
+ * and renders with nearest-neighbour scaling for the EotB pixel look.
+ */
+export function bitmapSprite(
+  dataUri: string,
+  cx: number,
+  cy: number,
+  size: number,
+  key: string,
+  opacity = 1,
+): React.ReactElement {
+  return (
+    <image
+      key={key}
+      href={dataUri}
+      x={cx - size / 2}
+      y={cy - size / 2}
+      width={size}
+      height={size}
+      opacity={opacity}
+      preserveAspectRatio="xMidYMax meet"
+      style={{ imageRendering: 'pixelated' }}
+    />
+  )
+}
+
+/**
+ * One-stop creature billboard: creator bitmap wins, then the built-in library
+ * (explicit kind or keyword match on id/name), else null so callers can fall
+ * back to an emoji glyph.
+ */
+export function creatureSprite(
+  hint: { sprite?: string; id?: string; name?: string },
+  cx: number,
+  cy: number,
+  size: number,
+  key: string,
+  opacity = 1,
+): React.ReactElement | null {
+  if (isBitmapSprite(hint.sprite)) return bitmapSprite(hint.sprite, cx, cy, size, key, opacity)
+  const kind = resolveCreatureSprite(hint)
+  return kind ? pixelSprite(kind, cx, cy, size, key, opacity) : null
+}
+
 /** Exposed for validation tests. */
 export function _spriteDefs(): Record<string, { w: number; h: number; palette: Record<string, string>; frames: string[][] }> {
   return SPRITES

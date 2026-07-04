@@ -4,7 +4,7 @@
  */
 
 import assert from 'node:assert/strict'
-import { _spriteDefs, hasPixelSprite, spriteAspect, resolveCreatureSprite } from '../src/lib/pixel-sprites'
+import { _spriteDefs, hasPixelSprite, spriteAspect, resolveCreatureSprite, creatureSprite, isBitmapSprite, spriteKinds } from '../src/lib/pixel-sprites'
 import { SUBCUBE_KIND_DEFS } from '../src/lib/subcube-defs'
 import { makeDefaultRuleset } from '../src/lib/default-ruleset'
 
@@ -74,6 +74,23 @@ test('resolveCreatureSprite honours explicit sprite and falls back to keywords',
   assert.equal(resolveCreatureSprite({ sprite: 'cr_demon', id: 'x', name: 'Whatever' }), 'cr_demon')
   assert.equal(resolveCreatureSprite({ sprite: 'not_a_sprite', id: 'enemy.skeleton', name: 'Skeleton' }), 'cr_skeleton')
   assert.equal(resolveCreatureSprite({ id: 'npc.unmatchable', name: 'Xyzzy' }), null)
+})
+
+test('creator bitmaps: detection and precedence over built-ins', () => {
+  const uri = 'data:image/png;base64,iVBORw0KGgo='
+  assert.ok(isBitmapSprite(uri))
+  assert.ok(!isBitmapSprite('cr_demon'))
+  assert.ok(!isBitmapSprite(undefined))
+
+  // A bitmap sprite renders as an <image> even when the name would keyword-match
+  const el = creatureSprite({ sprite: uri, id: 'enemy.skeleton', name: 'Skeleton' }, 0, 0, 10, 'k')
+  assert.ok(el && (el as { type?: unknown }).type === 'image', 'bitmap hint should yield an <image> element')
+
+  // Without a bitmap the built-in library is used, and unmatched hints stay null
+  assert.ok(creatureSprite({ id: 'enemy.skeleton', name: 'Skeleton' }, 0, 0, 10, 'k2'))
+  assert.equal(creatureSprite({ id: 'x', name: 'Xyzzy' }, 0, 0, 10, 'k3'), null)
+
+  assert.ok(spriteKinds().includes('cr_skeleton'))
 })
 
 console.log(`\n${passed} passed`)

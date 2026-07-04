@@ -1,7 +1,10 @@
 'use client'
 
+import { useRef, useState } from 'react'
 import { cn } from '@/lib/utils'
 import type { FieldSchema, FieldType } from '@/lib/engine-types'
+import { pixelSprite, hasPixelSprite, isBitmapSprite, spriteKinds } from '@/lib/pixel-sprites'
+import { fileToSpriteDataUri } from '@/lib/sprite-upload'
 
 interface SchemaFormProps {
   schema: FieldSchema[]
@@ -182,6 +185,87 @@ function DiceField({
   )
 }
 
+function SpriteField({
+  field, value, onChange, compact,
+}: { field: FieldSchema; value: unknown; onChange: (v: string | undefined) => void; compact?: boolean }) {
+  const fileRef = useRef<HTMLInputElement>(null)
+  const [error, setError] = useState<string | null>(null)
+  const sprite = typeof value === 'string' ? value : ''
+  const isBitmap = isBitmapSprite(sprite)
+  const isBuiltin = !isBitmap && sprite !== '' && hasPixelSprite(sprite)
+
+  async function onPickFile(file: File | undefined) {
+    if (!file) return
+    setError(null)
+    try {
+      onChange(await fileToSpriteDataUri(file))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Upload failed.')
+    }
+  }
+
+  return (
+    <div>
+      {!compact && <FieldLabel label={field.label} optional={field.optional} />}
+      <div className="flex items-center gap-2">
+        <div className="w-10 h-10 shrink-0 grid place-items-center rounded bg-zinc-700/70 border border-white/10 overflow-hidden">
+          {isBitmap ? (
+            /* data-URI preview — next/image cannot optimize inline images */
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={sprite} alt="sprite" className="max-w-full max-h-full" style={{ imageRendering: 'pixelated' }} />
+          ) : isBuiltin ? (
+            <svg viewBox="0 0 40 40" className="w-full h-full">{pixelSprite(sprite, 20, 20, 34, 'pv')}</svg>
+          ) : (
+            <span className="text-[9px] text-white/35 leading-tight text-center">auto</span>
+          )}
+        </div>
+        <input
+          type="text"
+          list={`sf-sprites-${field.key}`}
+          placeholder={field.placeholder ?? 'built-in kind'}
+          value={isBitmap ? '(uploaded image)' : sprite}
+          readOnly={isBitmap}
+          onChange={e => { setError(null); onChange(e.target.value || undefined) }}
+          className="min-w-0 flex-1 px-2 py-1 rounded bg-zinc-800 border border-white/10 text-sm text-white/90 placeholder:text-white/30 focus:outline-none focus:border-amber-500/50"
+        />
+        <datalist id={`sf-sprites-${field.key}`}>
+          {spriteKinds().map(k => <option key={k} value={k} />)}
+        </datalist>
+        <button
+          type="button"
+          onClick={() => fileRef.current?.click()}
+          className="shrink-0 px-2 py-1 rounded bg-zinc-700 hover:bg-zinc-600 border border-white/10 text-xs text-white/80"
+        >
+          Upload PNG
+        </button>
+        {sprite !== '' && (
+          <button
+            type="button"
+            onClick={() => { setError(null); onChange(undefined) }}
+            className="shrink-0 px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 border border-white/10 text-xs text-white/50"
+          >
+            Clear
+          </button>
+        )}
+        <input
+          ref={fileRef}
+          type="file"
+          accept="image/png,image/gif,image/webp,image/jpeg"
+          className="hidden"
+          onChange={e => { void onPickFile(e.target.files?.[0]); e.target.value = '' }}
+        />
+      </div>
+      {error
+        ? <p className="mt-1 text-xs text-red-400">{error}</p>
+        : !compact && (
+          <p className="mt-1 text-[10px] text-white/30">
+            Type a built-in kind, or upload an image (downscaled to 64px, transparent PNG recommended). Empty = match by name.
+          </p>
+        )}
+    </div>
+  )
+}
+
 function FieldRenderer({
   field, value, onChange, compact,
 }: {
@@ -209,6 +293,9 @@ function FieldRenderer({
   }
   if (t === 'dice') {
     return <DiceField field={field} value={value} onChange={onChange} compact={compact} />
+  }
+  if (t === 'sprite') {
+    return <SpriteField field={field} value={value} onChange={v => onChange(v)} compact={compact} />
   }
   if (typeof t === 'object' && t.kind === 'enum') {
     return <EnumField field={field} type={t} value={value} onChange={onChange} compact={compact} />

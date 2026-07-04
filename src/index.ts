@@ -15,7 +15,8 @@ export { Toolbar } from './components/Toolbar'
 export { exportMapsAsPdf } from './lib/dungeon-export'
 
 // Built-in pixel sprite library (EotB-style billboards)
-export { pixelSprite, pixelSpriteRect, hasPixelSprite, spriteAspect, resolveCreatureSprite } from './lib/pixel-sprites'
+export { pixelSprite, pixelSpriteRect, hasPixelSprite, spriteAspect, resolveCreatureSprite, creatureSprite, bitmapSprite, isBitmapSprite, spriteKinds } from './lib/pixel-sprites'
+export { fileToSpriteDataUri, SPRITE_MAX_DIM, SPRITE_MAX_BYTES } from './lib/sprite-upload'
 
 // Procedural generation
 export { buildBaseMap, buildGeneratedMap, buildGeneratedWorld, SIZE_DIM } from './lib/map-generator'

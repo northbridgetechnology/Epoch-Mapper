@@ -7,7 +7,7 @@ import { baseDef, overlayDef, edgeDef, boundaryKey, DEFAULT_CELL, MIN_CELL, MAX_
 import type { CellData, MapData, MarkerDef, EdgeDir } from '@/lib/types'
 import { getTheme, type MapThemeDef } from '@/lib/themes'
 import { getSubcubeDef } from '@/lib/subcube-defs'
-import { pixelSprite, pixelSpriteRect, spriteAspect, resolveCreatureSprite } from '@/lib/pixel-sprites'
+import { pixelSprite, pixelSpriteRect, spriteAspect, creatureSprite } from '@/lib/pixel-sprites'
 import type { BoundaryData, CellEntity, Character, Facing, ItemInstance, Ruleset } from '@/lib/engine-types'
 import { objectUsedFlagKey, effectiveDoorState } from '@/lib/event-engine'
 import type { BattleViewState } from '@/lib/battle-scene'
@@ -636,14 +636,15 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
       const floor2 = face.y2
       const size = Math.max(10, fh2 * 0.30)
       const npcFog = Math.max(0.35, 1 - depthFog(d) * 1.4)
-      const npcKind = def
-        ? resolveCreatureSprite({ sprite: def.sprite, id: def.id, name: def.name }) ?? 'cr_hooded'
-        : null
       const npcSize = size * 1.3
       nodes.push(
         <g key={`npc_${d}_${s}`} opacity={npcFog}>
           <ellipse cx={ncx} cy={floor2 - fh2 * 0.02} rx={size * 0.42} ry={size * 0.10} fill="rgba(0,0,0,0.45)" />
-          {(npcKind && pixelSprite(npcKind, ncx, floor2 - npcSize * 0.52, npcSize, `npc_px_${d}_${s}`)) ?? (
+          {(def && (
+            creatureSprite({ sprite: def.sprite, id: def.id, name: def.name },
+              ncx, floor2 - npcSize * 0.52, npcSize, `npc_px_${d}_${s}`)
+            ?? pixelSprite('cr_hooded', ncx, floor2 - npcSize * 0.52, npcSize, `npc_px_${d}_${s}`)
+          )) ?? (
             <text x={ncx} y={floor2 - size * 0.55} textAnchor="middle" dominantBaseline="middle"
               fontSize={size} style={{ userSelect: 'none' }}>{def?.portrait ?? '🧑'}</text>
           )}
@@ -737,9 +738,8 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
         )
       }
 
-      // Enemy sprite (pixel billboard, emoji fallback) with a click-to-target hit area
+      // Enemy sprite (creator bitmap → pixel billboard → emoji) with a click-to-target hit area
       const eDef = actor.defId ? ruleset?.enemies.find(e => e.id === actor.defId) : undefined
-      const creatureKind = resolveCreatureSprite({ sprite: eDef?.sprite, id: actor.defId, name: actor.name })
       const enOpacity = battle.targetableIdxs.length === 0 || isTargetable || isActive ? 1 : 0.8
       nodes.push(
         <g key={`ben_${pl.actorIdx}`}
@@ -748,7 +748,8 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
             ? () => battle.onSelectTarget!(pl.actorIdx)
             : undefined}
         >
-          {(creatureKind && pixelSprite(creatureKind, exX, emY, size * 1.05, `ben_px_${pl.actorIdx}`, enOpacity)) ?? (
+          {creatureSprite({ sprite: eDef?.sprite, id: actor.defId, name: actor.name },
+            exX, emY, size * 1.05, `ben_px_${pl.actorIdx}`, enOpacity) ?? (
             <text x={exX} y={emY} textAnchor="middle" dominantBaseline="middle"
               fontSize={size} style={{ userSelect: 'none' }}
               opacity={enOpacity}
