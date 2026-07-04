@@ -467,7 +467,7 @@ export function buildGeneratedWorld(name: string, config: NewMapConfig, ruleset:
       // The hermit who starts it all, placed beside the party start
       const hermitId = `npc.hermit_${seedTag}`
       npcs.push({
-        id: hermitId, name: 'Old Hermit', portrait: '🧙',
+        id: hermitId, name: 'Old Hermit', portrait: '🧙', sprite: 'cr_hermit',
         description: 'A stooped figure who has watched these halls too long.',
         level: 3, attributes: {},
         lines: [
@@ -508,7 +508,7 @@ export function buildGeneratedWorld(name: string, config: NewMapConfig, ruleset:
     const seedTag = config.seed >>> 0
     const wandererId = `npc.wanderer_${seedTag}`
     npcs.push({
-      id: wandererId, name: 'Wanderer', portrait: '🧝',
+      id: wandererId, name: 'Wanderer', portrait: '🧝', sprite: 'cr_hooded',
       description: 'A traveller with no destination left.',
       level: 1, attributes: {},
       lines: [

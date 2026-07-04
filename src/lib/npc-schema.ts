@@ -9,6 +9,7 @@ export const NPC_SCHEMA: FieldSchema[] = [
   { key: 'id',          label: 'ID',          type: 'text',    placeholder: 'npc.short_name' },
   { key: 'name',        label: 'Name',        type: 'text' },
   { key: 'portrait',    label: 'Portrait',    type: 'icon',    optional: true },
+  { key: 'sprite',      label: 'Sprite',      type: 'text',    optional: true, placeholder: 'auto — or e.g. cr_hermit' },
   { key: 'color',       label: 'Color',       type: 'color',   optional: true },
   { key: 'description', label: 'Description', type: 'textarea', optional: true },
   { key: 'level',       label: 'Level',       type: 'number',  min: 1, optional: true },

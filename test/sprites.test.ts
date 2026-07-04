@@ -4,8 +4,9 @@
  */
 
 import assert from 'node:assert/strict'
-import { _spriteDefs, hasPixelSprite, spriteAspect } from '../src/lib/pixel-sprites'
+import { _spriteDefs, hasPixelSprite, spriteAspect, resolveCreatureSprite } from '../src/lib/pixel-sprites'
 import { SUBCUBE_KIND_DEFS } from '../src/lib/subcube-defs'
+import { makeDefaultRuleset } from '../src/lib/default-ruleset'
 
 let passed = 0
 function test(name: string, fn: () => void) {
@@ -59,6 +60,20 @@ test('special kinds (chest, lever, door panel) are present with sane aspect', ()
     const a = spriteAspect(kind)!
     assert.ok(a > 0.3 && a < 2.5, `${kind}: odd aspect ${a}`)
   }
+})
+
+test('every default-bestiary enemy resolves to a creature sprite', () => {
+  for (const e of makeDefaultRuleset().enemies) {
+    const kind = resolveCreatureSprite({ sprite: e.sprite, id: e.id, name: e.name })
+    assert.ok(kind, `no creature sprite resolves for enemy ${e.id} (${e.name})`)
+    assert.ok(hasPixelSprite(kind!), `resolved kind ${kind} for ${e.id} is not a real sprite`)
+  }
+})
+
+test('resolveCreatureSprite honours explicit sprite and falls back to keywords', () => {
+  assert.equal(resolveCreatureSprite({ sprite: 'cr_demon', id: 'x', name: 'Whatever' }), 'cr_demon')
+  assert.equal(resolveCreatureSprite({ sprite: 'not_a_sprite', id: 'enemy.skeleton', name: 'Skeleton' }), 'cr_skeleton')
+  assert.equal(resolveCreatureSprite({ id: 'npc.unmatchable', name: 'Xyzzy' }), null)
 })
 
 console.log(`\n${passed} passed`)

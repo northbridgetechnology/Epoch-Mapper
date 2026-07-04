@@ -8,6 +8,7 @@ export const ENEMY_SCHEMA: FieldSchema[] = [
   { key: 'id',          label: 'ID',          type: 'text',    placeholder: 'enemy.short_name' },
   { key: 'name',        label: 'Name',         type: 'text' },
   { key: 'icon',        label: 'Icon',         type: 'icon',    optional: true },
+  { key: 'sprite',      label: 'Sprite',       type: 'text',    optional: true, placeholder: 'auto — or e.g. cr_demon' },
   { key: 'color',       label: 'Color',        type: 'color',   optional: true },
   { key: 'description', label: 'Description',  type: 'textarea', optional: true },
   { key: 'hp',      label: 'HP',      type: 'number', min: 1 },

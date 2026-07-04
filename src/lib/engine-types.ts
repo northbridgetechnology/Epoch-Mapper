@@ -200,6 +200,8 @@ export interface NpcLine {
  *  can later fight, join the party, or trade without a schema change. */
 export interface NpcDef extends Definition {
   portrait?: string
+  /** Built-in pixel sprite kind override; falls back to keyword matching on id/name. */
+  sprite?: string
   classId?: DefRef<ClassDef>
   raceId?: DefRef<RaceDef>
   level?: number

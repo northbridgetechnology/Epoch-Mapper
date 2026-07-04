@@ -502,6 +502,401 @@ const SPRITES: Record<string, SpriteDef> = {
       'WWnWWWnWWWnW',
     ]],
   },
+
+  // ── Creatures (battle + playfield) ──────────────────────────────────────────
+
+  cr_skeleton: {
+    w: 16, h: 16,
+    palette: { '0': O, B: '#ddd6c2', b: '#a89f88', e: '#1a1410' },
+    frames: [[
+      '......0000......',
+      '.....0BBBB0.....',
+      '.....0BeBe0.....',
+      '.....0BBBB0.....',
+      '......0bb0......',
+      '....000BB000....',
+      '...0BbBBBBbB0...',
+      '...0B0BbbB0B0...',
+      '...0B00BB00B0...',
+      '...0B.0BB0.B0...',
+      '......0bb0......',
+      '.....0BBBB0.....',
+      '....0BB00BB0....',
+      '....0B0..0B0....',
+      '....0B0..0B0....',
+      '...000....000...',
+    ]],
+  },
+
+  cr_zombie: {
+    w: 16, h: 15,
+    palette: { '0': O, G: '#6c8a4f', g: '#4d6338', e: '#c73e3e', R: '#5a4a3a' },
+    frames: [[
+      '.....00000......',
+      '....0GGGGG0.....',
+      '....0GeGeG0.....',
+      '....0GGgGG0.....',
+      '.....0GGG0......',
+      '...000RRR000....',
+      '..0GGRRRRRGG0...',
+      '..0G0RRRRR0G0...',
+      '.0GG0RRRRR0GG0..',
+      '.0g0.0RRR0.0g0..',
+      '.....0RRR0......',
+      '....0RR0RR0.....',
+      '....0R0.0R0.....',
+      '...0RR0.0RR0....',
+      '...000...000....',
+    ]],
+  },
+
+  cr_slime: {
+    w: 16, h: 10,
+    palette: { '0': O, S: '#4f9e6b', s: '#356e49', e: '#14100a', h: '#8fd4a8' },
+    frames: [
+      [
+        '................',
+        '.....000000.....',
+        '...00SShSSS00...',
+        '..0SShSSSSSSS0..',
+        '..0SeSSSSSeSS0..',
+        '.0SSSSSSSSSSSS0.',
+        '.0SsSSSSSSSsSS0.',
+        '0SSSSSSSSSSSSSS0',
+        '0ssSSSSSSSSSsss0',
+        '.00000000000000.',
+      ],
+      [
+        '................',
+        '................',
+        '....000000000...',
+        '..00SShSSSSSS0..',
+        '.0SeSSSSSSeSSS0.',
+        '0SSSSSSSSSSSSSS0',
+        '0SsSSSSSSSSsSSS0',
+        '0SSSSSSSSSSSSSS0',
+        '0sssSSSSSSSssss0',
+        '.00000000000000.',
+      ],
+    ],
+  },
+
+  cr_ghost: {
+    w: 16, h: 14,
+    palette: { W: 'rgba(207,227,232,0.85)', w: 'rgba(160,190,200,0.6)', e: '#26323a' },
+    frames: [
+      [
+        '.....00000......'.replace(/0/g, 'w'),
+        '....wWWWWWw.....',
+        '...wWWWWWWWw....',
+        '...wWeWWeWWw....',
+        '...wWWWWWWWw....',
+        '...wWWwwWWWw....',
+        '...wWWWWWWWw....',
+        '...wWWWWWWWw....',
+        '...wWwWWWwWw....',
+        '...wW.wWw.Ww....',
+        '....w..W..w.....',
+        '................',
+        '................',
+        '................',
+      ],
+      [
+        '................',
+        '.....wwwww......',
+        '....wWWWWWw.....',
+        '...wWWWWWWWw....',
+        '...wWeWWeWWw....',
+        '...wWWWWWWWw....',
+        '...wWWwwWWWw....',
+        '...wWWWWWWWw....',
+        '...wWWWWWWWw....',
+        '...wWwWWWwWw....',
+        '...wW.wWw.Ww....',
+        '....w..W..w.....',
+        '................',
+        '................',
+      ],
+    ],
+  },
+
+  cr_imp: {
+    w: 16, h: 12,
+    palette: { '0': O, P: '#b06ad4', p: '#7d4a99', I: '#8a4ab0', e: '#ffd23e' },
+    frames: [
+      [
+        '.0.0........0.0.',
+        '0PP0........0PP0',
+        '0PPP00....00PPP0',
+        '.0PPPP0000PPPP0.',
+        '..0p0IIIIII0p0..',
+        '.....0IeeI0.....',
+        '....0IIIIII0....',
+        '....0IIIIII0....',
+        '.....0I00I0.....',
+        '.....0I..I0.....',
+        '....00....00....',
+        '................',
+      ],
+      [
+        '................',
+        '.0.0........0.0.',
+        '0PPP0......0PPP0',
+        '.0PPP000000PPP0.',
+        '..0p0IIIIII0p0..',
+        '.....0IeeI0.....',
+        '....0IIIIII0....',
+        '....0IIIIII0....',
+        '.....0I00I0.....',
+        '.....0I..I0.....',
+        '....00....00....',
+        '................',
+      ],
+    ],
+  },
+
+  cr_demon: {
+    w: 16, h: 16,
+    palette: { '0': O, H: '#ddd6c2', R: '#a1352c', r: '#6e211b', e: '#ffd23e' },
+    frames: [[
+      '.0H0........0H0.',
+      '.0HH0......0HH0.',
+      '..0HH0....0HH0..',
+      '...00RRRRRR00...',
+      '....0ReRReR0....',
+      '....0RRRRRR0....',
+      '.....0rRRr0.....',
+      '...00RRRRRR00...',
+      '..0RRRRRRRRRR0..',
+      '..0R0RRrrRR0R0..',
+      '..0R00RRRR00R0..',
+      '.....0RRRR0.....',
+      '....0RR00RR0....',
+      '....0R0..0R0....',
+      '...0RR0..0RR0...',
+      '...000....000...',
+    ]],
+  },
+
+  cr_brute: {
+    w: 16, h: 15,
+    palette: { '0': O, K: '#7c8058', k: '#5a5e3e', e: '#c73e3e' },
+    frames: [[
+      '.....000000.....',
+      '....0KKKKKK0....',
+      '....0KeKKeK0....',
+      '....0KKkkKK0....',
+      '..000KKKKKK000..',
+      '.0KKKKKKKKKKKK0.',
+      '.0KK0KKKKKK0KK0.',
+      '0KK00KkkkkK00KK0',
+      '0K0.0KKKKKK0.0K0',
+      '....0KKKKKK0....',
+      '....0KK00KK0....',
+      '...0KK0..0KK0...',
+      '...0K0....0K0...',
+      '..0KK0....0KK0..',
+      '..000......000..',
+    ]],
+  },
+
+  cr_beast: {
+    w: 16, h: 10,
+    palette: { '0': O, G: '#6e5f4e', g: '#4d4136', e: '#e8b93b', T: '#3d332a' },
+    frames: [
+      [
+        '.00.......0.....',
+        '0GG0000..0G0....',
+        '0GeeGGG000GG0...',
+        '.0GGGGGGGGGGG0..',
+        '..0GGGGGGGGGGG0.',
+        '...0GGg0GGg0GG0.',
+        '...0GG0.0GG00T0.',
+        '...0g0...0g0.0..',
+        '...00.....00....',
+        '................',
+      ],
+      [
+        '.00.......0.....',
+        '0GG0000..0G0....',
+        '0GeeGGG000GG0...',
+        '.0GGGGGGGGGGG0..',
+        '..0GGGGGGGGGG0T.',
+        '...0Gg0GGG0GG00.',
+        '...0G0..0GG0....',
+        '...0g0...0g0....',
+        '...00.....00....',
+        '................',
+      ],
+    ],
+  },
+
+  cr_serpent: {
+    w: 16, h: 14,
+    palette: { '0': O, S: '#4f8a6a', s: '#376349', e: '#ffd23e', b: '#c9b98a' },
+    frames: [[
+      '.....00000......',
+      '....0SSSSS0.....',
+      '....0SeSeS0.....',
+      '....0SbbbS0.....',
+      '.....0SSS0......',
+      '.....0SSS0......',
+      '....0SbSbS0.....',
+      '...0SSS0SSS0....',
+      '..0SS0..0SS0....',
+      '..0SS0..0SS0....',
+      '...0SSS0SS0.....',
+      '....0SSSS0......',
+      '..00SSSS0.......',
+      '..000000........',
+    ]],
+  },
+
+  cr_frost: {
+    w: 16, h: 13,
+    palette: { '0': O, W: '#eef4f6', b: '#5aa8d6', e: '#26323a' },
+    frames: [[
+      '.....0bbb0......',
+      '....0bbbbb0.....',
+      '...0bbbbbbb0....',
+      '...0WWWWWWW0....',
+      '...0WeWWWeW0....',
+      '...0WWW0WWW0....',
+      '....0WWWWW0.....',
+      '..00WWWWWWW00...',
+      '.0WWWWWWWWWWW0..',
+      '.0W0WWWWWWW0W0..',
+      '....0WW0WW0.....',
+      '...0WW0.0WW0....',
+      '...000...000....',
+    ]],
+  },
+
+  cr_pumpkin: {
+    w: 16, h: 14,
+    palette: { '0': O, P: '#e07b1f', p: '#a8571a', F: '#ffd23e', c: '#2d3a5c', s: '#4f7a3a' },
+    frames: [
+      [
+        '......0ss.......',
+        '....00PPPP00....',
+        '...0PPPPPPPP0...',
+        '..0PPFPPPPFPP0..',
+        '..0PPPPPPPPPP0..',
+        '..0PPF0FF0FPP0..',
+        '...0PpPPPPpP0...',
+        '....00PPPP00....',
+        '....0cccccc0....',
+        '...0cccccccc0...',
+        '...0cc0cc0cc0...',
+        '....0cccccc0....',
+        '.....0c00c0.....',
+        '.....00..00.....',
+      ],
+      [
+        '......0ss.......',
+        '....00PPPP00....',
+        '...0PPPPPPPP0...',
+        '..0PPFPPPPFPP0..',
+        '..0PPPPPPPPPP0..',
+        '..0PP0FFFF0PP0..',
+        '...0PpPPPPpP0...',
+        '....00PPPP00....',
+        '....0cccccc0....',
+        '...0cccccccc0...',
+        '...0cc0cc0cc0...',
+        '....0cccccc0....',
+        '.....0c00c0.....',
+        '.....00..00.....',
+      ],
+    ],
+  },
+
+  cr_angel: {
+    w: 16, h: 15,
+    palette: { '0': O, W: '#eef4f6', Y: '#ffd23e', A: '#e8c49a', L: '#d6dde6', l: '#aab4c2' },
+    frames: [[
+      '.......0Y0......',
+      '......0AAA0.....',
+      '0W0...0AAA0..0W0',
+      '0WW0...0A0..0WW0',
+      '0WWW0.0LLL0.0WW0',
+      '.0WW00LLLLL00W0.',
+      '..0W0LLLLLLL0W0.',
+      '..0W0LlLLlLL0W0.',
+      '...00LLLLLLL00..',
+      '.....0LLLLL0....',
+      '.....0LLLLL0....',
+      '.....0LlLlL0....',
+      '.....0LLLLL0....',
+      '......0LLL0.....',
+      '.......000......',
+    ]],
+  },
+
+  cr_hermit: {
+    w: 16, h: 15,
+    palette: { '0': O, R: '#6e5f4e', r: '#4d4136', A: '#e8c49a', B: '#ddd6c2', T: '#7a5024', e: '#26323a' },
+    frames: [[
+      '..T.....000.....',
+      '..T....0RRR0....',
+      '..T....0AeA0....',
+      '..T....0BBB0....',
+      '..T...0RRRRR0...',
+      '..T..0RRRRRRR0..',
+      '..T..0RrRRrRR0..',
+      '..TT0R0RRRRR0...',
+      '..T.0RRRRRRR0...',
+      '..T.0RRRRRRR0...',
+      '..T.0RrRRRrR0...',
+      '..T.0RR0RRR0....',
+      '..T.0R0.0RR0....',
+      '..T.00...00.....',
+      '..T.............',
+    ]],
+  },
+
+  cr_hooded: {
+    w: 16, h: 14,
+    palette: { '0': O, H: '#5c6e5a', h: '#42513f', e: '#ffd23e' },
+    frames: [[
+      '.....00000......',
+      '....0HHHHH0.....',
+      '...0HHHHHHH0....',
+      '...0H00000H0....',
+      '...0H0e0e0H0....',
+      '...0HH000HH0....',
+      '...0HHHHHHH0....',
+      '..0HHhHHHhHH0...',
+      '..0HH0HHH0HH0...',
+      '..0H00HhH00H0...',
+      '.....0HHH0......',
+      '....0HH0HH0.....',
+      '....0H0.0H0.....',
+      '....00...00.....',
+    ]],
+  },
+
+  cr_guard: {
+    w: 16, h: 15,
+    palette: { '0': O, M: '#8a95a3', m: '#59636e', e: '#26323a', R: '#8c1f28' },
+    frames: [[
+      '.....00000......',
+      '....0MMMMM0.....',
+      '....0M0e0M0.....',
+      '....0MMMMM0.....',
+      '...00MmmmM00....',
+      '..0MMMRRRMMM0...',
+      '..0M0MRRRM0M0...',
+      '.0MM0MRRRM0MM0..',
+      '.0M00MMMMM00M0..',
+      '....0MmmmM0.....',
+      '....0MM0MM0.....',
+      '....0M0.0M0.....',
+      '...0MM0.0MM0....',
+      '...000...000....',
+      '................',
+    ]],
+  },
 }
 
 // ── Precomputed rect runs ─────────────────────────────────────────────────────
@@ -512,7 +907,8 @@ const RUNS: Record<string, Run[][]> = {}
 for (const [kind, def] of Object.entries(SPRITES)) {
   RUNS[kind] = def.frames.map(rows => {
     const runs: Run[] = []
-    rows.forEach((row, y) => {
+    rows.forEach((rawRow, y) => {
+      const row = rawRow.padEnd(def.w, '.')
       let x = 0
       while (x < row.length) {
         const ch = row[x]
@@ -529,6 +925,40 @@ for (const [kind, def] of Object.entries(SPRITES)) {
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
+
+// ── Creature sprite resolution ────────────────────────────────────────────────
+// Explicit `sprite` (a built-in kind name, or a creator upload in phase 3)
+// wins; otherwise the id/name is keyword-matched to an archetype.
+
+const CREATURE_KEYWORDS: [RegExp, string][] = [
+  [/skelet|lich|bone/, 'cr_skeleton'],
+  [/zomb|ghoul|fallen|corpse|dead/, 'cr_zombie'],
+  [/slime|ooze|blob|obariyon/, 'cr_slime'],
+  [/ghost|wraith|spirit|phantom|specter|mokoi/, 'cr_ghost'],
+  [/pixie|fairy|fae|imp\b|lilim|incub|succub|apsaras/, 'cr_imp'],
+  [/baphomet|minotaur|\boni\b|bicorn|demon|devil|fiend/, 'cr_demon'],
+  [/ogre|troll|giant|brute|golem/, 'cr_brute'],
+  [/wolf|garou|hound|beast|dog/, 'cr_beast'],
+  [/naga|medusa|snake|serpent|lamia/, 'cr_serpent'],
+  [/frost|\bice\b|snow/, 'cr_frost'],
+  [/pyro|pumpkin|jack.?o|lantern/, 'cr_pumpkin'],
+  [/angel|seraph|deva/, 'cr_angel'],
+  [/hermit|elder|sage|crone|witch/, 'cr_hermit'],
+  [/guard|knight|soldier|warden/, 'cr_guard'],
+  [/wander|travel|stranger|rogue|hood/, 'cr_hooded'],
+  [/\brat\b|rodent/, 'rat'],
+  [/\bbat\b/, 'bat'],
+  [/spider|arachn/, 'spider'],
+]
+
+export function resolveCreatureSprite(hint: { sprite?: string; id?: string; name?: string }): string | null {
+  if (hint.sprite && hint.sprite in SPRITES) return hint.sprite
+  const key = `${hint.id ?? ''} ${hint.name ?? ''}`.toLowerCase()
+  for (const [re, kind] of CREATURE_KEYWORDS) {
+    if (re.test(key)) return kind
+  }
+  return null
+}
 
 export function hasPixelSprite(kind: string): boolean {
   return kind in SPRITES
