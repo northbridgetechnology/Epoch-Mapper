@@ -4,7 +4,7 @@
  */
 
 import assert from 'node:assert/strict'
-import { _spriteDefs, hasPixelSprite, spriteAspect, resolveCreatureSprite, creatureSprite, isBitmapSprite, spriteKinds } from '../src/lib/pixel-sprites'
+import { _spriteDefs, hasPixelSprite, spriteAspect, resolveCreatureSprite, creatureSprite, isBitmapSprite, bitmapFrames, spriteKinds } from '../src/lib/pixel-sprites'
 import { SUBCUBE_KIND_DEFS } from '../src/lib/subcube-defs'
 import { makeDefaultRuleset } from '../src/lib/default-ruleset'
 
@@ -82,15 +82,30 @@ test('creator bitmaps: detection and precedence over built-ins', () => {
   assert.ok(!isBitmapSprite('cr_demon'))
   assert.ok(!isBitmapSprite(undefined))
 
-  // A bitmap sprite renders as an <image> even when the name would keyword-match
+  // A bitmap sprite wins even when the name would keyword-match a built-in
   const el = creatureSprite({ sprite: uri, id: 'enemy.skeleton', name: 'Skeleton' }, 0, 0, 10, 'k')
-  assert.ok(el && (el as { type?: unknown }).type === 'image', 'bitmap hint should yield an <image> element')
+  assert.ok(el, 'bitmap hint should render')
+  assert.equal(JSON.stringify(el).includes('"href":"data:image/png'), true, 'bitmap hint should embed the uploaded image')
 
   // Without a bitmap the built-in library is used, and unmatched hints stay null
   assert.ok(creatureSprite({ id: 'enemy.skeleton', name: 'Skeleton' }, 0, 0, 10, 'k2'))
   assert.equal(creatureSprite({ id: 'x', name: 'Xyzzy' }, 0, 0, 10, 'k3'), null)
 
   assert.ok(spriteKinds().includes('cr_skeleton'))
+})
+
+test('two-frame uploads: frame splitting and animated rendering', () => {
+  const f1 = 'data:image/png;base64,AAAA'
+  const f2 = 'data:image/png;base64,BBBB'
+  assert.deepEqual(bitmapFrames(`${f1}|${f2}`), [f1, f2])
+  assert.deepEqual(bitmapFrames(f1), [f1])
+  assert.ok(isBitmapSprite(`${f1}|${f2}`))
+
+  // A joined two-frame sprite renders a group (with the SMIL flip), not a bare <image>
+  const animated = creatureSprite({ sprite: `${f1}|${f2}` }, 0, 0, 10, 'a') as { type?: unknown; props?: { children?: unknown } }
+  assert.ok(animated && animated.type === 'g', 'two-frame bitmap should render a <g> wrapper')
+  const single = creatureSprite({ sprite: f1 }, 0, 0, 10, 'b') as { type?: unknown }
+  assert.ok(single && single.type === 'g', 'single-frame bitmap renders its wrapper group')
 })
 
 console.log(`\n${passed} passed`)

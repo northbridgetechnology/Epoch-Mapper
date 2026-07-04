@@ -1035,6 +1035,11 @@ export function isBitmapSprite(sprite: string | undefined | null): sprite is str
   return typeof sprite === 'string' && sprite.startsWith('data:image/')
 }
 
+/** Split a stored bitmap sprite into its frames (animated uploads join two data URIs with '|'). */
+export function bitmapFrames(sprite: string): string[] {
+  return sprite.split('|').filter(f => f.startsWith('data:image/'))
+}
+
 /** All built-in sprite kind names (for pickers / datalists). */
 export function spriteKinds(): string[] {
   return Object.keys(SPRITES)
@@ -1052,19 +1057,35 @@ export function bitmapSprite(
   size: number,
   key: string,
   opacity = 1,
-): React.ReactElement {
-  return (
+): React.ReactElement | null {
+  const frames = bitmapFrames(dataUri)
+  if (frames.length === 0) return null
+  const img = (href: string) => (
     <image
-      key={key}
-      href={dataUri}
+      href={href}
       x={cx - size / 2}
       y={cy - size / 2}
       width={size}
       height={size}
-      opacity={opacity}
       preserveAspectRatio="xMidYMax meet"
       style={{ imageRendering: 'pixelated' }}
     />
+  )
+  if (frames.length === 1) {
+    return <g key={key} opacity={opacity} pointerEvents="none">{img(frames[0])}</g>
+  }
+  // Two-frame upload: same discrete opacity flip as the built-in library
+  return (
+    <g key={key} opacity={opacity} pointerEvents="none">
+      <g>
+        {img(frames[0])}
+        <animate attributeName="opacity" values="1;0" keyTimes="0;0.5" calcMode="discrete" dur="0.9s" repeatCount="indefinite" />
+      </g>
+      <g opacity={0}>
+        {img(frames[1])}
+        <animate attributeName="opacity" values="0;1" keyTimes="0;0.5" calcMode="discrete" dur="0.9s" repeatCount="indefinite" />
+      </g>
+    </g>
   )
 }
 
@@ -1086,7 +1107,7 @@ export function creatureSprite(
   return kind ? pixelSprite(kind, cx, cy, size, key, opacity) : null
 }
 
-/** Exposed for validation tests. */
+/** Raw grid access for validation tests and the PNG template exporter. */
 export function _spriteDefs(): Record<string, { w: number; h: number; palette: Record<string, string>; frames: string[][] }> {
   return SPRITES
 }

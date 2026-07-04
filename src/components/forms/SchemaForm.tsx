@@ -3,8 +3,8 @@
 import { useRef, useState } from 'react'
 import { cn } from '@/lib/utils'
 import type { FieldSchema, FieldType } from '@/lib/engine-types'
-import { pixelSprite, hasPixelSprite, isBitmapSprite, spriteKinds } from '@/lib/pixel-sprites'
-import { fileToSpriteDataUri } from '@/lib/sprite-upload'
+import { pixelSprite, hasPixelSprite, isBitmapSprite, bitmapFrames, spriteKinds } from '@/lib/pixel-sprites'
+import { fileToSpriteDataUri, downloadSpriteTemplate, SPRITE_ACCEPT_ATTR } from '@/lib/sprite-upload'
 
 interface SchemaFormProps {
   schema: FieldSchema[]
@@ -190,8 +190,10 @@ function SpriteField({
 }: { field: FieldSchema; value: unknown; onChange: (v: string | undefined) => void; compact?: boolean }) {
   const fileRef = useRef<HTMLInputElement>(null)
   const [error, setError] = useState<string | null>(null)
+  const [showSpec, setShowSpec] = useState(false)
   const sprite = typeof value === 'string' ? value : ''
   const isBitmap = isBitmapSprite(sprite)
+  const frames = isBitmap ? bitmapFrames(sprite) : []
   const isBuiltin = !isBitmap && sprite !== '' && hasPixelSprite(sprite)
 
   async function onPickFile(file: File | undefined) {
@@ -208,11 +210,16 @@ function SpriteField({
     <div>
       {!compact && <FieldLabel label={field.label} optional={field.optional} />}
       <div className="flex items-center gap-2">
-        <div className="w-10 h-10 shrink-0 grid place-items-center rounded bg-zinc-700/70 border border-white/10 overflow-hidden">
+        <div className="relative w-10 h-10 shrink-0 grid place-items-center rounded bg-zinc-700/70 border border-white/10 overflow-hidden">
           {isBitmap ? (
-            /* data-URI preview — next/image cannot optimize inline images */
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={sprite} alt="sprite" className="max-w-full max-h-full" style={{ imageRendering: 'pixelated' }} />
+            <>
+              {/* data-URI preview — next/image cannot optimize inline images */}
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={frames[0]} alt="sprite" className="max-w-full max-h-full" style={{ imageRendering: 'pixelated' }} />
+              {frames.length === 2 && (
+                <span className="absolute bottom-0 right-0 px-0.5 rounded-tl bg-black/70 text-[8px] text-amber-300 leading-tight">2f</span>
+              )}
+            </>
           ) : isBuiltin ? (
             <svg viewBox="0 0 40 40" className="w-full h-full">{pixelSprite(sprite, 20, 20, 34, 'pv')}</svg>
           ) : (
@@ -236,7 +243,15 @@ function SpriteField({
           onClick={() => fileRef.current?.click()}
           className="shrink-0 px-2 py-1 rounded bg-zinc-700 hover:bg-zinc-600 border border-white/10 text-xs text-white/80"
         >
-          Upload PNG
+          Upload
+        </button>
+        <button
+          type="button"
+          title="Download a built-in sprite as an editable PNG template"
+          onClick={() => downloadSpriteTemplate(isBuiltin ? sprite : undefined)}
+          className="shrink-0 px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 border border-white/10 text-xs text-white/60"
+        >
+          Template
         </button>
         {sprite !== '' && (
           <button
@@ -250,18 +265,32 @@ function SpriteField({
         <input
           ref={fileRef}
           type="file"
-          accept="image/png,image/gif,image/webp,image/jpeg"
+          accept={SPRITE_ACCEPT_ATTR}
           className="hidden"
           onChange={e => { void onPickFile(e.target.files?.[0]); e.target.value = '' }}
         />
       </div>
-      {error
-        ? <p className="mt-1 text-xs text-red-400">{error}</p>
-        : !compact && (
-          <p className="mt-1 text-[10px] text-white/30">
-            Type a built-in kind, or upload an image (downscaled to 64px, transparent PNG recommended). Empty = match by name.
-          </p>
-        )}
+      {error && <p className="mt-1 text-xs text-red-400">{error}</p>}
+      {!compact && (
+        <p className="mt-1 text-[10px] text-white/30">
+          Empty = match by name · Template downloads an editable example{' '}
+          <button
+            type="button"
+            onClick={() => setShowSpec(s => !s)}
+            className="underline decoration-dotted text-white/45 hover:text-white/70"
+          >
+            {showSpec ? 'hide requirements' : 'requirements'}
+          </button>
+        </p>
+      )}
+      {!compact && showSpec && (
+        <ul className="mt-1 space-y-0.5 rounded bg-zinc-800/60 border border-white/10 p-2 text-[10px] text-white/50 list-disc list-inside">
+          <li><span className="text-white/70">Format:</span> PNG, GIF, or WebP with a transparent background. JPEG is rejected (no alpha).</li>
+          <li><span className="text-white/70">Size:</span> downscaled to 64px on the longest edge (nearest-neighbour — pixel art stays crisp; never upscaled). Author at 32–64px. Max 64KB stored.</li>
+          <li><span className="text-white/70">Composition:</span> bottom-anchored in a square box — feet touch the bottom edge. Taller-than-wide reads best.</li>
+          <li><span className="text-white/70">Animation:</span> an image exactly twice as wide as tall is read as a two-frame sheet (left, then right) and idle-animates in game.</li>
+        </ul>
+      )}
     </div>
   )
 }
