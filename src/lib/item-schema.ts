@@ -49,6 +49,8 @@ export const ITEM_SCHEMA: FieldSchema[] = [
   { key: 'charges',   label: 'Charges (wands/staves)', type: 'number', min: 1, optional: true },
   { key: 'lightRadius', label: 'Light Radius (cells, dark maps)', type: 'number', min: 1, optional: true },
   { key: 'burnSteps',   label: 'Burn Steps (light source expires)', type: 'number', min: 1, optional: true },
+  { key: 'unidentifiedName', label: 'Unidentified Name ("?Sword" — drops arrive unidentified)', type: 'text', optional: true },
+  { key: 'cursed',      label: 'Cursed (welds on equip until Remove Curse)', type: 'boolean', optional: true },
 ]
 
 export const LOOT_TABLE_SCHEMA: FieldSchema[] = [
@@ -79,4 +81,10 @@ export function blankLootTable(id: string): Record<string, unknown> {
     name: 'New Loot Table',
     description: '',
   }
+}
+
+/** Player-facing item name: unidentified stacks show their masked name. */
+export function itemDisplayName(def: { name: string; unidentifiedName?: string } | undefined, inst?: { unidentified?: boolean }): string {
+  if (!def) return '???'
+  return inst?.unidentified ? (def.unidentifiedName || `?${def.name.split(' ').pop()}`) : def.name
 }

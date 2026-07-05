@@ -27,6 +27,18 @@ function GameRules({ meta, onMetaChange }: { meta: GameMeta; onMetaChange: (patc
       </div>
       <div className="grid grid-cols-2 gap-3">
         <label className="flex flex-col gap-1 rounded-lg border border-white/8 bg-white/4 px-3 py-2">
+          <span className="text-[11px] text-white/60 font-medium">Game title</span>
+          <input type="text" value={meta.title} placeholder="Untitled Dungeon"
+            onChange={e => onMetaChange({ title: e.target.value })}
+            className="px-2 py-1 rounded bg-zinc-800 border border-white/10 text-xs text-white/80 focus:outline-none focus:border-amber-500/40" />
+        </label>
+        <label className="flex flex-col gap-1 rounded-lg border border-white/8 bg-white/4 px-3 py-2">
+          <span className="text-[11px] text-white/60 font-medium">Author</span>
+          <input type="text" value={meta.author ?? ''} placeholder="you"
+            onChange={e => onMetaChange({ author: e.target.value || undefined })}
+            className="px-2 py-1 rounded bg-zinc-800 border border-white/10 text-xs text-white/80 focus:outline-none focus:border-amber-500/40" />
+        </label>
+        <label className="flex flex-col gap-1 rounded-lg border border-white/8 bg-white/4 px-3 py-2">
           <span className="text-[11px] text-white/60 font-medium">Save policy</span>
           <select
             value={meta.savePolicy ?? 'anywhere'}

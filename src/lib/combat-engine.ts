@@ -859,7 +859,16 @@ export function applyCombatOutcome(
         const newMaxHp = deriveMaxHp({ level: newLevel, attributes: char.attributes }, cls)
         const newMaxMp = deriveMaxMp({ level: newLevel, attributes: char.attributes }, cls)
         levelUps.push(char.name)
-        return { ...char, level: newLevel, xp: newXp - threshold, maxHp: newMaxHp, hp: newMaxHp, maxMp: newMaxMp, mp: newMaxMp }
+        // Auto-learn spells whose learn table names this class at (or below) the new level
+        const learned = ruleset.spells
+          .filter(sp => !char.knownSpells.includes(sp.id)
+            && sp.learn?.some(l => l.classId === char.classId && l.level <= newLevel))
+          .map(sp => sp.id)
+        return {
+          ...char, level: newLevel, xp: newXp - threshold,
+          maxHp: newMaxHp, hp: newMaxHp, maxMp: newMaxMp, mp: newMaxMp,
+          knownSpells: learned.length > 0 ? [...char.knownSpells, ...learned] : char.knownSpells,
+        }
       }
       return { ...char, xp: newXp }
     })

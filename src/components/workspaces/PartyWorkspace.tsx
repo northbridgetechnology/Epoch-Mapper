@@ -10,6 +10,7 @@ import type {
 import { deriveMaxHp, deriveMaxMp, xpToNextLevel } from '@/lib/engine-types'
 import { newCharacter } from '@/lib/save-state'
 import { applyConsumable } from '@/lib/apply-effects'
+import { itemDisplayName } from '@/lib/item-schema'
 import { toast } from 'sonner'
 
 interface PartyWorkspaceProps {
@@ -150,6 +151,11 @@ function EquipmentPanel({
   function unequip(slot: ItemSlot) {
     const inst = char.equipment[slot]
     if (!inst) return
+    // Cursed gear welds itself on — only a Remove Curse effect frees it
+    if (itemDef(ruleset, inst.def)?.cursed) {
+      toast.error('It will not come off! The item is cursed.')
+      return
+    }
     const newInv = addToInventory(inventory, inst.def, 1, ruleset)
     onChange({ ...char, equipment: { ...char.equipment, [slot]: undefined } })
     onInventoryChange(newInv)
@@ -159,8 +165,22 @@ function EquipmentPanel({
     // Return currently equipped item to inventory
     let newInv = inventory
     const current = char.equipment[slot]
-    if (current) newInv = addToInventory(newInv, current.def, 1, ruleset)
-    // Remove from inventory
+    if (current) {
+      if (itemDef(ruleset, current.def)?.cursed) {
+        toast.error('It will not come off! The item is cursed.')
+        return
+      }
+      newInv = addToInventory(newInv, current.def, 1, ruleset)
+    }
+    const def = itemDef(ruleset, itemId)
+    // Equipping identifies — sometimes the hard way
+    const wasUnidentified = inventory.some(i => i.def === itemId && i.unidentified)
+    if (wasUnidentified && def) {
+      toast(def.cursed ? `It was ${def.name} — and it seizes hold! Cursed!` : `It was ${def.name}!`)
+    } else if (def?.cursed) {
+      toast.error(`The ${def.name} seizes hold — cursed!`)
+    }
+    // Remove from inventory (unidentified stacks first so the reveal consumes them)
     newInv = removeFromInventory(newInv, itemId, 1)
     onChange({ ...char, equipment: { ...char.equipment, [slot]: { def: itemId, qty: 1 } } })
     onInventoryChange(newInv)
@@ -218,10 +238,12 @@ function EquipmentPanel({
               const def = itemDef(ruleset, inst.def)
               if (!def) return null
               return (
-                <button key={inst.def} onClick={() => equip(pickSlot, inst.def)}
+                <button key={`${inst.def}_${inst.unidentified ? 'u' : 'i'}`} onClick={() => equip(pickSlot, inst.def)}
                   className="flex items-center gap-2 w-full px-2 py-1 rounded hover:bg-amber-950/40 text-left">
-                  <span className="text-sm">{def.icon ?? '📦'}</span>
-                  <span className="text-xs text-white/80">{def.name}</span>
+                  <span className="text-sm">{inst.unidentified ? '❓' : def.icon ?? '📦'}</span>
+                  <span className={cn('text-xs', inst.unidentified ? 'text-purple-300/90 italic' : 'text-white/80')}>
+                    {itemDisplayName(def, inst)}
+                  </span>
                   <span className="text-xs text-white/30 ml-auto">×{inst.qty}</span>
                 </button>
               )
@@ -466,11 +488,15 @@ function InventoryPanel({
             const isConsumable = def.kind === 'consumable'
             const target = getTarget(inst.def)
             return (
-              <div key={inst.def} className="flex items-center gap-2 rounded-lg bg-zinc-800/60 border border-white/10 px-3 py-2">
-                <span className="text-base w-6 text-center flex-shrink-0">{def.icon ?? '📦'}</span>
+              <div key={`${inst.def}_${inst.unidentified ? 'u' : 'i'}`} className="flex items-center gap-2 rounded-lg bg-zinc-800/60 border border-white/10 px-3 py-2">
+                <span className="text-base w-6 text-center flex-shrink-0">{inst.unidentified ? '❓' : def.icon ?? '📦'}</span>
                 <div className="flex-1 min-w-0">
-                  <div className="text-sm text-white/90 truncate">{def.name}</div>
-                  <div className="text-xs text-white/35 capitalize">{def.kind}{def.slot ? ` · ${def.slot}` : ''}</div>
+                  <div className={cn('text-sm truncate', inst.unidentified ? 'text-purple-300/90 italic' : 'text-white/90')}>
+                    {itemDisplayName(def, inst)}
+                  </div>
+                  <div className="text-xs text-white/35 capitalize">
+                    {inst.unidentified ? 'unidentified' : def.kind}{!inst.unidentified && def.slot ? ` · ${def.slot}` : ''}
+                  </div>
                 </div>
                 <span className="text-xs text-white/50 flex-shrink-0">×{inst.qty}</span>
 

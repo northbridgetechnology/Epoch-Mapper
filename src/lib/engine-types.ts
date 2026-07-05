@@ -53,6 +53,14 @@ export type Effect =
   | { t: 'runEvent'; event: DefRef<EventDef> }
   | { t: 'questStage'; quest: DefRef<QuestDef>; stage: number }
   | { t: 'moveNpc'; npc: DefRef<NpcDef>; mapId?: string; x: number; y: number }
+  /** Reveal every unidentified item the party carries. */
+  | { t: 'identify' }
+  /** Unweld all cursed equipment across the party (returned to inventory). */
+  | { t: 'removeCurse' }
+  /** Teach the target character a spell (scrolls, trainers). */
+  | { t: 'teachSpell'; spell: DefRef<SpellDef> }
+  /** Roll credits: ends the game with optional epilogue text. */
+  | { t: 'gameEnd'; text?: string }
 
 // ── Stat modifier ──────────────────────────────────────────────────────────────
 
@@ -114,6 +122,11 @@ export interface ItemDef extends Definition {
   /** Optional burn-down: the item is consumed after this many steps of being
    *  equipped (classic torch pressure). Absent = burns forever. */
   burnSteps?: number
+  /** When set, loot drops of this item arrive unidentified and show this
+   *  name ("?Sword") until identified (by spell, service, or equipping it). */
+  unidentifiedName?: string
+  /** Cursed: once equipped it cannot be removed until a removeCurse effect. */
+  cursed?: boolean
 }
 
 export interface SpellDef extends Definition {
@@ -124,6 +137,8 @@ export interface SpellDef extends Definition {
   inCombat: boolean
   outOfCombat: boolean
   effects: Effect[]
+  /** Auto-learned when a character of classId reaches level. */
+  learn?: { classId: DefRef<ClassDef>; level: number }[]
 }
 
 export interface StatusEffectDef extends Definition {
@@ -414,6 +429,8 @@ export interface ItemInstance {
   def: DefRef<ItemDef>
   qty: number
   charges?: number
+  /** True until the item is identified (defs with unidentifiedName only). */
+  unidentified?: boolean
 }
 
 export interface ActiveStatus {

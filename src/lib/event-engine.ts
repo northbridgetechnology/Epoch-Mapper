@@ -69,10 +69,18 @@ export interface ExploreEffect {
   npcMoves: { npc: string; mapId?: string; x: number; y: number }[]
   /** NPC to open the dialogue overlay for (first dialogue effect wins). */
   dialogueNode?: string
+  /** Reveal every unidentified item the party carries. */
+  identifyAll?: boolean
+  /** Unweld cursed equipment across the party. */
+  removeCurseAll?: boolean
+  /** Spells taught to the whole party's eligible members (scroll/trainer). */
+  teachSpells: string[]
+  /** Roll credits (first gameEnd effect wins). */
+  gameEnd?: { text?: string }
 }
 
 function emptyExploreEffect(): ExploreEffect {
-  return { flagSets: {}, messages: [], goldDelta: 0, itemsGained: [], itemsLost: [], questUpdates: [], npcMoves: [] }
+  return { flagSets: {}, messages: [], goldDelta: 0, itemsGained: [], itemsLost: [], questUpdates: [], npcMoves: [], teachSpells: [] }
 }
 
 // ── Condition evaluation ──────────────────────────────────────────────────────
@@ -207,6 +215,18 @@ function applyEffectsInto(
       }
       case 'moveNpc':
         result.npcMoves.push({ npc: eff.npc, mapId: eff.mapId, x: eff.x, y: eff.y })
+        break
+      case 'identify':
+        result.identifyAll = true
+        break
+      case 'removeCurse':
+        result.removeCurseAll = true
+        break
+      case 'teachSpell':
+        if (eff.spell) result.teachSpells.push(eff.spell)
+        break
+      case 'gameEnd':
+        if (!result.gameEnd) result.gameEnd = { text: eff.text }
         break
       default:
         break

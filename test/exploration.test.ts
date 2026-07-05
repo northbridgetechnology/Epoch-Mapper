@@ -175,4 +175,50 @@ test('FOE patrols: pingpong reverses at the ends', () => {
   assert.deepEqual(listFoes(m, flags)[0].pos, { x: 0, y: 0 }, 'bounces back')
 })
 
+// ── Batch D: loot ritual + spell learning ─────────────────────────────────────
+
+import { applyCombatOutcome } from '../src/lib/combat-engine'
+import { applyEffectToChar } from '../src/lib/apply-effects'
+import { itemDisplayName } from '../src/lib/item-schema'
+import { xpToNextLevel } from '../src/lib/engine-types'
+
+test('itemDisplayName masks unidentified stacks', () => {
+  const def = { name: 'Vorpal Sword', unidentifiedName: '?Sword' }
+  assert.equal(itemDisplayName(def, { unidentified: true }), '?Sword')
+  assert.equal(itemDisplayName(def, {}), 'Vorpal Sword')
+  assert.equal(itemDisplayName({ name: 'Rusty Blade' }, { unidentified: true }), '?Blade')
+})
+
+test('teachSpell effect respects class schools and no-duplicates', () => {
+  const spell = ruleset.spells.find(s => (s.learn ?? []).length === 0) ?? ruleset.spells[0]
+  const mage = char({ classId: ruleset.classes.find(c => c.spellSchools.includes(spell.school))?.id ?? ruleset.classes[0].id })
+  const r = applyEffectToChar({ t: 'teachSpell', spell: spell.id }, 0, [mage], [], ruleset)
+  assert.ok(r.party[0].knownSpells.includes(spell.id))
+  const again = applyEffectToChar({ t: 'teachSpell', spell: spell.id }, 0, r.party, [], ruleset)
+  assert.equal(again.party[0].knownSpells.filter(s => s === spell.id).length, 1)
+})
+
+test('level-up auto-learns spells from the learn table', () => {
+  const cls = ruleset.classes[0]
+  const rs = {
+    ...ruleset,
+    spells: [...ruleset.spells, {
+      id: 'spell.test_bolt', name: 'Test Bolt', school: cls.spellSchools[0] ?? 'arcane',
+      level: 1, mpCost: 2, target: 'enemy' as const, inCombat: true, outOfCombat: false,
+      effects: [], learn: [{ classId: cls.id, level: 2 }],
+    }],
+  }
+  const hero = char({ classId: cls.id, level: 1, xp: xpToNextLevel(1) - 1 })
+  const state = {
+    actors: [{ kind: 'party' as const, idx: 0, name: hero.name, hp: 10, maxHp: 10, mp: 0, maxMp: 0,
+      attack: 1, defense: 1, speed: 1, xp: 0, gold: 0, alive: true, statuses: [], rank: 0 as const }],
+    turnIdx: 0, phase: 'victory' as const, log: [], fleeAttempts: 0,
+    xpReward: 10, goldReward: 0, itemsUsed: {}, rngState: 1, events: [], eventSeq: 0, drops: [], round: 1,
+  }
+  const { party: after, levelUps } = applyCombatOutcome([hero], state, rs)
+  assert.equal(levelUps.length, 1)
+  assert.equal(after[0].level, 2)
+  assert.ok(after[0].knownSpells.includes('spell.test_bolt'))
+})
+
 console.log(`\n${passed} passed`)

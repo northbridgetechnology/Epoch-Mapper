@@ -244,6 +244,11 @@ export function DungeonMapper({
   const [gameOver, setGameOver] = useState(false)
   const gameOverRef = useRef(false)
   gameOverRef.current = gameOver
+  // Batch E: title screen (per play session) + gameEnd credits overlay
+  const [showTitle, setShowTitle] = useState(true)
+  const [gameEnding, setGameEnding] = useState<{ text?: string } | null>(null)
+  const gameEndingRef = useRef<typeof gameEnding>(null)
+  gameEndingRef.current = gameEnding
   // When a battle was started by a FOE patrol, its dead-flag key (set on victory)
   const pendingFoeKillRef = useRef<string | null>(null)
   // Barks fire once per session per line (heard-flags handle 'once' lines)
@@ -404,9 +409,11 @@ export function DungeonMapper({
       setInventory(prev => {
         let inv = [...prev]
         for (const { item, qty } of result.itemsGained) {
-          const idx = inv.findIndex(i => i.def === item)
+          // Defs with an unidentifiedName arrive unidentified ("?Sword")
+          const unid = !!ruleset.items.find(d => d.id === item)?.unidentifiedName || undefined
+          const idx = inv.findIndex(i => i.def === item && !!i.unidentified === !!unid)
           if (idx >= 0) inv[idx] = { ...inv[idx], qty: inv[idx].qty + qty }
-          else inv = [...inv, { def: item, qty }]
+          else inv = [...inv, { def: item, qty, ...(unid ? { unidentified: true } : {}) }]
         }
         return inv
       })
@@ -441,6 +448,57 @@ export function DungeonMapper({
       const q = (ruleset.quests ?? []).find(x => x.id === qu.quest)
       const done = q && qu.stage >= q.stages.length
       toast(done ? `📜 Quest complete — ${q?.name ?? qu.quest}` : `📜 Journal updated — ${q?.name ?? qu.quest}`)
+    }
+    if (result.identifyAll) {
+      setInventory(prev => {
+        // Merge revealed stacks into their identified counterparts
+        const inv: ItemInstance[] = []
+        for (const inst of prev) {
+          const revealed = inst.unidentified ? { ...inst, unidentified: undefined } : inst
+          const idx = inv.findIndex(i => i.def === revealed.def && !i.unidentified)
+          if (idx >= 0 && !revealed.unidentified) inv[idx] = { ...inv[idx], qty: inv[idx].qty + revealed.qty }
+          else inv.push(revealed)
+        }
+        return inv
+      })
+      setParty(prev => prev.map(ch => ({
+        ...ch,
+        equipment: Object.fromEntries(Object.entries(ch.equipment).map(([slot, inst]) =>
+          [slot, inst?.unidentified ? { ...inst, unidentified: undefined } : inst])),
+      })))
+      toast('✨ A wave of knowing washes over the party — everything is identified.')
+    }
+    if (result.removeCurseAll) {
+      let freed = 0
+      setParty(prev => prev.map(ch => {
+        const equipment = { ...ch.equipment }
+        const returned: ItemInstance[] = []
+        for (const [slot, inst] of Object.entries(equipment)) {
+          if (!inst) continue
+          if (ruleset.items.find(d => d.id === inst.def)?.cursed) {
+            delete equipment[slot as keyof typeof equipment]
+            returned.push({ ...inst, unidentified: undefined })
+            freed++
+          }
+        }
+        if (returned.length > 0) setInventory(inv => [...inv, ...returned])
+        return returned.length > 0 ? { ...ch, equipment } : ch
+      }))
+      toast(freed > 0 ? '⛓️ The curse releases its grip — the gear comes free.' : 'Nothing cursed clings to the party.')
+    }
+    for (const spellId of result.teachSpells) {
+      const spell = ruleset.spells.find(s => s.id === spellId)
+      if (!spell) continue
+      setParty(prev => prev.map(ch => {
+        if (!ch.alive || ch.knownSpells.includes(spellId)) return ch
+        const cls = ruleset.classes.find(c => c.id === ch.classId)
+        if (cls && cls.spellSchools.length > 0 && !cls.spellSchools.includes(spell.school)) return ch
+        toast(`📖 ${ch.name} learns ${spell.name}!`)
+        return { ...ch, knownSpells: [...ch.knownSpells, spellId] }
+      }))
+    }
+    if (result.gameEnd) {
+      setGameEnding({ text: result.gameEnd.text })
     }
     if (result.npcMoves.length > 0) {
       setMaps(prev => prev.map(m => {
@@ -1557,7 +1615,7 @@ export function DungeonMapper({
 
       if (workspaceRef.current === 'play') {
         // Block movement while any overlay (combat/shop/encounter) is active — those handle keys themselves
-        if (combatStateRef.current || shopIdRef.current || activeEncounterRef.current || dialogueRef.current || inscriptionRef.current || gameOverRef.current) return
+        if (combatStateRef.current || shopIdRef.current || activeEncounterRef.current || dialogueRef.current || inscriptionRef.current || gameOverRef.current || gameEndingRef.current) return
         // Blobber controls: W=forward, S=back, A=turn-left, D=turn-right
         if (e.key === 'w' || e.key === 'W' || e.key === 'ArrowUp') { e.preventDefault(); stepForward(); return }
         if (e.key === 's' || e.key === 'S' || e.key === 'ArrowDown') { e.preventDefault(); stepBack(); return }
@@ -1731,9 +1789,10 @@ export function DungeonMapper({
                   setInventory(prev => {
                     let inv = [...prev]
                     for (const { item, qty } of combatState.drops) {
-                      const idx = inv.findIndex(i => i.def === item)
+                      const unid = !!ruleset.items.find(d => d.id === item)?.unidentifiedName || undefined
+                      const idx = inv.findIndex(i => i.def === item && !!i.unidentified === !!unid)
                       if (idx >= 0) inv[idx] = { ...inv[idx], qty: inv[idx].qty + qty }
-                      else inv = [...inv, { def: item, qty }]
+                      else inv = [...inv, { def: item, qty, ...(unid ? { unidentified: true } : {}) }]
                     }
                     return inv
                   })
@@ -2180,6 +2239,68 @@ export function DungeonMapper({
           line={{ id: '_insc', text: inscription }}
           onFinish={() => setInscription(null)}
         />
+      )}
+
+      {/* Title screen — shown once when entering Play */}
+      {showTitle && workspace === 'play' && !gameOver && (
+        <div className="fixed inset-0 z-[70] bg-black/90 backdrop-blur-sm grid place-items-center">
+          <div className="w-[28rem] max-w-[90vw] text-center space-y-6 px-6">
+            <div className="space-y-2">
+              <div className="text-[10px] uppercase tracking-[0.3em] text-amber-400/50">An Epoch Engine Game</div>
+              <h1 className="text-3xl font-bold text-amber-100" style={{ textShadow: '0 0 24px rgba(251,191,36,0.25)' }}>
+                {ruleset.meta.title || 'Untitled Dungeon'}
+              </h1>
+              {ruleset.meta.author && <div className="text-xs text-white/40">by {ruleset.meta.author}</div>}
+              <div className="text-[10px] text-white/25 font-mono">v{ruleset.meta.version}</div>
+            </div>
+            <div className="space-y-2">
+              <button
+                onClick={() => setShowTitle(false)}
+                className="w-full py-2.5 rounded-lg text-sm font-semibold border border-amber-500/40 text-amber-200 hover:bg-amber-500/10"
+              >
+                Begin
+              </button>
+              {listSaveSlots().some(Boolean) && (
+                <button
+                  onClick={() => {
+                    const slots = listSaveSlots()
+                    const latest = slots.reduce<number>((best, s, i) =>
+                      s && (best < 0 || s.at > (slots[best]?.at ?? 0)) ? i : best, -1)
+                    if (latest >= 0) handleLoadSlot(latest)
+                    setShowTitle(false)
+                  }}
+                  className="w-full py-2 rounded-lg text-xs border border-sky-500/25 text-sky-300/80 hover:bg-sky-500/10"
+                >
+                  Continue (latest save)
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Ending — gameEnd effect fired */}
+      {gameEnding && (
+        <div className="fixed inset-0 z-[75] bg-black/95 grid place-items-center">
+          <div className="w-[30rem] max-w-[90vw] text-center space-y-6 px-6">
+            <div className="text-4xl">🏆</div>
+            <h2 className="text-2xl font-bold text-amber-100">The End</h2>
+            {gameEnding.text && (
+              <p className="text-sm text-white/70 leading-relaxed whitespace-pre-wrap">{gameEnding.text}</p>
+            )}
+            <div className="text-xs text-white/40 space-y-1">
+              <div>{ruleset.meta.title || 'Untitled Dungeon'}</div>
+              {ruleset.meta.author && <div>by {ruleset.meta.author}</div>}
+              <div className="text-white/25">Made with Epoch Engine</div>
+            </div>
+            <button
+              onClick={() => { setGameEnding(null); setShowTitle(true) }}
+              className="w-full py-2 rounded-lg text-sm font-medium border border-amber-500/30 text-amber-300 hover:bg-amber-500/10"
+            >
+              Return to title
+            </button>
+          </div>
+        </div>
       )}
 
       {/* Game over — the party has fallen */}

@@ -7,10 +7,10 @@ decisions. Shipped features are documented in the code and in `docs/sprites.md`.
 Current in-flight plan (implemented batch by batch):
 
 - **Batch A** — light & darkness, trick tiles, wall inscriptions *(shipped)*
-- **Batch B** — camp/rest + safe rooms, save points + slots, wipe/game-over flow, functional inns
-- **Batch C** — visible fixed encounters, FOE-style patrols (pure patrol loops)
-- **Batch D** — unidentified & cursed items, spell learning
-- **Batch E** — title / ending flow
+- **Batch B** — camp/rest + safe rooms, save points + slots, wipe/game-over flow, functional inns *(shipped)*
+- **Batch C** — visible fixed encounters, FOE-style patrols (pure patrol loops) *(shipped)*
+- **Batch D** — unidentified & cursed items, spell learning *(shipped)*
+- **Batch E** — title / ending flow *(shipped)*
 
 Everything below is deferred beyond those batches.
 

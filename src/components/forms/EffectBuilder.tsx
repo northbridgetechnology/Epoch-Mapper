@@ -22,6 +22,9 @@ const ALL_VERBS = [
   { t: 'giveItem',    label: '📦 Give Item',          group: 'Items' },
   { t: 'takeItem',    label: '📤 Take Item',          group: 'Items' },
   { t: 'gold',        label: '🪙 Give Gold',          group: 'Items' },
+  { t: 'identify',    label: '🔍 Identify All',       group: 'Items' },
+  { t: 'removeCurse', label: '⛓️ Remove Curse',       group: 'Items' },
+  { t: 'teachSpell',  label: '📖 Teach Spell',        group: 'Items' },
   // World
   { t: 'setFlag',     label: '🚩 Set Flag',           group: 'World' },
   { t: 'teleport',    label: '🌀 Teleport',           group: 'World' },
@@ -34,6 +37,7 @@ const ALL_VERBS = [
   { t: 'runEvent',    label: '🧩 Run Event',          group: 'Scripting' },
   { t: 'questStage',  label: '📜 Quest Stage',        group: 'Scripting' },
   { t: 'moveNpc',     label: '🚶 Move NPC',           group: 'Scripting' },
+  { t: 'gameEnd',     label: '🏆 End Game (credits)', group: 'Scripting' },
 ] as const
 
 type Verb = typeof ALL_VERBS[number]['t']
@@ -60,6 +64,10 @@ function blankEffect(verb: Verb): Effect {
     case 'runEvent':     return { t: 'runEvent', event: '' }
     case 'questStage':   return { t: 'questStage', quest: '', stage: 1 }
     case 'moveNpc':      return { t: 'moveNpc', npc: '', x: 0, y: 0 }
+    case 'identify':     return { t: 'identify' }
+    case 'removeCurse':  return { t: 'removeCurse' }
+    case 'teachSpell':   return { t: 'teachSpell', spell: '' }
+    case 'gameEnd':      return { t: 'gameEnd', text: '' }
     default:             return { t: 'message', text: '' }
   }
 }
@@ -89,6 +97,13 @@ function effectLabel(e: Effect, ruleset: Ruleset): string {
       return `Take ${name} ×${e.qty ?? 1}`
     }
     case 'gold':      return `Give ${e.amount} gold`
+    case 'identify':  return 'Identify all carried items'
+    case 'removeCurse': return 'Remove curses from equipment'
+    case 'teachSpell': {
+      const name = ruleset.spells.find(s => s.id === e.spell)?.name ?? e.spell
+      return `Teach spell: ${name}`
+    }
+    case 'gameEnd':   return `End game${e.text ? ` — "${e.text.slice(0, 20)}…"` : ''}`
     case 'setFlag':   return `Set flag "${e.flag}" = ${JSON.stringify(e.value)}`
     case 'teleport':  return `Teleport to ${e.mapId} (${e.x},${e.y})`
     case 'reveal':    return `Reveal radius ${e.radius}`
@@ -188,6 +203,19 @@ function EffectRow({ effect, ruleset, onChange, onRemove }: EffectRowProps) {
               <input type="number" value={e.y} onChange={ev => onChange({ ...e, y: ev.target.valueAsNumber || 0 })} className={cn(INPUT_CLS, 'w-14')} />
             </div>
           </>
+        )}
+
+        {e.t === 'teachSpell' && (
+          <select value={e.spell} onChange={ev => onChange({ ...e, spell: ev.target.value })}
+            className={cn(INPUT_CLS, 'min-w-[9rem]')}>
+            <option value="">— pick spell —</option>
+            {ruleset.spells.map(s => <option key={s.id} value={s.id}>{s.icon ?? ''} {s.name}</option>)}
+          </select>
+        )}
+        {e.t === 'gameEnd' && (
+          <input type="text" value={e.text ?? ''} placeholder="epilogue text (optional)"
+            onChange={ev => onChange({ ...e, text: ev.target.value || undefined })}
+            className={cn(INPUT_CLS, 'flex-1 min-w-[10rem]')} />
         )}
 
         {/* Dice amount: heal / restoreMp */}

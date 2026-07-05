@@ -94,6 +94,17 @@ export function applyEffectToChar(
     msgs.push(`Received ${effect.amount} gold`)
   } else if (effect.t === 'message') {
     msgs.push(effect.text)
+  } else if (effect.t === 'teachSpell') {
+    const spell = ruleset.spells.find(s => s.id === effect.spell)
+    if (spell && !target.knownSpells.includes(effect.spell)) {
+      const cls = ruleset.classes.find(c => c.id === target.classId)
+      if (!cls || cls.spellSchools.length === 0 || cls.spellSchools.includes(spell.school)) {
+        newParty = newParty.map((c, i) => i === targetIdx ? { ...c, knownSpells: [...c.knownSpells, effect.spell] } : c)
+        msgs.push(`${target.name} learns ${spell.name}!`)
+      } else {
+        msgs.push(`${target.name} cannot grasp ${spell.name}.`)
+      }
+    }
   }
 
   return { party: newParty, inventory: newInv, messages: msgs }

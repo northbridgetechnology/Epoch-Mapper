@@ -140,7 +140,7 @@ export { DatabaseWorkspace } from './components/workspaces/DatabaseWorkspace'
 export { PlayWorkspace } from './components/workspaces/PlayWorkspace'
 
 // Item schema helpers
-export { ITEM_SCHEMA, LOOT_TABLE_SCHEMA, blankItem, blankLootTable } from './lib/item-schema'
+export { ITEM_SCHEMA, LOOT_TABLE_SCHEMA, blankItem, blankLootTable, itemDisplayName } from './lib/item-schema'
 
 // Enemy + encounter-table schema helpers (Phase E3)
 export { ENEMY_SCHEMA, ENCOUNTER_TABLE_SCHEMA, blankEnemy, blankEncounterTable } from './lib/enemy-schema'
