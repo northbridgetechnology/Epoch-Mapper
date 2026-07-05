@@ -117,6 +117,12 @@ export {
   deleteDraft,
   savePartyTemplate,
   loadPartyTemplate,
+  saveToSlot,
+  loadFromSlot,
+  deleteSlot,
+  deleteAllSlots,
+  listSaveSlots,
+  SAVE_SLOT_COUNT,
   newSaveState,
   newCharacter,
   SaveStateParseError,
@@ -154,8 +160,8 @@ export { applyEffectToChar, applyConsumable } from './lib/apply-effects'
 export { resolveEncounterTable, checkCellForEncounter, visitedFlagKey } from './lib/encounter-engine'
 
 // Exploration mechanics: trick tiles + party light (dark maps)
-export { applyMoveTricks, getTricks, cellHasTrick, computeLightRadius, tickLightBurn, DARK_BASE_RADIUS } from './lib/exploration'
-export type { TrickMoveResult } from './lib/exploration'
+export { applyMoveTricks, getTricks, cellHasTrick, computeLightRadius, tickLightBurn, restParty, DARK_BASE_RADIUS } from './lib/exploration'
+export type { TrickMoveResult, RestResult } from './lib/exploration'
 export type { ResolvedEncounter, EnemyInstance, CellEntity, ObjectInstance, Condition, CellEvent, BoundaryData, DoorDef, DoorState, Facing, SwitchDef, InscriptionDef, TrickKind, EventDef, NpcDef, NpcLine, QuestDef, QuestStage } from './lib/engine-types'
 
 // Encounter modal (Phase E3)

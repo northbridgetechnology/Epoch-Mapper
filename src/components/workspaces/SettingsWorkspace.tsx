@@ -2,15 +2,66 @@
 
 import { cn } from '@/lib/utils'
 import type { MapData } from '@/lib/types'
+import type { GameMeta } from '@/lib/engine-types'
 import { THEMES, getTheme } from '@/lib/themes'
 
 interface SettingsWorkspaceProps {
   maps: MapData[]
   onThemeChange: (mapIdx: number, themeId: string) => void
   onDarkChange?: (mapIdx: number, dark: boolean) => void
+  meta?: GameMeta
+  onMetaChange?: (patch: Partial<GameMeta>) => void
 }
 
-export function SettingsWorkspace({ maps, onThemeChange, onDarkChange }: SettingsWorkspaceProps) {
+const RULE_INPUT = 'w-20 px-2 py-1 rounded bg-zinc-800 border border-white/10 text-xs text-white/80 focus:outline-none focus:border-amber-500/40'
+
+function GameRules({ meta, onMetaChange }: { meta: GameMeta; onMetaChange: (patch: Partial<GameMeta>) => void }) {
+  const pct = (v: number | undefined, dflt: number) => Math.round((v ?? dflt) * 100)
+  return (
+    <div className="space-y-3">
+      <div>
+        <h2 className="text-sm font-semibold text-white/70 mb-1">Game Rules</h2>
+        <p className="text-xs text-white/35 leading-relaxed">
+          Survival-loop tuning: saving, camping, and what a party wipe costs.
+        </p>
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <label className="flex flex-col gap-1 rounded-lg border border-white/8 bg-white/4 px-3 py-2">
+          <span className="text-[11px] text-white/60 font-medium">Save policy</span>
+          <select
+            value={meta.savePolicy ?? 'anywhere'}
+            onChange={e => onMetaChange({ savePolicy: e.target.value as 'anywhere' | 'savePoints' })}
+            className="px-2 py-1 rounded bg-zinc-800 border border-white/10 text-xs text-white/80 focus:outline-none"
+          >
+            <option value="anywhere">Anywhere</option>
+            <option value="savePoints">Save points only</option>
+          </select>
+        </label>
+        <label className="flex flex-col gap-1 rounded-lg border border-white/8 bg-white/4 px-3 py-2">
+          <span className="text-[11px] text-white/60 font-medium">Wipe gold penalty (%)</span>
+          <input type="number" min={0} max={100} value={pct(meta.wipeGoldPenalty, 0.5)}
+            onChange={e => onMetaChange({ wipeGoldPenalty: Math.min(100, Math.max(0, e.target.valueAsNumber || 0)) / 100 })}
+            className={RULE_INPUT} />
+        </label>
+        <label className="flex flex-col gap-1 rounded-lg border border-white/8 bg-white/4 px-3 py-2">
+          <span className="text-[11px] text-white/60 font-medium">Rest ambush chance (%)</span>
+          <input type="number" min={0} max={100} value={pct(meta.restAmbushChance, 0.25)}
+            onChange={e => onMetaChange({ restAmbushChance: Math.min(100, Math.max(0, e.target.valueAsNumber || 0)) / 100 })}
+            className={RULE_INPUT} />
+        </label>
+        <label className="flex items-center gap-2.5 rounded-lg border border-white/8 bg-white/4 px-3 py-2 cursor-pointer">
+          <input type="checkbox" checked={meta.permadeath}
+            onChange={e => onMetaChange({ permadeath: e.target.checked })}
+            className="h-4 w-4 rounded accent-red-500" />
+          <span className="text-[11px] text-white/60 font-medium">💀 Permadeath</span>
+          <span className="text-[10px] text-white/30">A wipe forfeits all saves.</span>
+        </label>
+      </div>
+    </div>
+  )
+}
+
+export function SettingsWorkspace({ maps, onThemeChange, onDarkChange, meta, onMetaChange }: SettingsWorkspaceProps) {
   if (maps.length === 0) {
     return (
       <div className="flex-1 flex items-center justify-center text-white/20 text-sm">
@@ -22,6 +73,7 @@ export function SettingsWorkspace({ maps, onThemeChange, onDarkChange }: Setting
   return (
     <div className="flex-1 min-h-0 overflow-y-auto">
       <div className="max-w-2xl mx-auto px-6 py-6 space-y-8">
+        {meta && onMetaChange && <GameRules meta={meta} onMetaChange={onMetaChange} />}
         <div>
           <h2 className="text-sm font-semibold text-white/70 mb-1">Visual Themes</h2>
           <p className="text-xs text-white/35 leading-relaxed">

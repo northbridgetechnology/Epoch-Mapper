@@ -264,7 +264,7 @@ function ObjectEntityEditor({
           <label className={LABEL}>Kind</label>
           <select value={obj.kind} onChange={e => update({ kind: e.target.value as ObjectInstance['kind'] })}
             className={cn(INPUT, 'w-full')}>
-            {(['chest','door','lever','sign','npc','shop','trap','teleporter'] as const).map(k => (
+            {(['chest','door','lever','sign','npc','shop','trap','teleporter','inn'] as const).map(k => (
               <option key={k} value={k}>{k}</option>
             ))}
           </select>
@@ -335,6 +335,17 @@ function ObjectEntityEditor({
             <option value="">— pick shop —</option>
             {ruleset.shops.map(s => <option key={s.id} value={s.id}>{s.icon} {s.name}</option>)}
           </select>
+        </div>
+      )}
+
+      {/* Inn price */}
+      {obj.kind === 'inn' && (
+        <div>
+          <label className={LABEL}>Price (gold, 0 = free)</label>
+          <input type="number" min={0} value={obj.price ?? 0}
+            onChange={e => update({ price: Math.max(0, e.target.valueAsNumber || 0) })}
+            className={cn(INPUT, 'w-24')} />
+          <p className="text-[10px] text-white/30 mt-1">Interacting pays the price for a full heal, cure, and revive.</p>
         </div>
       )}
 

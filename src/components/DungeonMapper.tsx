@@ -5,7 +5,7 @@ import { Plus, Trash2, MapPin, Eraser, X, Search, Pipette } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn, uid } from '@/lib/utils'
 import {
-  BASE, BASE_PALETTE, BASE_TYPES, CHUNK_SIZE, DEFAULT_CELL, EDGE, EDGE_PALETTE, EDGE_TYPES,
+  BASE, BASE_PALETTE, BASE_TYPES, CHUNK_SIZE, DEFAULT_CELL, EDGE, EDGE_PALETTE, EDGE_TYPES, OVERLAY,
   MAX_CELL, MAX_NOTE_LEN, MIN_CELL, OVERLAY_PALETTE, OVERLAY_TYPES, VIEWPORT_CELLS,
   baseDef, boundaryKey, edgeDef, overlayDef,
 } from '@/lib/constants'
@@ -25,13 +25,13 @@ import { PartyWorkspace } from './workspaces/PartyWorkspace'
 import { DatabaseWorkspace } from './workspaces/DatabaseWorkspace'
 import { PlayWorkspace } from './workspaces/PlayWorkspace'
 import { SettingsWorkspace } from './workspaces/SettingsWorkspace'
-import type { BoundaryData, Character, CellEntity, DoorDef, DoorState, Facing, Formation, ItemInstance, ResolvedEncounter, InscriptionDef, Ruleset, SwitchDef } from '@/lib/engine-types'
+import type { BoundaryData, Character, CellEntity, DoorDef, DoorState, Facing, Formation, ItemInstance, ResolvedEncounter, InscriptionDef, Ruleset, SaveState, SwitchDef } from '@/lib/engine-types'
 import { makeDefaultRuleset, normalizeRuleset } from '@/lib/default-ruleset'
-import { savePartyTemplate, loadPartyTemplate } from '@/lib/save-state'
+import { savePartyTemplate, loadPartyTemplate, saveToSlot, loadFromSlot, deleteAllSlots, listSaveSlots } from '@/lib/save-state'
 import { checkCellForEncounter, resolveEncounterTable, visitedFlagKey } from '@/lib/encounter-engine'
 import { EncounterModal } from './EncounterModal'
 import { DialogueOverlay } from './DialogueOverlay'
-import { applyMoveTricks, cellHasTrick, tickLightBurn } from '@/lib/exploration'
+import { applyMoveTricks, cellHasTrick, tickLightBurn, restParty } from '@/lib/exploration'
 import { initCombat, applyCombatOutcome, consumeCombatItems, type CombatState } from '@/lib/combat-engine'
 import { CellInspector } from './CellInspector'
 import { usePanelWidth } from './ui/ResizablePanel'
@@ -241,6 +241,9 @@ export function DungeonMapper({
   const [inscription, setInscription] = useState<string[] | null>(null)
   const inscriptionRef = useRef<typeof inscription>(null)
   inscriptionRef.current = inscription
+  const [gameOver, setGameOver] = useState(false)
+  const gameOverRef = useRef(false)
+  gameOverRef.current = gameOver
   // Barks fire once per session per line (heard-flags handle 'once' lines)
   const sessionBarksRef = useRef<Set<string>>(new Set())
 
@@ -832,6 +835,14 @@ export function DungeonMapper({
             return
           }
         }
+        if (obj.kind === 'inn') {
+          const price = obj.price ?? 0
+          if (gold < price) { toast(`The innkeeper wants ${price} gold. You cannot afford a bed.`); return }
+          if (price > 0) setGold(g => g - price)
+          setParty(prev => prev.map(ch => ({ ...ch, alive: true, hp: ch.maxHp, mp: ch.maxMp, statuses: [] })))
+          toast(price > 0 ? `You pay ${price} gold. The party wakes fully rested.` : 'The party wakes fully rested.')
+          return
+        }
         if (obj.shop) { setShopId(obj.shop); return }
         if (obj.dialogue) { toast(obj.dialogue); return }
       }
@@ -871,6 +882,124 @@ export function DungeonMapper({
       break
     }
   }, [activeMap, makeEventContext, applyExploreEffect, updateActiveMap, inventory, flags, ruleset, setGold, setInventory, setFlags])
+
+  // ── Play-mode saves, camp, and the wipe flow ─────────────────────────────────
+
+  const buildSaveState = useCallback((): SaveState => ({
+    rulesetVersion: ruleset.meta.version,
+    mapHash: 'session',
+    position: { mapId: activeMap?.id ?? '', x: activeMap?.playerX ?? 0, y: activeMap?.playerY ?? 0, facing },
+    party, formation, gold,
+    sharedInventory: inventory,
+    flags,
+    revealed: Object.fromEntries(maps.map(m => [m.id, m.revealedChunks ?? []])),
+    revealedBoundaries: Array.from(revealedBoundaries),
+    rngSeed: 0,
+    playtimeMs: 0,
+  }), [ruleset.meta.version, activeMap, facing, party, formation, gold, inventory, flags, maps, revealedBoundaries])
+
+  const applySaveState = useCallback((s: SaveState) => {
+    setParty(s.party)
+    setFormation(s.formation)
+    setGold(s.gold)
+    setInventory(s.sharedInventory)
+    setFlags(s.flags)
+    setRevealedBoundaries(new Set(s.revealedBoundaries ?? []))
+    setFacing(s.position.facing)
+    const idx = maps.findIndex(m => m.id === s.position.mapId)
+    setMaps(prev => prev.map((m, i) => ({
+      ...m,
+      ...(s.revealed[m.id] ? { revealedChunks: s.revealed[m.id] } : {}),
+      ...(i === idx ? { playerX: s.position.x, playerY: s.position.y } : {}),
+    })))
+    if (idx >= 0) setActiveIdx(idx)
+    setCombatState(null); setActiveEncounter(null); setDialogue(null); setInscription(null); setGameOver(false)
+    toast('Game loaded.')
+  }, [maps, setMaps, setActiveIdx])
+
+  // Save-point policy: saving anywhere, or only on Save Point cells
+  const canSaveHere = (ruleset.meta.savePolicy ?? 'anywhere') === 'anywhere'
+    || !!(activeMap && activeMap.cells[`${activeMap.playerX},${activeMap.playerY}`]?.overlays?.includes(OVERLAY.SAVE_POINT))
+
+  const handleSaveSlot = useCallback((slot: number) => {
+    if (!canSaveHere) { toast('You can only save at a save point.'); return }
+    saveToSlot(slot, buildSaveState())
+    toast(`Saved to slot ${slot + 1}.`)
+  }, [canSaveHere, buildSaveState])
+
+  const handleLoadSlot = useCallback((slot: number) => {
+    const s = loadFromSlot(slot)
+    if (!s) { toast('That slot is empty.'); return }
+    applySaveState(s)
+  }, [applySaveState])
+
+  const handleRest = useCallback(() => {
+    if (!activeMap || combatStateRef.current || gameOverRef.current) return
+    const cell = activeMap.cells[`${activeMap.playerX},${activeMap.playerY}`]
+    const res = restParty(party, ruleset.meta, cell)
+    toast(res.message)
+    if (res.ambushed) {
+      const zone = (cell?.entities ?? []).find(e => e.t === 'encounter' && e.mode === 'zone')
+      if (zone && zone.t === 'encounter' && zone.table) {
+        const table = ruleset.encounterTables.find(t => t.id === zone.table)
+        const enemies = table ? resolveEncounterTable(table, ruleset, Math.random) : []
+        if (table && enemies.length > 0) {
+          const enc: ResolvedEncounter = {
+            tableId: table.id, tableName: table.name, enemies,
+            xpReward: enemies.reduce((s, e) => s + e.xp, 0),
+            goldReward: enemies.reduce((s, e) => s + e.gold, 0),
+          }
+          setCombatState(initCombat(party, enc, {
+            formation, ruleset,
+            antiMagic: cellHasTrick(cell, 'antiMagic'),
+          }))
+          setWorkspace('play')
+        }
+      }
+      return
+    }
+    setParty(res.party)
+  }, [activeMap, party, ruleset, formation])
+
+  const handleRespawn = useCallback(() => {
+    const penalty = ruleset.meta.wipeGoldPenalty ?? 0.5
+    setGold(g => Math.floor(g * (1 - Math.min(1, Math.max(0, penalty)))))
+    setParty(prev => prev.map(ch => ({ ...ch, alive: true, hp: ch.maxHp, mp: ch.maxMp, statuses: [] })))
+    // Return to the party start: a partyStart entity if placed, else map 1
+    let target = maps.length > 0 ? { mapId: maps[0].id, x: maps[0].playerX, y: maps[0].playerY } : null
+    outer: for (const m of maps) {
+      for (const [key, c] of Object.entries(m.cells)) {
+        if (c.entities?.some(e => e.t === 'partyStart')) {
+          const [tx, ty] = key.split(',').map(Number)
+          target = { mapId: m.id, x: tx, y: ty }
+          break outer
+        }
+      }
+    }
+    if (target) {
+      const idx = maps.findIndex(m => m.id === target.mapId)
+      if (idx >= 0) {
+        setActiveIdx(idx)
+        setMaps(prev => prev.map((m, i) => i === idx
+          ? { ...m, playerX: target.x, playerY: target.y, revealedChunks: revealAround(m, target.x, target.y) }
+          : m))
+      }
+    }
+    setGameOver(false)
+    toast('The party stirs awake at the entrance, purses lighter…')
+  }, [ruleset.meta.wipeGoldPenalty, maps, setMaps, setActiveIdx, revealAround])
+
+  const handleAbandonRun = useCallback(() => {
+    deleteAllSlots()
+    setParty([])
+    setFormation({ front: [], back: [] })
+    setInventory([])
+    setFlags({})
+    setGold(ruleset.meta.startingGold)
+    setGameOver(false)
+    setWorkspace('party')
+    toast('The party is lost. Their story ends here.')
+  }, [ruleset.meta.startingGold])
 
   const isCellRevealed = useCallback(
     (x: number, y: number) => {
@@ -1405,7 +1534,7 @@ export function DungeonMapper({
 
       if (workspaceRef.current === 'play') {
         // Block movement while any overlay (combat/shop/encounter) is active — those handle keys themselves
-        if (combatStateRef.current || shopIdRef.current || activeEncounterRef.current || dialogueRef.current || inscriptionRef.current) return
+        if (combatStateRef.current || shopIdRef.current || activeEncounterRef.current || dialogueRef.current || inscriptionRef.current || gameOverRef.current) return
         // Blobber controls: W=forward, S=back, A=turn-left, D=turn-right
         if (e.key === 'w' || e.key === 'W' || e.key === 'ArrowUp') { e.preventDefault(); stepForward(); return }
         if (e.key === 's' || e.key === 'S' || e.key === 'ArrowDown') { e.preventDefault(); stepBack(); return }
@@ -1590,12 +1719,17 @@ export function DungeonMapper({
               savePartyTemplate(updatedParty, formation)
               levelUps.forEach(name => toast.success(`${name} leveled up!`))
               setCombatState(null)
+              if (combatState.phase === 'defeat' && updatedParty.every(c => !c.alive)) setGameOver(true)
             }}
             onMoveForward={stepForward}
             onMoveBack={stepBack}
             onTurnLeft={turnLeft}
             onTurnRight={turnRight}
             onInteract={handleInteract}
+            onRest={handleRest}
+            canSaveHere={canSaveHere}
+            onSaveSlot={handleSaveSlot}
+            onLoadSlot={handleLoadSlot}
           />
         </div>
       )}
@@ -1604,6 +1738,8 @@ export function DungeonMapper({
       {workspace === 'settings' && (
         <SettingsWorkspace
           maps={maps}
+          meta={ruleset.meta}
+          onMetaChange={patch => setRuleset(r => ({ ...r, meta: { ...r.meta, ...patch } }))}
           onDarkChange={(idx, dark) =>
             setMaps(prev => prev.map((m, i) => i === idx ? { ...m, dark: dark || undefined } : m))
           }
@@ -2016,6 +2152,53 @@ export function DungeonMapper({
         />
       )}
 
+      {/* Game over — the party has fallen */}
+      {gameOver && (
+        <div className="fixed inset-0 z-[70] bg-black/85 backdrop-blur-sm grid place-items-center">
+          <div className="w-[26rem] max-w-[90vw] rounded-2xl border border-red-500/20 bg-zinc-950 p-6 space-y-4 text-center">
+            <div className="text-3xl">💀</div>
+            <div className="text-lg font-semibold text-red-300">The party has fallen</div>
+            {ruleset.meta.permadeath ? (
+              <>
+                <p className="text-xs text-white/50 leading-relaxed">
+                  Permadeath is law in this world. All saves are forfeit.
+                </p>
+                <button
+                  onClick={handleAbandonRun}
+                  className="w-full py-2 rounded-lg text-sm font-medium border border-red-500/30 text-red-300 hover:bg-red-500/10"
+                >
+                  Accept their fate
+                </button>
+              </>
+            ) : (
+              <>
+                <p className="text-xs text-white/50 leading-relaxed">
+                  Load a save, or crawl back to the entrance
+                  {(ruleset.meta.wipeGoldPenalty ?? 0.5) > 0 && ` (losing ${Math.round((ruleset.meta.wipeGoldPenalty ?? 0.5) * 100)}% of your gold)`}.
+                </p>
+                <div className="space-y-1.5">
+                  {listSaveSlots().map((info, slot) => info && (
+                    <button
+                      key={slot}
+                      onClick={() => handleLoadSlot(slot)}
+                      className="w-full py-1.5 rounded-lg text-xs border border-sky-500/20 text-sky-300/80 hover:bg-sky-500/10"
+                    >
+                      Load Slot {slot + 1} — {info.partySummary} · {new Date(info.at).toLocaleString()}
+                    </button>
+                  ))}
+                </div>
+                <button
+                  onClick={handleRespawn}
+                  className="w-full py-2 rounded-lg text-sm font-medium border border-amber-500/30 text-amber-300 hover:bg-amber-500/10"
+                >
+                  Respawn at the entrance
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Encounter modal (shown over any workspace) */}
       {activeEncounter && (
         <EncounterModal
@@ -2081,7 +2264,7 @@ function FlashOverlay() {
 // (fixed encounters, objects, events) gets a kind-specific glyph strip.
 const OBJECT_GLYPHS: Record<string, string> = {
   chest: '📦', npc: '🧑', shop: '🏪', sign: '🪧',
-  trap: '☠️', teleporter: '🌀', lever: '🎚️', door: '🚪',
+  trap: '☠️', teleporter: '🌀', lever: '🎚️', door: '🚪', inn: '🛏️',
 }
 
 const TRICK_GLYPHS: Record<string, string> = {

@@ -45,6 +45,70 @@ export function deleteDraft(mapHash: string): void {
   }
 }
 
+// ── Named save slots (play mode) ──────────────────────────────────────────────
+
+export const SAVE_SLOT_COUNT = 3
+const SLOT_PREFIX = 'epochengine.slot.'
+
+export interface SaveSlotInfo {
+  slot: number
+  at: number
+  mapId: string
+  partySummary: string
+  gold: number
+}
+
+export function saveToSlot(slot: number, state: SaveState): void {
+  try {
+    localStorage.setItem(`${SLOT_PREFIX}${slot}`, JSON.stringify({ at: Date.now(), state }))
+  } catch {
+    // storage full or unavailable
+  }
+}
+
+export function loadFromSlot(slot: number): SaveState | null {
+  try {
+    const raw = localStorage.getItem(`${SLOT_PREFIX}${slot}`)
+    if (!raw) return null
+    return (JSON.parse(raw) as { state: SaveState }).state
+  } catch {
+    return null
+  }
+}
+
+export function deleteSlot(slot: number): void {
+  try {
+    localStorage.removeItem(`${SLOT_PREFIX}${slot}`)
+  } catch {
+    // ignore
+  }
+}
+
+/** Wipe every slot — used by permadeath on a party wipe. */
+export function deleteAllSlots(): void {
+  for (let i = 0; i < SAVE_SLOT_COUNT; i++) deleteSlot(i)
+}
+
+export function listSaveSlots(): (SaveSlotInfo | null)[] {
+  return Array.from({ length: SAVE_SLOT_COUNT }, (_, slot) => {
+    try {
+      const raw = localStorage.getItem(`${SLOT_PREFIX}${slot}`)
+      if (!raw) return null
+      const { at, state } = JSON.parse(raw) as { at: number; state: SaveState }
+      const alive = state.party.filter(c => c.alive).length
+      const lvl = Math.max(1, ...state.party.map(c => c.level))
+      return {
+        slot, at,
+        mapId: state.position.mapId,
+        partySummary: `${alive}/${state.party.length} alive · Lv ${lvl}`,
+        gold: state.gold,
+      }
+    } catch {
+      return null
+    }
+  })
+}
+
 // ── .epochsave binary format ──────────────────────────────────────────────────
 // 4 bytes: 'EPKS' magic
 // 1 byte: version (1)

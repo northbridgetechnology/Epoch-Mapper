@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ArrowUp, ArrowDown, ArrowLeft, ArrowRight, ZoomIn, ZoomOut, Coins, Map, Eye, ScrollText } from 'lucide-react'
+import { ArrowUp, ArrowDown, ArrowLeft, ArrowRight, ZoomIn, ZoomOut, Coins, Map, Eye, ScrollText, Flame, Save } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { baseDef, overlayDef, edgeDef, boundaryKey, DEFAULT_CELL, MIN_CELL, MAX_CELL, BASE, EDGE } from '@/lib/constants'
 import type { CellData, MapData, MarkerDef, EdgeDir } from '@/lib/types'
@@ -9,6 +9,7 @@ import { getTheme, type MapThemeDef } from '@/lib/themes'
 import { getSubcubeDef } from '@/lib/subcube-defs'
 import { pixelSprite, pixelSpriteRect, spriteAspect, creatureSprite } from '@/lib/pixel-sprites'
 import { computeLightRadius, cellHasTrick } from '@/lib/exploration'
+import { listSaveSlots } from '@/lib/save-state'
 import type { BoundaryData, CellEntity, Character, Facing, ItemInstance, Ruleset } from '@/lib/engine-types'
 import { objectUsedFlagKey, effectiveDoorState } from '@/lib/event-engine'
 import type { BattleViewState } from '@/lib/battle-scene'
@@ -39,6 +40,12 @@ interface PlayWorkspaceProps {
   onTurnLeft: () => void
   onTurnRight: () => void
   onInteract: () => void
+  /** Camp/rest (Batch B). Absent = feature hidden. */
+  onRest?: () => void
+  /** Save slots. canSaveHere reflects the ruleset's savePolicy. */
+  canSaveHere?: boolean
+  onSaveSlot?: (slot: number) => void
+  onLoadSlot?: (slot: number) => void
 }
 
 // ── Small helpers ─────────────────────────────────────────────────────────────
@@ -1169,7 +1176,9 @@ export function PlayWorkspace({
   flags,
   combat, ruleset, inventory, onCombatAction, onCombatEnd,
   onMoveForward, onMoveBack, onTurnLeft, onTurnRight, onInteract,
+  onRest, canSaveHere, onSaveSlot, onLoadSlot,
 }: PlayWorkspaceProps) {
+  const [showSaveMenu, setShowSaveMenu] = useState(false)
   const [cellSize, setCellSize] = useState(DEFAULT_CELL + 6)
   const [view, setView] = useState<'3d' | 'map'>('3d')
   const zoom = useCallback((delta: number) => {
@@ -1240,6 +1249,55 @@ export function PlayWorkspace({
           <span className="text-amber-400/70 font-mono">{facing}</span>
         </div>
         <div className="flex items-center gap-1">
+          {onRest && !combat && (
+            <button
+              onClick={onRest}
+              title="Camp — rest and recover (may be ambushed)"
+              className="flex items-center gap-1 px-2 h-6 rounded text-xs text-white/40 hover:text-white hover:bg-white/10 transition-colors"
+            >
+              <Flame className="w-3.5 h-3.5" /> Camp
+            </button>
+          )}
+          {onSaveSlot && onLoadSlot && !combat && (
+            <div className="relative">
+              <button
+                onClick={() => setShowSaveMenu(v => !v)}
+                title={canSaveHere ? 'Save / Load' : 'Saving requires a save point'}
+                className="flex items-center gap-1 px-2 h-6 rounded text-xs text-white/40 hover:text-white hover:bg-white/10 transition-colors"
+              >
+                <Save className="w-3.5 h-3.5" /> Save
+              </button>
+              {showSaveMenu && (
+                <div className="absolute right-0 top-7 z-40 w-64 rounded-lg border border-white/10 bg-zinc-900 shadow-xl p-2 space-y-1">
+                  {listSaveSlots().map((info, slot) => (
+                    <div key={slot} className="flex items-center gap-2 px-2 py-1.5 rounded bg-zinc-800/60 border border-white/5">
+                      <div className="flex-1 min-w-0">
+                        <div className="text-[11px] font-medium text-white/70">Slot {slot + 1}</div>
+                        <div className="text-[10px] text-white/35 truncate">
+                          {info ? `${info.partySummary} · ${info.gold}g · ${new Date(info.at).toLocaleString()}` : 'Empty'}
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => { onSaveSlot(slot); setShowSaveMenu(false) }}
+                        disabled={!canSaveHere}
+                        title={canSaveHere ? undefined : 'Saving requires a save point'}
+                        className="px-1.5 py-0.5 rounded text-[10px] text-amber-300/80 hover:text-amber-200 hover:bg-amber-500/10 disabled:opacity-30 disabled:cursor-not-allowed"
+                      >
+                        Save
+                      </button>
+                      <button
+                        onClick={() => { onLoadSlot(slot); setShowSaveMenu(false) }}
+                        disabled={!info}
+                        className="px-1.5 py-0.5 rounded text-[10px] text-sky-300/80 hover:text-sky-200 hover:bg-sky-500/10 disabled:opacity-30 disabled:cursor-not-allowed"
+                      >
+                        Load
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
           <button
             onClick={() => setShowJournal(v => !v)}
             title="Journal (J)"

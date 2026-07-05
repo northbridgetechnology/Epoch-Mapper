@@ -4,7 +4,7 @@
  */
 
 import type { CellData, MapData } from './types'
-import type { CellEntity, Character, Dice, Facing, ItemDef, Ruleset, TrickKind } from './engine-types'
+import type { CellEntity, Character, Dice, Facing, GameMeta, ItemDef, Ruleset, TrickKind } from './engine-types'
 
 type TrickEntity = Extract<CellEntity, { t: 'trick' }>
 
@@ -177,4 +177,50 @@ export function tickLightBurn(
     return { ...ch, equipment }
   })
   return changed ? { party: next, messages } : { party, messages }
+}
+
+// ── Camp / rest ────────────────────────────────────────────────────────────────
+
+export interface RestResult {
+  party: Character[]
+  /** True when the rest is interrupted — the caller should start the cell's
+   *  zone encounter instead of finishing the rest. */
+  ambushed: boolean
+  message: string
+}
+
+/**
+ * Rest the party: restore HP/MP by the meta fractions (default full), clear
+ * statuses, revive nobody (death is death until a revive effect). On non-safe
+ * cells the rest may be interrupted by an ambush (restAmbushChance, default
+ * 0.25) — the caller rolls the cell's zone encounter table when `ambushed`.
+ * Safe rooms (trick: safeRoom) never ambush.
+ */
+export function restParty(
+  party: Character[],
+  meta: GameMeta,
+  cell: CellData | undefined,
+  rng: () => number = Math.random,
+): RestResult {
+  const safe = cellHasTrick(cell, 'safeRoom')
+  const hasZone = (cell?.entities ?? []).some(e => e.t === 'encounter' && e.mode === 'zone')
+  if (!safe && hasZone && rng() < (meta.restAmbushChance ?? 0.25)) {
+    return { party, ambushed: true, message: 'Something stirs in the dark — the camp is ambushed!' }
+  }
+  const hpFrac = meta.restHpFrac ?? 1
+  const mpFrac = meta.restMpFrac ?? 1
+  const rested = party.map(ch => {
+    if (!ch.alive) return ch
+    return {
+      ...ch,
+      hp: Math.min(ch.maxHp, Math.max(ch.hp, Math.round(ch.maxHp * hpFrac))),
+      mp: Math.min(ch.maxMp, Math.max(ch.mp, Math.round(ch.maxMp * mpFrac))),
+      statuses: [],
+    }
+  })
+  return {
+    party: rested,
+    ambushed: false,
+    message: safe ? 'The party rests safely.' : 'The party makes camp and recovers.',
+  }
 }

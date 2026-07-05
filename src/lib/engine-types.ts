@@ -241,6 +241,15 @@ export interface GameMeta {
   rows: number
   permadeath: boolean
   startingGold: number
+  /** Camp/rest: fraction of max HP/MP restored (default 1 = full). */
+  restHpFrac?: number
+  restMpFrac?: number
+  /** Chance a rest is interrupted by the cell's zone encounter (default 0.25). */
+  restAmbushChance?: number
+  /** Where saving is allowed during play (default 'anywhere'). */
+  savePolicy?: 'anywhere' | 'savePoints'
+  /** Fraction of gold lost when respawning after a party wipe (default 0.5). */
+  wipeGoldPenalty?: number
 }
 
 /** Combat constants tunable per game — engine falls back to classic defaults. */
@@ -292,7 +301,9 @@ export interface Ruleset {
 
 /** An interactive object placed on a cell (chest, door, NPC, shop, lever, etc.). */
 export interface ObjectInstance {
-  kind: 'chest' | 'door' | 'lever' | 'sign' | 'npc' | 'shop' | 'trap' | 'teleporter'
+  kind: 'chest' | 'door' | 'lever' | 'sign' | 'npc' | 'shop' | 'trap' | 'teleporter' | 'inn'
+  /** For kind 'inn': cost in gold for a full heal/cure/revive (default 0 = free). */
+  price?: number
   id: string
   /** For kind 'npc': the NpcDef this placement represents. */
   npc?: DefRef<NpcDef>
@@ -432,6 +443,8 @@ export interface SaveState {
   sharedInventory: ItemInstance[]
   flags: Record<string, boolean | number | string>
   revealed: Record<string, string[]>
+  /** Revealed boundary keys (illusory walls etc). */
+  revealedBoundaries?: string[]
   rngSeed: number
   playtimeMs: number
 }

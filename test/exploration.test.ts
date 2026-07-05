@@ -4,7 +4,7 @@
  */
 
 import assert from 'node:assert/strict'
-import { applyMoveTricks, cellHasTrick, computeLightRadius, tickLightBurn, DARK_BASE_RADIUS } from '../src/lib/exploration'
+import { applyMoveTricks, cellHasTrick, computeLightRadius, tickLightBurn, restParty, DARK_BASE_RADIUS } from '../src/lib/exploration'
 import { makeDefaultRuleset } from '../src/lib/default-ruleset'
 import type { CellData, MapData } from '../src/lib/types'
 import type { CellEntity, Character } from '../src/lib/engine-types'
@@ -105,6 +105,34 @@ test('burn-down: burnSteps items tick and gutter out; default torch is eternal',
   const eternal = [char({ equipment: { offhand: { def: 'item.torch', qty: 1 } } })]
   const r2 = tickLightBurn(eternal, ruleset)
   assert.equal(r2.party, eternal, 'no burnSteps → untouched')
+})
+
+test('rest: full restore by default, statuses cleared, dead stay dead', () => {
+  const p = [
+    char({ hp: 2, mp: 0, maxMp: 8, statuses: [{ def: 'status.poison', remaining: 3 }] }),
+    char({ id: 'c2', alive: false, hp: 0 }),
+  ]
+  const r = restParty(p, ruleset.meta, cellWith({ t: 'trick', kind: 'safeRoom' }), () => 0)
+  assert.equal(r.ambushed, false)
+  assert.equal(r.party[0].hp, 10)
+  assert.equal(r.party[0].mp, 8)
+  assert.equal(r.party[0].statuses.length, 0)
+  assert.equal(r.party[1].alive, false)
+})
+
+test('rest: ambush rolls only on cells with a zone encounter; safe rooms never', () => {
+  const zoneCell = cellWith({ t: 'encounter', table: 'enc.t', mode: 'zone' })
+  const r = restParty([char({ hp: 1 })], ruleset.meta, zoneCell, () => 0)   // rng 0 < 0.25
+  assert.equal(r.ambushed, true)
+  const safeZone = cellWith({ t: 'encounter', table: 'enc.t', mode: 'zone' }, { t: 'trick', kind: 'safeRoom' })
+  assert.equal(restParty([char({ hp: 1 })], ruleset.meta, safeZone, () => 0).ambushed, false)
+  assert.equal(restParty([char({ hp: 1 })], ruleset.meta, cellWith(), () => 0).ambushed, false)
+})
+
+test('rest: fractional tunables cap the restore', () => {
+  const meta = { ...ruleset.meta, restHpFrac: 0.5 }
+  const r = restParty([char({ hp: 2 })], meta, undefined, () => 0.99)
+  assert.equal(r.party[0].hp, 5)
 })
 
 console.log(`\n${passed} passed`)
