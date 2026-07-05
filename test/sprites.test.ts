@@ -54,6 +54,13 @@ test('every sub-cube kind has a built-in sprite', () => {
   }
 })
 
+test('every sub-cube kind declares a mount and a sane scale', () => {
+  for (const kd of SUBCUBE_KIND_DEFS) {
+    assert.ok(['wall', 'ceiling', 'floor', 'free'].includes(kd.mount), `${kd.kind}: bad mount ${kd.mount}`)
+    assert.ok(kd.scale > 0 && kd.scale <= 1, `${kd.kind}: scale ${kd.scale} out of range`)
+  }
+})
+
 test('special kinds (chest, lever, door panel) are present with sane aspect', () => {
   for (const kind of ['chest', 'chest_open', 'lever_off', 'lever_on', 'door_panel']) {
     assert.ok(hasPixelSprite(kind), `missing ${kind}`)

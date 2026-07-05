@@ -474,10 +474,10 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
       drawCellEntities(d, s, entGroup)
       if (entGroup.length > 0) nodes.push(<g key={`ce_${d}_${s}`}>{entGroup}</g>)
 
-      // Own-cell pass stops here: volume objects would render oversized and the
-      // near boundary plane sits behind the camera at d = 0
-      if (d === 0) continue
-
+      // Sub-cube dressing at true perspective depth. The camera sits at the
+      // back of the player's cell, so an object at depth-fraction zFrac inside
+      // cell d is z = d + zFrac cells out — including the player's own cell,
+      // where anything level with or behind the camera (z < 0.5) is culled.
       {
         const scObjs = map.cells[`${cx},${cy}`]?.subcubeObjects
         if (scObjs && scObjs.length > 0) {
@@ -495,27 +495,44 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
             const def = getSubcubeDef(obj.kind)
             if (!def) continue
             const { xFrac, yFrac, zFrac } = subcubeScreenFracs(obj.pos, facing)
-            const sx1 = near.x1 + (far.x1 - near.x1) * zFrac
-            const sx2 = near.x2 + (far.x2 - near.x2) * zFrac
-            const sy1 = near.y1 + (far.y1 - near.y1) * zFrac
-            const sy2 = near.y2 + (far.y2 - near.y2) * zFrac
-            const sw2 = sx2 - sx1, sh2 = sy2 - sy1
-            const screenX = sx1 + sw2 * xFrac
-            const screenY = sy2 - sh2 * yFrac
-            const emojiSize = Math.max(6, Math.min(fw * 0.45, sh2 * 0.38))
-            const opacity = Math.max(0.25, 1 - fog * 1.8)
+            const z = d + zFrac
+            if (z < 0.5) continue
+            const wallHalf = PF_Y / z   // wall half-height on screen at this depth
+            const cellW = PF_X / z      // full cell width on screen at this depth
+
+            // Wall-mounted kinds snap flush to the side wall of their column
+            let ax = xFrac
+            if (def.mount === 'wall') {
+              if (xFrac < 0.34) ax = 0.05
+              else if (xFrac > 0.66) ax = 0.95
+            }
+            const screenX = VP_X + (s - 0.5 + ax) * cellW
+
+            const spriteH = wallHalf * 2 * def.scale
+            const spriteW = spriteH / (spriteAspect(obj.kind) ?? 1)
+            const floorY = VP_Y + wallHalf
+            const ceilY  = VP_Y - wallHalf
+            let screenY = VP_Y + wallHalf * (1 - 2 * yFrac)   // sub-cube centre
+            if (def.mount === 'floor' && obj.pos.y === 0) screenY = floorY - spriteH / 2
+            else if (def.mount === 'ceiling' && obj.pos.y === 2) screenY = ceilY + spriteH / 2
+
+            const zFog = Math.min(0.72, Math.max(0, (z - 2) * 0.18))
+            const opacity = Math.max(0.25, 1 - zFog * 1.8)
             if (obj.trigger) {
               const glowColor = obj.trigger === 'onInteract' ? 'rgba(56,189,248,0.30)' : obj.trigger === 'onView' ? 'rgba(52,211,153,0.30)' : 'rgba(251,191,36,0.30)'
-              objNodes.push(<circle key={`scg_${d}_${s}_${obj.id}`} cx={screenX} cy={screenY} r={emojiSize * 0.75} fill={glowColor} opacity={opacity} />)
+              objNodes.push(<circle key={`scg_${d}_${s}_${obj.id}`} cx={screenX} cy={screenY} r={spriteH * 0.55} fill={glowColor} opacity={opacity} />)
             }
             objNodes.push(
-            pixelSprite(obj.kind, screenX, screenY, emojiSize * 1.5, `sc_${d}_${s}_${obj.id}`, opacity)
-            ?? <text key={`sc_${d}_${s}_${obj.id}`} x={screenX} y={screenY} textAnchor="middle" dominantBaseline="middle" fontSize={emojiSize} opacity={opacity} style={{ userSelect: 'none' }}>{def.icon}</text>,
-          )
+              pixelSprite(obj.kind, screenX, screenY, spriteW, `sc_${d}_${s}_${obj.id}`, opacity)
+              ?? <text key={`sc_${d}_${s}_${obj.id}`} x={screenX} y={screenY} textAnchor="middle" dominantBaseline="middle" fontSize={spriteH * 0.8} opacity={opacity} style={{ userSelect: 'none' }}>{def.icon}</text>,
+            )
           }
           nodes.push(<g key={`scw_${d}_${s}`} clipPath={`url(#${clipId})`}>{objNodes}</g>)
         }
       }
+
+      // Own-cell pass stops here: the near boundary plane sits behind the camera at d = 0
+      if (d === 0) continue
 
       // Near boundary between (d-1,s) and (d,s): wall / door / revealed illusion
       const bk = boundaryKey(ncx, ncy, frontOf(facing))
