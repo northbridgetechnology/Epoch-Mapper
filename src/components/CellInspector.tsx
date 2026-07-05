@@ -7,7 +7,7 @@ import type {
   BoundaryData, CellEntity, CellEvent, Condition, Effect, ObjectInstance, Ruleset,
 } from '@/lib/engine-types'
 import type { EdgeDir } from '@/lib/types'
-import { edgeDef } from '@/lib/constants'
+import { edgeDef, BASE } from '@/lib/constants'
 import type { CellData, MapData, SubcubeObject } from '@/lib/types'
 import { SUBCUBE_KIND_DEFS, getSubcubeDef } from '@/lib/subcube-defs'
 import { EffectBuilder } from './forms/EffectBuilder'
@@ -820,6 +820,51 @@ export function CellInspector({ x, y, cell, maps, ruleset, onChange, onSubcubeCh
           <X className="w-4 h-4" />
         </button>
       </div>
+
+      {/* Stairs destination — surfaced whenever the cell's terrain is stairs */}
+      {(cell.base === BASE.STAIRS_UP || cell.base === BASE.STAIRS_DOWN) && (() => {
+        const stairsLabel = cell.base === BASE.STAIRS_UP ? 'Stairs Up' : 'Stairs Down'
+        const linkIdx = entities.findIndex(e => e.t === 'mapLink')
+        const link = linkIdx >= 0 ? entities[linkIdx] as CellEntity & { t: 'mapLink' } : null
+        const destMap = link ? maps.find(m => m.id === link.mapId) : null
+        return (
+          <div className="p-2 border-b border-white/10 space-y-1.5">
+            <div className="text-[10px] font-semibold text-white/40 uppercase tracking-wide px-1">
+              {cell.base === BASE.STAIRS_UP ? '▲' : '▼'} {stairsLabel} — Destination
+            </div>
+            {link ? (
+              <div className="flex items-center gap-2 px-1.5 py-1 rounded bg-zinc-900/60 border border-white/5 text-xs">
+                <span className="flex-1 truncate text-white/65">
+                  → {destMap?.name ?? link.mapId ?? '— unset —'} ({link.x}, {link.y}){link.facing ? ` · face ${link.facing}` : ''}
+                </span>
+                <button
+                  onClick={() => setExpanded(linkIdx)}
+                  className="px-1.5 py-0.5 rounded text-[10px] flex-shrink-0 text-amber-300/80 hover:text-amber-200 hover:bg-amber-500/10"
+                >
+                  Edit
+                </button>
+              </div>
+            ) : (
+              <div className="px-1.5 space-y-1.5">
+                <div className="text-[11px] text-amber-300/70">No destination — these stairs are decorative until linked.</div>
+                <select
+                  value=""
+                  onChange={e => {
+                    if (!e.target.value) return
+                    const next = [...entities, { t: 'mapLink', mapId: e.target.value, x, y } as CellEntity]
+                    onChange(next)
+                    setExpanded(next.length - 1)
+                  }}
+                  className="w-full px-1.5 py-1 rounded bg-zinc-800 border border-white/10 text-xs text-white/90 focus:outline-none"
+                >
+                  <option value="">Link to map… (same coordinates, adjust after)</option>
+                  {maps.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                </select>
+              </div>
+            )}
+          </div>
+        )
+      })()}
 
       {/* Volume objects editor */}
       {onSubcubeChange && (

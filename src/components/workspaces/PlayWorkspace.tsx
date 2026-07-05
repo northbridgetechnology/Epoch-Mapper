@@ -221,17 +221,19 @@ function frontOf(f: Facing): EdgeDir { return f as unknown as EdgeDir }
 
 // ── Geometry / wall queries ────────────────────────────────────────────────────
 
-type CellKind = 'wall' | 'open' | 'water' | 'lava' | 'void'
+type CellKind = 'wall' | 'open' | 'water' | 'lava' | 'void' | 'stairs_up' | 'stairs_down'
 
 function getCellKind(map: MapData, x: number, y: number): CellKind {
   const cell = map.cells[`${x},${y}`]
   if (!cell) return 'wall'
   switch (cell.base ?? 0) {
-    case 0:          return 'wall'
-    case BASE.WATER: return 'water'
-    case BASE.LAVA:  return 'lava'
-    case BASE.VOID:  return 'void'
-    default:         return 'open'  // BASE.WALL (2) is an invisible solid — transparent in 3D
+    case 0:                return 'wall'
+    case BASE.WATER:       return 'water'
+    case BASE.LAVA:        return 'lava'
+    case BASE.VOID:        return 'void'
+    case BASE.STAIRS_UP:   return 'stairs_up'
+    case BASE.STAIRS_DOWN: return 'stairs_down'
+    default:               return 'open'  // BASE.WALL (2) is an invisible solid — transparent in 3D
   }
 }
 
@@ -268,7 +270,7 @@ interface FirstPersonViewProps {
   ruleset?: Ruleset
 }
 
-function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedBoundaries, flags, battle, ruleset }: FirstPersonViewProps) {
+function FirstPersonView({ map, facing, isCellRevealed, revealedBoundaries, flags, battle, ruleset }: FirstPersonViewProps) {
   const [fd0, fd1] = facingDelta(facing)
   const [rd0, rd1] = rightDelta(facing)
   const px = map.playerX
@@ -454,8 +456,67 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
         )
       }
 
-      // Special terrain floor quad — this cell's footprint only (water/lava/void)
+      // Stairs: true-perspective step geometry, always receding away from the
+      // viewer. Camera sits at the back of the player's cell, so a point at
+      // depth-fraction t inside cell d is z = d + t; height u is measured in
+      // wall-heights above the floor (0 = floor, 1 = ceiling).
       const kind = getCellKind(map, cx, cy)
+      if (kind === 'stairs_down' || kind === 'stairs_up') {
+        const zAt = (t: number) => Math.max(0.55, d + t)
+        const sxAt = (z: number, fx: number) => VP_X + (s - 0.5 + fx) * (PF_X / z)
+        const syAt = (z: number, u: number) => VP_Y + (PF_Y / z) * (1 - 2 * u)
+        const quad = (t1: number, u1: number, t2: number, u2: number, fxa: number, fxb: number) => {
+          const z1 = zAt(t1), z2 = zAt(t2)
+          return `${sxAt(z1, fxa)},${syAt(z1, u1)} ${sxAt(z1, fxb)},${syAt(z1, u1)} ${sxAt(z2, fxb)},${syAt(z2, u2)} ${sxAt(z2, fxa)},${syAt(z2, u2)}`
+        }
+        const N = 4, fxa = 0.16, fxb = 0.84, t0 = 0.12
+        const stepT = (i: number) => t0 + (1 - t0) * (i / N)
+        if (kind === 'stairs_down') {
+          // Dark well, side cheeks, then treads from deepest to nearest
+          const uBot = -0.62
+          nodes.push(<polygon key={`stw_${d}_${s}`} points={quad(t0, 0, 1, uBot, fxa, fxb)} fill="hsl(240 8% 3%)" />)
+          for (const [fx, keyn] of [[fxa, 'l'], [fxb, 'r']] as const) {
+            const z1 = zAt(t0), z2 = zAt(1)
+            nodes.push(<polygon key={`stc${keyn}_${d}_${s}`}
+              points={`${sxAt(z1, fx)},${syAt(z1, 0)} ${sxAt(z2, fx)},${syAt(z2, 0)} ${sxAt(z2, fx)},${syAt(z2, uBot)}`}
+              fill="hsl(240 8% 6%)" />)
+          }
+          for (let i = N - 1; i >= 0; i--) {
+            const u = -0.55 * ((i + 1) / N)
+            nodes.push(
+              <polygon key={`st_${d}_${s}_${i}`} points={quad(stepT(i), u, stepT(i + 1), u, fxa, fxb)}
+                fill={pal.floorBand(d)} />,
+              <polygon key={`sts_${d}_${s}_${i}`} points={quad(stepT(i), u, stepT(i + 1), u, fxa, fxb)}
+                fill={`rgba(0,0,0,${0.25 + 0.16 * i})`} />,
+            )
+          }
+        } else {
+          // Rising steps: lit opening at the top, then riser faces far-to-near
+          const zf = zAt(1)
+          nodes.push(<polygon key={`stg_${d}_${s}`}
+            points={`${sxAt(zf, 0.22)},${syAt(zf, 0.98)} ${sxAt(zf, 0.78)},${syAt(zf, 0.98)} ${sxAt(zf, 0.78)},${syAt(zf, 0.52)} ${sxAt(zf, 0.22)},${syAt(zf, 0.52)}`}
+            fill="rgba(255,230,170,0.28)" />)
+          for (let i = N - 1; i >= 0; i--) {
+            const uLo = 0.6 * (i / N), uHi = 0.6 * ((i + 1) / N)
+            const zi = zAt(stepT(i))
+            nodes.push(
+              <polygon key={`sr_${d}_${s}_${i}`}
+                points={`${sxAt(zi, fxa)},${syAt(zi, uLo)} ${sxAt(zi, fxb)},${syAt(zi, uLo)} ${sxAt(zi, fxb)},${syAt(zi, uHi)} ${sxAt(zi, fxa)},${syAt(zi, uHi)}`}
+                fill={pal.frontWall(d)} />,
+              <polygon key={`srh_${d}_${s}_${i}`}
+                points={`${sxAt(zi, fxa)},${syAt(zi, uLo)} ${sxAt(zi, fxb)},${syAt(zi, uLo)} ${sxAt(zi, fxb)},${syAt(zi, uHi)} ${sxAt(zi, fxa)},${syAt(zi, uHi)}`}
+                fill={`rgba(255,235,190,${0.05 + 0.05 * i})`} />,
+              <polygon key={`srt_${d}_${s}_${i}`} points={quad(stepT(i), uHi, stepT(i + 1), uHi, fxa, fxb)}
+                fill={`rgba(0,0,0,0.30)`} />,
+            )
+          }
+        }
+        if (fog > 0) {
+          nodes.push(<polygon key={`stf_${d}_${s}`} points={quad(t0, kind === 'stairs_down' ? 0 : 0.7, 1, kind === 'stairs_down' ? -0.62 : 0.7, fxa, fxb)} fill={`rgba(0,0,0,${fog * 0.8})`} />)
+        }
+      }
+
+      // Special terrain floor quad — this cell's footprint only (water/lava/void)
       if (kind === 'water' || kind === 'lava' || kind === 'void') {
         const tFill =
           kind === 'water' ? `hsl(210 60% ${Math.max(8, 26 - d * 4)}%)` :
@@ -673,34 +734,8 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
       return
     }
 
-    // ── Overlay icon fallback ────────────────────────────────────────────────
-    const icons = (frontCell.overlays ?? [])
-      .map(o => overlayDef(o, customOverlay)?.icon)
-      .filter((x): x is string => Boolean(x))
-    if (icons.length === 0) return
-
-    const face  = entFace
-    const faceW = face.x2 - face.x1
-    const faceH = face.y2 - face.y1
-    const ecx   = (face.x1 + face.x2) / 2
-    const iconSize = Math.max(10, faceW * 0.26)
-    const shadowH  = Math.max(2, faceH * 0.06)
-    const shadowW  = Math.max(4, faceW * 0.18)
-    const entFog   = depthFog(d)
-    nodes.push(
-      <ellipse key={`eshadow_${d}_${s}`}
-        cx={ecx} cy={face.y2 - faceH * 0.08}
-        rx={shadowW} ry={shadowH}
-        fill={`rgba(0,0,0,${0.4 + d * 0.08})`} />,
-      <text key={`eicon_${d}_${s}`}
-        x={ecx} y={face.y2 - faceH * 0.20}
-        textAnchor="middle" dominantBaseline="middle"
-        fontSize={iconSize} opacity={1 - entFog * 0.6}
-      >{icons[0]}</text>,
-      entFog > 0 && <rect key={`efog_${d}_${s}`}
-        x={face.x1} y={face.y1} width={faceW} height={faceH}
-        fill={`rgba(0,0,0,${entFog * 0.5})`} />,
-    )
+    // Overlay markers (Inn, Boss, Save Point, …) are editor-only annotations —
+    // they intentionally do NOT render in the first-person view.
   }
 
   // ── 4b. Battle: enemies at sub-cube slots of the cells ahead ─────────────────

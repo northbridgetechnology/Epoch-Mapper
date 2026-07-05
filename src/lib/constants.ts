@@ -49,8 +49,9 @@ export const BASE_TYPES: Record<number, MarkerDef> = {
   8: { id: 8, label: 'Void', color: '#09090b' },
 }
 
-/** Base types offered in the terrain palette (Empty is implicit / erase). */
-export const BASE_PALETTE: number[] = [1, 2, 3, 4, 5, 6, 7, 8]
+/** Base types offered in the terrain palette (Empty is implicit / erase).
+ *  Door (3) is a legacy ID — real doors live on edges now; old files still decode. */
+export const BASE_PALETTE: number[] = [1, 2, 4, 5, 6, 7, 8]
 
 // ── Overlay type IDs (0–127 built-in, 0 = none) ────────────────────────────────
 
@@ -92,8 +93,10 @@ export const OVERLAY_TYPES: Record<number, MarkerDef> = {
   15: { id: 15, label: 'Player Start', color: '#fde047', icon: '⚑' },
 }
 
-/** Overlay types offered in the overlay palette. */
-export const OVERLAY_PALETTE: number[] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+/** Overlay types offered in the overlay palette. NPC/Shop/Chest/Trap/Warp/Event
+ *  (1–6, 10, 11, 13, 14) are legacy annotations superseded by entities and cell
+ *  events — hidden from painting, still decoded and drawn in the 2D editor. */
+export const OVERLAY_PALETTE: number[] = [7, 8, 9, 12, 15]
 
 // ── Edge type IDs (0–15) ───────────────────────────────────────────────────────
 
