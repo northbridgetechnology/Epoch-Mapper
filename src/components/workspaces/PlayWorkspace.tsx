@@ -472,47 +472,75 @@ function FirstPersonView({ map, facing, isCellRevealed, revealedBoundaries, flag
         const N = 4, fxa = 0.16, fxb = 0.84, t0 = 0.12
         const stepT = (i: number) => t0 + (1 - t0) * (i / N)
         if (kind === 'stairs_down') {
-          // Dark well, side cheeks, then treads from deepest to nearest
-          const uBot = -0.62
-          nodes.push(<polygon key={`stw_${d}_${s}`} points={quad(t0, 0, 1, uBot, fxa, fxb)} fill="hsl(240 8% 3%)" />)
-          for (const [fx, keyn] of [[fxa, 'l'], [fxb, 'r']] as const) {
-            const z1 = zAt(t0), z2 = zAt(1)
-            nodes.push(<polygon key={`stc${keyn}_${d}_${s}`}
-              points={`${sxAt(z1, fx)},${syAt(z1, 0)} ${sxAt(z2, fx)},${syAt(z2, 0)} ${sxAt(z2, fx)},${syAt(z2, uBot)}`}
-              fill="hsl(240 8% 6%)" />)
+          // A hole in the floor: everything below floor level is only visible
+          // THROUGH the opening, so the whole well is clipped to the opening's
+          // floor-plane footprint. Near treads hide under the lip (correct —
+          // you only see the deeper section), the shaft bottoms out in darkness.
+          const zn = zAt(t0), zf = zAt(1)
+          const uBot = -1.1
+          const openPts = `${sxAt(zn, fxa)},${syAt(zn, 0)} ${sxAt(zn, fxb)},${syAt(zn, 0)} ${sxAt(zf, fxb)},${syAt(zf, 0)} ${sxAt(zf, fxa)},${syAt(zf, 0)}`
+          const clipId = `stdn_${d}_${s}`
+          nodes.push(<defs key={`${clipId}_def`}><clipPath id={clipId}><polygon points={openPts} /></clipPath></defs>)
+          const well: React.ReactNode[] = []
+          well.push(<polygon key="void" points={openPts} fill="hsl(240 10% 2%)" />)
+          well.push(<polygon key="farw"
+            points={`${sxAt(zf, fxa)},${syAt(zf, 0)} ${sxAt(zf, fxb)},${syAt(zf, 0)} ${sxAt(zf, fxb)},${syAt(zf, uBot)} ${sxAt(zf, fxa)},${syAt(zf, uBot)}`}
+            fill="hsl(240 7% 7%)" />)
+          for (const [fx, kn] of [[fxa, 'l'], [fxb, 'r']] as const) {
+            well.push(<polygon key={`ch${kn}`}
+              points={`${sxAt(zn, fx)},${syAt(zn, 0)} ${sxAt(zf, fx)},${syAt(zf, 0)} ${sxAt(zf, fx)},${syAt(zf, uBot)} ${sxAt(zn, fx)},${syAt(zn, uBot)}`}
+              fill="hsl(240 7% 5%)" />)
           }
+          // Treads, deepest first; a lit lip on each near edge makes them read as steps
           for (let i = N - 1; i >= 0; i--) {
-            const u = -0.55 * ((i + 1) / N)
-            nodes.push(
-              <polygon key={`st_${d}_${s}_${i}`} points={quad(stepT(i), u, stepT(i + 1), u, fxa, fxb)}
-                fill={pal.floorBand(d)} />,
-              <polygon key={`sts_${d}_${s}_${i}`} points={quad(stepT(i), u, stepT(i + 1), u, fxa, fxb)}
-                fill={`rgba(0,0,0,${0.25 + 0.16 * i})`} />,
+            const u = -0.5 * ((i + 1) / N)
+            const zi = zAt(stepT(i))
+            well.push(
+              <polygon key={`t${i}`} points={quad(stepT(i), u, stepT(i + 1), u, fxa, fxb)} fill={pal.floorBand(d)} />,
+              <polygon key={`ts${i}`} points={quad(stepT(i), u, stepT(i + 1), u, fxa, fxb)} fill={`rgba(0,0,0,${0.18 + 0.17 * i})`} />,
+              <line key={`tl${i}`} x1={sxAt(zi, fxa)} y1={syAt(zi, u)} x2={sxAt(zi, fxb)} y2={syAt(zi, u)}
+                stroke={`rgba(255,255,255,${Math.max(0.03, 0.14 - 0.035 * i)})`} strokeWidth={1} />,
             )
           }
+          if (fog > 0) well.push(<polygon key="fog" points={openPts} fill={`rgba(0,0,0,${fog * 0.8})`} />)
+          nodes.push(<g key={`stdng_${d}_${s}`} clipPath={`url(#${clipId})`}>{well}</g>)
+          nodes.push(<line key={`strim_${d}_${s}`} x1={sxAt(zn, fxa)} y1={syAt(zn, 0)} x2={sxAt(zn, fxb)} y2={syAt(zn, 0)}
+            stroke={pal.wallEdge(d)} strokeWidth={1} opacity={0.5} />)
         } else {
-          // Rising steps: lit opening at the top, then riser faces far-to-near
+          // A solid staircase rising away: warm glow spilling from the ceiling
+          // opening, stepped side masses so the flanks are closed, then
+          // riser + tread faces from far to near
+          const uTop = 0.6
           const zf = zAt(1)
           nodes.push(<polygon key={`stg_${d}_${s}`}
-            points={`${sxAt(zf, 0.22)},${syAt(zf, 0.98)} ${sxAt(zf, 0.78)},${syAt(zf, 0.98)} ${sxAt(zf, 0.78)},${syAt(zf, 0.52)} ${sxAt(zf, 0.22)},${syAt(zf, 0.52)}`}
-            fill="rgba(255,230,170,0.28)" />)
-          for (let i = N - 1; i >= 0; i--) {
-            const uLo = 0.6 * (i / N), uHi = 0.6 * ((i + 1) / N)
-            const zi = zAt(stepT(i))
+            points={`${sxAt(zf, fxa + 0.04)},${syAt(zf, 1)} ${sxAt(zf, fxb - 0.04)},${syAt(zf, 1)} ${sxAt(zf, fxb - 0.04)},${syAt(zf, uTop)} ${sxAt(zf, fxa + 0.04)},${syAt(zf, uTop)}`}
+            fill="rgba(255,220,150,0.26)" />)
+          for (const [fx, kn] of [[fxa, 'l'], [fxb, 'r']] as const) {
+            const pts: string[] = [`${sxAt(zAt(t0), fx)},${syAt(zAt(t0), 0)}`]
+            for (let i = 0; i < N; i++) {
+              const uHi = uTop * ((i + 1) / N)
+              pts.push(`${sxAt(zAt(stepT(i)), fx)},${syAt(zAt(stepT(i)), uHi)}`)
+              pts.push(`${sxAt(zAt(stepT(i + 1)), fx)},${syAt(zAt(stepT(i + 1)), uHi)}`)
+            }
+            pts.push(`${sxAt(zf, fx)},${syAt(zf, 0)}`)
             nodes.push(
-              <polygon key={`sr_${d}_${s}_${i}`}
-                points={`${sxAt(zi, fxa)},${syAt(zi, uLo)} ${sxAt(zi, fxb)},${syAt(zi, uLo)} ${sxAt(zi, fxb)},${syAt(zi, uHi)} ${sxAt(zi, fxa)},${syAt(zi, uHi)}`}
-                fill={pal.frontWall(d)} />,
-              <polygon key={`srh_${d}_${s}_${i}`}
-                points={`${sxAt(zi, fxa)},${syAt(zi, uLo)} ${sxAt(zi, fxb)},${syAt(zi, uLo)} ${sxAt(zi, fxb)},${syAt(zi, uHi)} ${sxAt(zi, fxa)},${syAt(zi, uHi)}`}
-                fill={`rgba(255,235,190,${0.05 + 0.05 * i})`} />,
-              <polygon key={`srt_${d}_${s}_${i}`} points={quad(stepT(i), uHi, stepT(i + 1), uHi, fxa, fxb)}
-                fill={`rgba(0,0,0,0.30)`} />,
+              <polygon key={`stup_ch${kn}_${d}_${s}`} points={pts.join(' ')} fill={pal.sideWall(d)} />,
+              <polygon key={`stup_chs${kn}_${d}_${s}`} points={pts.join(' ')} fill="rgba(0,0,0,0.25)" />,
             )
           }
-        }
-        if (fog > 0) {
-          nodes.push(<polygon key={`stf_${d}_${s}`} points={quad(t0, kind === 'stairs_down' ? 0 : 0.7, 1, kind === 'stairs_down' ? -0.62 : 0.7, fxa, fxb)} fill={`rgba(0,0,0,${fog * 0.8})`} />)
+          for (let i = N - 1; i >= 0; i--) {
+            const uLo = uTop * (i / N), uHi = uTop * ((i + 1) / N)
+            const zi = zAt(stepT(i))
+            const riserPts = `${sxAt(zi, fxa)},${syAt(zi, uLo)} ${sxAt(zi, fxb)},${syAt(zi, uLo)} ${sxAt(zi, fxb)},${syAt(zi, uHi)} ${sxAt(zi, fxa)},${syAt(zi, uHi)}`
+            nodes.push(
+              <polygon key={`sr_${d}_${s}_${i}`}  points={riserPts} fill={pal.frontWall(d)} />,
+              <polygon key={`srw_${d}_${s}_${i}`} points={riserPts} fill={`rgba(255,220,150,${0.05 + 0.055 * i})`} />,
+              <polygon key={`st_${d}_${s}_${i}`}  points={quad(stepT(i), uHi, stepT(i + 1), uHi, fxa, fxb)} fill={pal.floorBand(d)} />,
+              <polygon key={`stw_${d}_${s}_${i}`} points={quad(stepT(i), uHi, stepT(i + 1), uHi, fxa, fxb)}
+                fill={`rgba(255,225,160,${0.05 + 0.06 * i})`} />,
+            )
+          }
+          if (fog > 0) nodes.push(<polygon key={`stf_${d}_${s}`} points={quad(t0, 0, 1, uTop + 0.2, fxa, fxb)} fill={`rgba(0,0,0,${fog * 0.8})`} />)
         }
       }
 
