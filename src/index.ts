@@ -19,8 +19,8 @@ export { pixelSprite, pixelSpriteRect, hasPixelSprite, spriteAspect, resolveCrea
 export { fileToSpriteDataUri, builtinSpritePng, downloadSpriteTemplate, SPRITE_MAX_DIM, SPRITE_MAX_BYTES, SPRITE_ACCEPT_TYPES, SPRITE_ACCEPT_ATTR } from './lib/sprite-upload'
 
 // Procedural generation
-export { buildBaseMap, buildGeneratedMap, buildGeneratedWorld, SIZE_DIM } from './lib/map-generator'
-export type { NewMapConfig, MapSize, GeneratedWorld } from './lib/map-generator'
+export { buildBaseMap, buildGeneratedMap, buildGeneratedWorld, layoutDim, SIZE_DIM, EOTB_DIM } from './lib/map-generator'
+export type { NewMapConfig, MapSize, GeneratedWorld, LayoutStyle } from './lib/map-generator'
 
 // .epochmap codec
 export {

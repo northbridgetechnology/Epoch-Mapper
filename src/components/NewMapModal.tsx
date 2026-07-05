@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { cn } from '@/lib/utils'
-import { SIZE_DIM, type MapSize, type NewMapConfig } from '@/lib/map-generator'
+import { SIZE_DIM, EOTB_DIM, type LayoutStyle, type MapSize, type NewMapConfig } from '@/lib/map-generator'
 
 interface NewMapModalProps {
   defaultName?: string
@@ -10,10 +10,19 @@ interface NewMapModalProps {
   onClose: () => void
 }
 
-const SIZES: { label: string; value: MapSize; tag: string }[] = [
-  { label: 'Small',  value: 'small',  tag: `${SIZE_DIM.small}×${SIZE_DIM.small}`   },
-  { label: 'Medium', value: 'medium', tag: `${SIZE_DIM.medium}×${SIZE_DIM.medium}` },
-  { label: 'Large',  value: 'large',  tag: `${SIZE_DIM.large}×${SIZE_DIM.large}`   },
+function sizeOptions(style: LayoutStyle, generate: boolean): { label: string; value: MapSize; tag: string }[] {
+  const dims = generate && style === 'eotb' ? EOTB_DIM : SIZE_DIM
+  return [
+    { label: 'Small',  value: 'small',  tag: `${dims.small}×${dims.small}`   },
+    { label: 'Medium', value: 'medium', tag: `${dims.medium}×${dims.medium}` },
+    { label: 'Large',  value: 'large',  tag: `${dims.large}×${dims.large}`   },
+  ]
+}
+
+const STYLES: { label: string; value: LayoutStyle; desc: string }[] = [
+  { label: 'Rooms',  value: 'rooms', desc: 'BSP rooms joined by winding corridors — spacious, organic' },
+  { label: 'EotB',   value: 'eotb',  desc: 'Dense thin-wall maze on a tight grid — chambers, doors, illusory walls, a secret passage' },
+  { label: 'SMT',    value: 'smt',   desc: 'Long arterial corridors on a lattice with room blocks behind doors — structured, urban' },
 ]
 
 function randomSeed() {
@@ -25,9 +34,10 @@ export function NewMapModal({ defaultName = 'New Map', onConfirm, onClose }: New
   const [size,     setSize]     = useState<MapSize>('small')
   const [seed,     setSeed]     = useState(() => randomSeed())
   const [generate, setGenerate] = useState(false)
+  const [style,    setStyle]    = useState<LayoutStyle>('rooms')
 
   function confirm() {
-    onConfirm({ name: name.trim() || defaultName, size, seed, generate })
+    onConfirm({ name: name.trim() || defaultName, size, seed, generate, style })
   }
 
   return (
@@ -63,7 +73,7 @@ export function NewMapModal({ defaultName = 'New Map', onConfirm, onClose }: New
           <div className="flex flex-col gap-1.5">
             <label className="text-xs font-medium text-white/40">Size</label>
             <div className="grid grid-cols-3 gap-2">
-              {SIZES.map(s => (
+              {sizeOptions(style, generate).map(s => (
                 <button
                   key={s.value}
                   onClick={() => setSize(s.value)}
@@ -131,10 +141,36 @@ export function NewMapModal({ defaultName = 'New Map', onConfirm, onClose }: New
                 Randomly Generate &amp; Populate
               </span>
               <span className="text-[11px] text-white/30 leading-snug">
-                BSP dungeon — rooms, corridors, doors, chests, NPCs, and a boss room
+                Two linked levels — story, quests, tricks, NPCs, a boss, and the dark Depths
               </span>
             </div>
           </label>
+
+          {/* Layout style */}
+          {generate && (
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-medium text-white/40">Layout Style</label>
+              <div className="grid grid-cols-3 gap-2">
+                {STYLES.map(s => (
+                  <button
+                    key={s.value}
+                    onClick={() => setStyle(s.value)}
+                    className={cn(
+                      'flex flex-col items-center gap-0.5 rounded-lg border py-2 text-sm transition-colors',
+                      style === s.value
+                        ? 'border-amber-500/60 bg-amber-950/30 text-amber-200'
+                        : 'border-white/10 bg-zinc-800 text-white/50 hover:border-white/20 hover:text-white/70',
+                    )}
+                  >
+                    <span className="font-semibold">{s.label}</span>
+                  </button>
+                ))}
+              </div>
+              <p className="text-[11px] text-white/30 leading-snug min-h-[2rem]">
+                {STYLES.find(s => s.value === style)?.desc}
+              </p>
+            </div>
+          )}
 
         </div>
 

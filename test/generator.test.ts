@@ -120,4 +120,80 @@ test('showcase: relics, torchbearer, inn, and the gameEnd finale', () => {
   assert.ok(dq && dq.stages.length === 3, 'depths quest missing')
 })
 
+// ── Layout styles ──────────────────────────────────────────────────────────────
+
+import { EDGE } from '../src/lib/constants'
+import { boundaryKey } from '../src/lib/constants'
+
+/** BFS over floor cells; boundaries with a solid/hidden wall block the path
+ *  (doors are passable — sealed vault doors open via the puzzle). */
+function reachableCount(map: import('../src/lib/types').MapData): { reached: number; total: number } {
+  const keys = Object.keys(map.cells)
+  const blockedWall = (bk: string) => {
+    const b = map.boundaries?.[bk]
+    if (!b) return false
+    if (b.door) return false
+    return b.wall === EDGE.WALL || b.wall === EDGE.ILLUSORY || b.wall === EDGE.SECRET
+  }
+  const start = keys[0]
+  const seen = new Set([start])
+  const queue = [start]
+  const DELTA: Record<string, [number, number]> = { N: [0, -1], S: [0, 1], E: [1, 0], W: [-1, 0] }
+  while (queue.length > 0) {
+    const [x, y] = queue.pop()!.split(',').map(Number)
+    for (const [dir, [dx, dy]] of Object.entries(DELTA)) {
+      const nk = `${x + dx},${y + dy}`
+      if (!map.cells[nk] || seen.has(nk)) continue
+      if (blockedWall(boundaryKey(x, y, dir as import('../src/lib/types').EdgeDir))) continue
+      seen.add(nk)
+      queue.push(nk)
+    }
+  }
+  return { reached: seen.size, total: keys.length }
+}
+
+test('eotb style: dense thin-wall maze, fully connected, doors + hidden walls', () => {
+  const w = buildGeneratedWorld('EotB', { name: 'EotB', size: 'small', seed: 99, generate: true, style: 'eotb' }, ruleset)
+  const cellCount = Object.keys(w.map.cells).length
+  assert.equal(cellCount, 22 * 22, 'every cell of the 24x24 interior is floor')
+  const conn = reachableCount(w.map)
+  assert.equal(conn.reached, conn.total, 'maze must be fully connected without cheating through hidden walls')
+  const bounds = Object.values(w.map.boundaries ?? {})
+  assert.ok(bounds.filter(b => b.wall === EDGE.WALL).length > 100, 'a maze needs walls')
+  assert.ok(bounds.some(b => b.door), 'chamber doors expected')
+  assert.ok(bounds.some(b => b.wall === EDGE.ILLUSORY || b.wall === EDGE.SECRET), 'hidden walls expected')
+  assert.ok(w.extraMaps[0].dark, 'depths still dark in eotb style')
+})
+
+test('smt style: arterial corridors with room blocks behind doors, fully connected', () => {
+  const w = buildGeneratedWorld('SMT', { name: 'SMT', size: 'small', seed: 99, generate: true, style: 'smt' }, ruleset)
+  const conn = reachableCount(w.map)
+  assert.equal(conn.reached, conn.total, 'lattice must stay connected after segment removal')
+  const bounds = Object.values(w.map.boundaries ?? {})
+  assert.ok(bounds.some(b => b.door), 'room-entry doors expected')
+  // Long straight corridor runs are the SMT signature
+  let longest = 0
+  for (let y = 0; y < 40; y++) {
+    let run = 0
+    for (let x = 0; x < 40; x++) {
+      run = w.map.cells[`${x},${y}`] ? run + 1 : 0
+      longest = Math.max(longest, run)
+    }
+  }
+  assert.ok(longest >= 20, `expected an avenue spanning the map, longest run ${longest}`)
+  // Story wiring still lands (needs >= 3 rooms)
+  assert.ok(w.quests.length >= 1)
+})
+
+test('styles are deterministic per seed', () => {
+  for (const style of ['eotb', 'smt'] as const) {
+    const a = buildGeneratedWorld('X', { name: 'X', size: 'small', seed: 7, generate: true, style }, ruleset)
+    const b = buildGeneratedWorld('X', { name: 'X', size: 'small', seed: 7, generate: true, style }, ruleset)
+    assert.deepEqual(Object.keys(a.map.cells).sort(), Object.keys(b.map.cells).sort())
+    // Structure must match exactly; entity/switch ids are uid()-random by design
+    const scrub = (o: unknown) => JSON.parse(JSON.stringify(o).replace(/"id":"[^"]+"/g, '"id":"_"'))
+    assert.deepEqual(scrub(a.map.boundaries), scrub(b.map.boundaries))
+  }
+})
+
 console.log(`\n${passed} passed`)
