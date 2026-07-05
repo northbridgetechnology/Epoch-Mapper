@@ -195,7 +195,7 @@ const DELTA: Record<EdgeDir, [number, number]> = { N: [0, -1], S: [0, 1], E: [1,
 export type LayoutStyle = 'rooms' | 'eotb' | 'smt'
 
 /** EotB floors are tight: smaller grids than the BSP sizes. */
-export const EOTB_DIM: Record<MapSize, number> = { small: 24, medium: 30, large: 38 }
+export const EOTB_DIM: Record<MapSize, number> = { small: 25, medium: 31, large: 39 }
 
 export function layoutDim(style: LayoutStyle, size: MapSize): number {
   return style === 'eotb' ? EOTB_DIM[size] : SIZE_DIM[size]
@@ -243,212 +243,194 @@ function carveBsp(dim: number, rng: () => number): CarvedLayout {
   return { cells, boundaries: {}, roomCells, rooms: withRooms.map(l => l.room) }
 }
 
-// ── Style: eotb (thin-wall maze) ───────────────────────────────────────────────
+// ── Shared core: rooms + trimmed maze corridors (Nystrom "Rooms and Mazes") ────
 //
-// Every cell of the square is floor; the layout lives in the WALLS between
-// cells, exactly like a hand-drawn EotB level. A recursive-backtracker maze is
-// opened up with chambers and extra loops, then dressed with doors on chamber
-// entrances, a few illusory walls, and a secret passage.
+// The layout both classics actually use: rooms placed first, corridors grown
+// through the leftover space, the two joined ONLY at verified connectors (so
+// every door provably leads somewhere), then dead ends trimmed away. Style
+// parameters turn the same machine into an EotB floor or an SMT block.
 
-function carveEotb(dim: number, rng: () => number): CarvedLayout {
-  const lo = 1, hi = dim - 2
+interface RoomsMazesOpts {
+  roomTries: number
+  roomMin: number             // odd
+  roomMax: number             // odd
+  /** 0 = corridors run straight as long as possible; 1 = turn every step. */
+  winding: number
+  /** Chance to open an extra (loop) connector beyond the spanning set. */
+  extraConnectorChance: number
+  /** Trim corridor dead ends until at most this many remain. */
+  keepDeadEnds: number
+  /** Chance a room connector gets a door. */
+  doorChance: number
+  /** Illusory/secret alcove shortcuts to hide in the walls. */
+  secrets: number
+}
+
+function carveRoomsAndMazes(dim: number, rng: () => number, opts: RoomsMazesOpts): CarvedLayout {
+  const S = dim % 2 === 0 ? dim - 1 : dim   // odd lattice
+  const lo = 1, hi = S - 2
   const cells: CellMap = {}
   const roomCells = new Set<string>()
-  for (let y = lo; y <= hi; y++)
-    for (let x = lo; x <= hi; x++)
-      cells[`${x},${y}`] = { base: BASE.FLOOR, overlays: [] }
-
-  // All interior walls present, then the maze knocks passages through
-  const walls = new Set<string>()
-  for (let y = lo; y <= hi; y++) {
-    for (let x = lo; x <= hi; x++) {
-      if (x < hi) walls.add(boundaryKey(x, y, 'E'))
-      if (y < hi) walls.add(boundaryKey(x, y, 'S'))
-    }
-  }
-  const visited = new Set<string>()
-  const stack: [number, number][] = [[lo, lo]]
-  visited.add(`${lo},${lo}`)
-  while (stack.length > 0) {
-    const [cx, cy] = stack[stack.length - 1]
-    const options = (Object.entries(DELTA) as [EdgeDir, [number, number]][])
-      .map(([dir, [dx, dy]]) => ({ dir, nx: cx + dx, ny: cy + dy }))
-      .filter(o => o.nx >= lo && o.nx <= hi && o.ny >= lo && o.ny <= hi && !visited.has(`${o.nx},${o.ny}`))
-    if (options.length === 0) { stack.pop(); continue }
-    const pick = options[Math.floor(rng() * options.length)]
-    walls.delete(boundaryKey(cx, cy, pick.dir))
-    visited.add(`${pick.nx},${pick.ny}`)
-    stack.push([pick.nx, pick.ny])
+  const boundaries: Record<string, BoundaryData> = {}
+  const region: Record<string, number> = {}
+  let regionId = 0
+  const floor = (x: number, y: number, r: number) => {
+    cells[`${x},${y}`] = { base: BASE.FLOOR, overlays: [] }
+    region[`${x},${y}`] = r
   }
 
-  // Chambers: open rectangles punched into the maze
+  // 1. Rooms on the odd lattice, no touching (1-cell wall gap guaranteed)
   const rooms: Rect[] = []
-  const wanted = Math.max(4, Math.floor(dim / 4))
-  for (let attempt = 0; attempt < wanted * 6 && rooms.length < wanted; attempt++) {
-    const rw = randInt(rng, 2, 4)
-    const rh = randInt(rng, 2, 3)
-    const rx = randInt(rng, lo + 1, hi - rw)
-    const ry = randInt(rng, lo + 1, hi - rh)
+  for (let t = 0; t < opts.roomTries && rooms.length < Math.floor(S * S / 55); t++) {
+    const rw = opts.roomMin + 2 * randInt(rng, 0, (opts.roomMax - opts.roomMin) / 2)
+    const rh = opts.roomMin + 2 * randInt(rng, 0, (opts.roomMax - opts.roomMin) / 2)
+    const rx = lo + 2 * randInt(rng, 0, (hi - rw - lo) / 2)
+    const ry = lo + 2 * randInt(rng, 0, (hi - rh - lo) / 2)
+    if (rooms.some(r => !(rx + rw < r.x || r.x + r.w < rx || ry + rh < r.y || r.y + r.h < ry))) continue
     const rect: Rect = { x: rx, y: ry, w: rw, h: rh }
-    if (rooms.some(r => !(rx + rw + 1 < r.x || r.x + r.w + 1 < rx || ry + rh + 1 < r.y || r.y + r.h + 1 < ry))) continue
-    for (let y = ry; y < ry + rh; y++) {
-      for (let x = rx; x < rx + rw; x++) {
-        roomCells.add(`${x},${y}`)
-        if (x < rx + rw - 1) walls.delete(boundaryKey(x, y, 'E'))
-        if (y < ry + rh - 1) walls.delete(boundaryKey(x, y, 'S'))
-      }
-    }
+    regionId++
+    for (let y = ry; y < ry + rh; y++)
+      for (let x = rx; x < rx + rw; x++) { floor(x, y, regionId); roomCells.add(`${x},${y}`) }
     rooms.push(rect)
   }
 
-  // Extra loops so the maze isn't a single thread
-  const wallList = () => Array.from(walls)
-  const loops = Math.floor((dim * dim) / 42)
-  for (let i = 0; i < loops; i++) {
-    const list = wallList()
-    if (list.length === 0) break
-    walls.delete(list[Math.floor(rng() * list.length)])
-  }
-
-  const boundaries: Record<string, BoundaryData> = {}
-  for (const bk of walls) boundaries[bk] = { wall: EDGE.WALL }
-
-  // Doors on chamber entrances (existing openings in the chamber perimeter)
-  for (const r of rooms) {
-    if (rng() > 0.7) continue
-    const openings: string[] = []
-    for (let y = r.y; y < r.y + r.h; y++) {
-      for (let x = r.x; x < r.x + r.w; x++) {
-        for (const dir of DIRS) {
+  // 2. Corridors: growing-tree maze through every uncarved odd cell
+  for (let sy = lo; sy <= hi; sy += 2) {
+    for (let sx = lo; sx <= hi; sx += 2) {
+      if (cells[`${sx},${sy}`]) continue
+      regionId++
+      floor(sx, sy, regionId)
+      const stack: [number, number][] = [[sx, sy]]
+      let lastDir: EdgeDir | null = null
+      while (stack.length > 0) {
+        const [cx, cy] = stack[stack.length - 1]
+        const open = DIRS.filter(dir => {
           const [dx, dy] = DELTA[dir]
-          const nx = x + dx, ny = y + dy
-          const outside = nx < r.x || nx >= r.x + r.w || ny < r.y || ny >= r.y + r.h
-          if (!outside || !cells[`${nx},${ny}`]) continue
-          const bk = boundaryKey(x, y, dir)
-          if (!boundaries[bk]) openings.push(bk)
-        }
+          const nx = cx + dx * 2, ny = cy + dy * 2
+          return nx >= lo && nx <= hi && ny >= lo && ny <= hi && !cells[`${nx},${ny}`]
+        })
+        if (open.length === 0) { stack.pop(); lastDir = null; continue }
+        const dir: EdgeDir = lastDir && open.includes(lastDir) && rng() > opts.winding
+          ? lastDir
+          : open[Math.floor(rng() * open.length)]
+        const [dx, dy] = DELTA[dir]
+        floor(cx + dx, cy + dy, regionId)
+        floor(cx + dx * 2, cy + dy * 2, regionId)
+        stack.push([cx + dx * 2, cy + dy * 2])
+        lastDir = dir
       }
     }
-    if (openings.length > 0) {
-      const bk = openings[Math.floor(rng() * openings.length)]
-      boundaries[bk] = { wall: EDGE.DOOR, door: { state: 'closed' } }
+  }
+
+  // 3. Connectors: wall cells bridging two different regions. Open a spanning
+  //    set (every region reachable), plus a few extras for loops.
+  interface Connector { x: number; y: number; a: string; b: string }
+  const connectors: Connector[] = []
+  for (let y = lo; y <= hi; y++) {
+    for (let x = lo; x <= hi; x++) {
+      if (cells[`${x},${y}`]) continue
+      const n = `${x},${y - 1}`, s = `${x},${y + 1}`, w = `${x - 1},${y}`, e = `${x + 1},${y}`
+      if (cells[n] && cells[s] && region[n] !== region[s]) connectors.push({ x, y, a: n, b: s })
+      else if (cells[w] && cells[e] && region[w] !== region[e]) connectors.push({ x, y, a: w, b: e })
+    }
+  }
+  const merged = new Map<number, number>()
+  const find = (r: number): number => {
+    let root = r
+    while (merged.has(root)) root = merged.get(root)!
+    return root
+  }
+  const shuffledConn = [...connectors].sort(() => rng() - 0.5)
+  const openConnector = (c: Connector) => {
+    cells[`${c.x},${c.y}`] = { base: BASE.FLOOR, overlays: [] }
+    region[`${c.x},${c.y}`] = find(region[c.a])
+    // A door where a corridor meets a room (never floating: both sides are floor)
+    const roomSide = roomCells.has(c.a) ? c.a : roomCells.has(c.b) ? c.b : null
+    if (roomSide && rng() < opts.doorChance) {
+      const [rx2, ry2] = roomSide.split(',').map(Number)
+      const dir: EdgeDir = ry2 < c.y ? 'N' : ry2 > c.y ? 'S' : rx2 < c.x ? 'W' : 'E'
+      boundaries[boundaryKey(c.x, c.y, dir)] = { wall: EDGE.DOOR, door: { state: 'closed' } }
+    }
+  }
+  for (const c of shuffledConn) {
+    const ra = find(region[c.a]), rb = find(region[c.b])
+    if (ra !== rb) {
+      merged.set(rb, ra)
+      openConnector(c)
+    } else if (rng() < opts.extraConnectorChance) {
+      // Loop connector — only if not directly beside an existing opening
+      const near = [`${c.x},${c.y - 1}`, `${c.x},${c.y + 1}`, `${c.x - 1},${c.y}`, `${c.x + 1},${c.y}`]
+      if (near.filter(k => cells[k]).length <= 2) openConnector(c)
     }
   }
 
-  // A few walls are lies: illusory shortcuts and one secret passage
-  const lies = randInt(rng, 2, 4)
-  for (let i = 0; i < lies; i++) {
-    const list = Object.keys(boundaries).filter(k => boundaries[k].wall === EDGE.WALL)
-    if (list.length === 0) break
-    const bk = list[Math.floor(rng() * list.length)]
-    boundaries[bk] = { wall: i === 0 ? EDGE.SECRET : EDGE.ILLUSORY }
+  // 4. Trim corridor dead ends down to the style's budget
+  const corridorNeighbors = (x: number, y: number) =>
+    DIRS.filter(dir => cells[`${x + DELTA[dir][0]},${y + DELTA[dir][1]}`]).length
+  const deadEnds = (): string[] =>
+    Object.keys(cells).filter(k => {
+      if (roomCells.has(k)) return false
+      const [x, y] = k.split(',').map(Number)
+      return corridorNeighbors(x, y) <= 1
+    })
+  let ends = deadEnds()
+  while (ends.length > opts.keepDeadEnds) {
+    for (const k of ends.slice(0, Math.max(1, ends.length - opts.keepDeadEnds))) {
+      delete cells[k]
+      delete region[k]
+    }
+    ends = deadEnds()
+  }
+  // Doors must sit between two floor cells — drop any orphaned by trimming
+  for (const bk of Object.keys(boundaries)) {
+    const [cellPart, dirPart] = bk.split(':')
+    const [bx, by] = cellPart.split(',').map(Number)
+    const other = dirPart === 'S' ? `${bx},${by + 1}` : `${bx + 1},${by}`
+    if (!cells[cellPart] || !cells[other]) delete boundaries[bk]
+  }
+
+  // 5. Secrets: carve an unused connector and hide it behind an illusory wall
+  //    (one side opens normally — an alcove; the other side is the lie)
+  let placedSecrets = 0
+  for (const c of shuffledConn) {
+    if (placedSecrets >= opts.secrets) break
+    if (cells[`${c.x},${c.y}`] || !cells[c.a] || !cells[c.b]) continue
+    cells[`${c.x},${c.y}`] = { base: BASE.FLOOR, overlays: [] }
+    const [ax, ay] = c.a.split(',').map(Number)
+    const dir: EdgeDir = ay < c.y ? 'N' : ay > c.y ? 'S' : ax < c.x ? 'W' : 'E'
+    boundaries[boundaryKey(c.x, c.y, dir)] = { wall: placedSecrets === 0 ? EDGE.SECRET : EDGE.ILLUSORY }
+    placedSecrets++
   }
 
   return { cells, boundaries, roomCells, rooms }
 }
 
-// ── Style: smt (arterial lattice) ──────────────────────────────────────────────
-//
-// Long straight corridors on a regular spacing with some segments deleted for
-// variety, and rectangular room blocks tucked into the quads, each entered
-// through a door off the nearest corridor.
+// ── Style: eotb — packed chambers, sparse winding corridors, hidden walls ─────
+
+function carveEotb(dim: number, rng: () => number): CarvedLayout {
+  return carveRoomsAndMazes(dim, rng, {
+    roomTries: dim * 4,
+    roomMin: 3, roomMax: 5,
+    winding: 0.4,
+    extraConnectorChance: 0.05,
+    keepDeadEnds: 4,
+    doorChance: 0.6,
+    secrets: randInt(rng, 2, 3),
+  })
+}
+
+// ── Style: smt — long straight avenues, loopy network, no dead ends ───────────
 
 function carveSmt(dim: number, rng: () => number): CarvedLayout {
-  const lo = 2, hi = dim - 3
-  const spacing = dim <= 40 ? 5 : 6
-  const lines: number[] = []
-  for (let v = lo; v <= hi; v += spacing) lines.push(v)
-  if (lines[lines.length - 1] !== hi) lines.push(hi)
-
-  const cells: CellMap = {}
-  const corridor = new Set<string>()
-  const put = (x: number, y: number) => {
-    const k = `${x},${y}`
-    cells[k] = cells[k] ?? { base: BASE.FLOOR, overlays: [] }
-    corridor.add(k)
-  }
-  for (const cx of lines) for (let y = lo; y <= hi; y++) put(cx, y)
-  for (const cy of lines) for (let x = lo; x <= hi; x++) put(x, cy)
-
-  // Delete some segments between intersections, keeping the network connected
-  interface Segment { keys: string[] }
-  const segments: Segment[] = []
-  for (const cx of lines) {
-    for (let i = 0; i < lines.length - 1; i++) {
-      const keys: string[] = []
-      for (let y = lines[i] + 1; y < lines[i + 1]; y++) keys.push(`${cx},${y}`)
-      if (keys.length > 0) segments.push({ keys })
-    }
-  }
-  for (const cy of lines) {
-    for (let i = 0; i < lines.length - 1; i++) {
-      const keys: string[] = []
-      for (let x = lines[i] + 1; x < lines[i + 1]; x++) keys.push(`${x},${cy}`)
-      if (keys.length > 0) segments.push({ keys })
-    }
-  }
-  const connected = (): boolean => {
-    const all = Object.keys(cells)
-    if (all.length === 0) return true
-    const seen = new Set<string>([all[0]])
-    const queue = [all[0]]
-    while (queue.length > 0) {
-      const [x, y] = queue.pop()!.split(',').map(Number)
-      for (const [dx, dy] of Object.values(DELTA)) {
-        const nk = `${x + dx},${y + dy}`
-        if (cells[nk] && !seen.has(nk)) { seen.add(nk); queue.push(nk) }
-      }
-    }
-    return seen.size === all.length
-  }
-  const shuffled = [...segments].sort(() => rng() - 0.5)
-  let removed = 0
-  const removeTarget = Math.floor(segments.length * 0.3)
-  for (const seg of shuffled) {
-    if (removed >= removeTarget) break
-    const saved = seg.keys.map(k => cells[k])
-    for (const k of seg.keys) delete cells[k]
-    if (connected()) { for (const k of seg.keys) corridor.delete(k); removed++ }
-    else seg.keys.forEach((k, i) => { cells[k] = saved[i] })
-  }
-
-  // Room blocks in the quads between corridors, entered through a door
-  const roomCells = new Set<string>()
-  const rooms: Rect[] = []
-  const boundaries: Record<string, BoundaryData> = {}
-  for (let i = 0; i < lines.length - 1; i++) {
-    for (let j = 0; j < lines.length - 1; j++) {
-      if (rng() > 0.65) continue
-      const bx = lines[i] + 1, by = lines[j] + 1
-      const bw = lines[i + 1] - lines[i] - 1
-      const bh = lines[j + 1] - lines[j] - 1
-      if (bw < 3 || bh < 3) continue
-      const rw = Math.min(bw - 1, randInt(rng, 3, 5))
-      const rh = Math.min(bh - 1, randInt(rng, 3, 4))
-      const rx = bx + randInt(rng, 0, bw - rw)
-      const ry = by + randInt(rng, 0, bh - rh)
-      const rect: Rect = { x: rx, y: ry, w: rw, h: rh }
-      for (let y = ry; y < ry + rh; y++) {
-        for (let x = rx; x < rx + rw; x++) {
-          const k = `${x},${y}`
-          if (corridor.has(k)) continue
-          cells[k] = { base: BASE.FLOOR, overlays: [] }
-          roomCells.add(k)
-        }
-      }
-      // Straight connector from the room's edge to the corridor above the block
-      const doorX = rx + Math.floor(rw / 2)
-      let cy2 = ry - 1
-      while (cy2 >= lo && !cells[`${doorX},${cy2}`]) {
-        cells[`${doorX},${cy2}`] = { base: BASE.FLOOR, overlays: [] }
-        cy2--
-      }
-      boundaries[boundaryKey(doorX, ry, 'N')] = { wall: EDGE.DOOR, door: { state: 'closed' } }
-      rooms.push(rect)
-    }
-  }
-
-  return { cells, boundaries, roomCells, rooms }
+  return carveRoomsAndMazes(dim, rng, {
+    roomTries: dim * 3,
+    roomMin: 3, roomMax: 7,
+    winding: 0.04,
+    extraConnectorChance: 0.18,
+    keepDeadEnds: 0,
+    doorChance: 0.5,
+    secrets: 0,
+  })
 }
 
 export function buildGeneratedWorld(name: string, config: NewMapConfig, ruleset: Ruleset): GeneratedWorld {

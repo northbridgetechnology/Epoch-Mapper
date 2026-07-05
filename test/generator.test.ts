@@ -152,14 +152,25 @@ function reachableCount(map: import('../src/lib/types').MapData): { reached: num
   return { reached: seen.size, total: keys.length }
 }
 
-test('eotb style: dense thin-wall maze, fully connected, doors + hidden walls', () => {
+function corridorDeadEnds(map: import('../src/lib/types').MapData): number {
+  let n = 0
+  for (const k of Object.keys(map.cells)) {
+    const [x, y] = k.split(',').map(Number)
+    const nbrs = [[0, -1], [0, 1], [1, 0], [-1, 0]].filter(([dx, dy]) => map.cells[`${x + dx},${y + dy}`]).length
+    if (nbrs <= 1) n++
+  }
+  return n
+}
+
+test('eotb style: packed chambers + sparse corridors, connected, playable dead-end budget', () => {
   const w = buildGeneratedWorld('EotB', { name: 'EotB', size: 'small', seed: 99, generate: true, style: 'eotb' }, ruleset)
-  const cellCount = Object.keys(w.map.cells).length
-  assert.equal(cellCount, 22 * 22, 'every cell of the 24x24 interior is floor')
   const conn = reachableCount(w.map)
-  assert.equal(conn.reached, conn.total, 'maze must be fully connected without cheating through hidden walls')
+  assert.equal(conn.reached, conn.total, 'must be fully connected without cheating through hidden walls')
+  // Real EotB floors are roughly half open, half solid — not a wall-salad maze
+  const floorFrac = Object.keys(w.map.cells).length / (25 * 25)
+  assert.ok(floorFrac > 0.3 && floorFrac < 0.75, `floor fraction ${floorFrac.toFixed(2)} out of the EotB band`)
+  assert.ok(corridorDeadEnds(w.map) <= 8, 'dead ends must be trimmed to a searchable handful')
   const bounds = Object.values(w.map.boundaries ?? {})
-  assert.ok(bounds.filter(b => b.wall === EDGE.WALL).length > 100, 'a maze needs walls')
   assert.ok(bounds.some(b => b.door), 'chamber doors expected')
   assert.ok(bounds.some(b => b.wall === EDGE.ILLUSORY || b.wall === EDGE.SECRET), 'hidden walls expected')
   assert.ok(w.extraMaps[0].dark, 'depths still dark in eotb style')
@@ -168,9 +179,18 @@ test('eotb style: dense thin-wall maze, fully connected, doors + hidden walls', 
 test('smt style: arterial corridors with room blocks behind doors, fully connected', () => {
   const w = buildGeneratedWorld('SMT', { name: 'SMT', size: 'small', seed: 99, generate: true, style: 'smt' }, ruleset)
   const conn = reachableCount(w.map)
-  assert.equal(conn.reached, conn.total, 'lattice must stay connected after segment removal')
+  assert.equal(conn.reached, conn.total, 'network must be fully connected')
+  assert.equal(corridorDeadEnds(w.map), 0, 'SMT corridors never waste your steps — zero dead ends')
   const bounds = Object.values(w.map.boundaries ?? {})
   assert.ok(bounds.some(b => b.door), 'room-entry doors expected')
+  // Every door must stand between two walkable cells — no doors to nowhere
+  for (const [bk, b] of Object.entries(w.map.boundaries ?? {})) {
+    if (!b.door) continue
+    const [cellPart, dirPart] = bk.split(':')
+    const [bx, by] = cellPart.split(',').map(Number)
+    const other = dirPart === 'S' ? `${bx},${by + 1}` : `${bx + 1},${by}`
+    assert.ok(w.map.cells[cellPart] && w.map.cells[other], `door ${bk} leads nowhere`)
+  }
   // Long straight corridor runs are the SMT signature
   let longest = 0
   for (let y = 0; y < 40; y++) {
@@ -180,7 +200,7 @@ test('smt style: arterial corridors with room blocks behind doors, fully connect
       longest = Math.max(longest, run)
     }
   }
-  assert.ok(longest >= 20, `expected an avenue spanning the map, longest run ${longest}`)
+  assert.ok(longest >= 12, `expected long straight avenues, longest run ${longest}`)
   // Story wiring still lands (needs >= 3 rooms)
   assert.ok(w.quests.length >= 1)
 })
