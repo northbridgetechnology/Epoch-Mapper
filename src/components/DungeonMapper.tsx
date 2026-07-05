@@ -28,10 +28,10 @@ import { SettingsWorkspace } from './workspaces/SettingsWorkspace'
 import type { BoundaryData, Character, CellEntity, DoorDef, DoorState, Facing, Formation, ItemInstance, ResolvedEncounter, InscriptionDef, Ruleset, SaveState, SwitchDef } from '@/lib/engine-types'
 import { makeDefaultRuleset, normalizeRuleset } from '@/lib/default-ruleset'
 import { savePartyTemplate, loadPartyTemplate, saveToSlot, loadFromSlot, deleteAllSlots, listSaveSlots } from '@/lib/save-state'
-import { checkCellForEncounter, resolveEncounterTable, visitedFlagKey } from '@/lib/encounter-engine'
+import { checkCellForEncounter, resolveEncounterTable, makeFixedEncounter, visitedFlagKey } from '@/lib/encounter-engine'
 import { EncounterModal } from './EncounterModal'
 import { DialogueOverlay } from './DialogueOverlay'
-import { applyMoveTricks, cellHasTrick, tickLightBurn, restParty } from '@/lib/exploration'
+import { applyMoveTricks, cellHasTrick, tickLightBurn, restParty, advanceFoes, listFoes, foeFlagKey } from '@/lib/exploration'
 import { initCombat, applyCombatOutcome, consumeCombatItems, type CombatState } from '@/lib/combat-engine'
 import { CellInspector } from './CellInspector'
 import { usePanelWidth } from './ui/ResizablePanel'
@@ -244,6 +244,8 @@ export function DungeonMapper({
   const [gameOver, setGameOver] = useState(false)
   const gameOverRef = useRef(false)
   gameOverRef.current = gameOver
+  // When a battle was started by a FOE patrol, its dead-flag key (set on victory)
+  const pendingFoeKillRef = useRef<string | null>(null)
   // Barks fire once per session per line (heard-flags handle 'once' lines)
   const sessionBarksRef = useRef<Set<string>>(new Set())
 
@@ -599,6 +601,27 @@ export function DungeonMapper({
             return { ...m, playerX: dest.x, playerY: dest.y, revealedChunks: revealAround(m, dest.x, dest.y) }
           }))
           setCameraOffset({ x: 0, y: 0 })
+          return
+        }
+      }
+
+      // FOE patrols step whenever the party does; contact = fixed battle
+      const foeUpdates = advanceFoes(activeMap, flagsRef.current)
+      const flagsAfterFoes = Object.keys(foeUpdates).length > 0
+        ? { ...flagsRef.current, ...foeUpdates }
+        : flagsRef.current
+      if (Object.keys(foeUpdates).length > 0) setFlags(prev => ({ ...prev, ...foeUpdates }))
+      const contact = listFoes(activeMap, flagsAfterFoes).find(f => !f.dead && f.pos.x === nx && f.pos.y === ny)
+      if (contact) {
+        const foeDef = ruleset.enemies.find(en => en.id === contact.entity.enemy)
+        if (foeDef) {
+          const enc = makeFixedEncounter(foeDef, contact.entity.count ?? 1, Math.random)
+          pendingFoeKillRef.current = foeFlagKey(activeMap.id, contact.cellKey, 'dead')
+          setCombatState(initCombat(party, enc, {
+            formation, ruleset,
+            antiMagic: cellHasTrick(cell, 'antiMagic'),
+          }))
+          setWorkspace('play')
           return
         }
       }
@@ -1719,6 +1742,13 @@ export function DungeonMapper({
               savePartyTemplate(updatedParty, formation)
               levelUps.forEach(name => toast.success(`${name} leveled up!`))
               setCombatState(null)
+              if (pendingFoeKillRef.current) {
+                if (combatState.phase === 'victory') {
+                  const deadKey = pendingFoeKillRef.current
+                  setFlags(prev => ({ ...prev, [deadKey]: true }))
+                }
+                pendingFoeKillRef.current = null
+              }
               if (combatState.phase === 'defeat' && updatedParty.every(c => !c.alive)) setGameOver(true)
             }}
             onMoveForward={stepForward}
@@ -2284,6 +2314,7 @@ function cellEntityBadges(cell: CellData, ruleset: Ruleset): { zoneEncounter: bo
       case 'mapLink':    glyphs.push('🚪'); break
       case 'event':      glyphs.push('⚡'); break
       case 'trick':      glyphs.push(TRICK_GLYPHS[ent.kind] ?? '🌀'); break
+      case 'foe':        glyphs.push('👹'); break
       case 'object': {
         if (ent.object.kind === 'npc' && ent.object.npc) {
           glyphs.push((ruleset.npcs ?? []).find(n => n.id === ent.object.npc)?.portrait ?? '🧑')

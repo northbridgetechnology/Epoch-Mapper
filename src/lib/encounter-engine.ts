@@ -26,6 +26,18 @@ function makeEnemyInstance(def: EnemyDef, rng: () => number): EnemyInstance {
   }
 }
 
+/** Build a fixed encounter from a single enemy def (FOE patrols, scripted fights). */
+export function makeFixedEncounter(def: EnemyDef, count: number, rng: () => number): ResolvedEncounter {
+  const enemies = Array.from({ length: Math.max(1, count) }, () => makeEnemyInstance(def, rng))
+  return {
+    tableId: `foe.${def.id}`,
+    tableName: def.name,
+    enemies,
+    xpReward: enemies.reduce((s, e) => s + e.xp, 0),
+    goldReward: enemies.reduce((s, e) => s + e.gold, 0),
+  }
+}
+
 // ── Table resolution ──────────────────────────────────────────────────────────
 
 export function resolveEncounterTable(

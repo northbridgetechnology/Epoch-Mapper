@@ -8,7 +8,7 @@ import type { CellData, MapData, MarkerDef, EdgeDir } from '@/lib/types'
 import { getTheme, type MapThemeDef } from '@/lib/themes'
 import { getSubcubeDef } from '@/lib/subcube-defs'
 import { pixelSprite, pixelSpriteRect, spriteAspect, creatureSprite } from '@/lib/pixel-sprites'
-import { computeLightRadius, cellHasTrick } from '@/lib/exploration'
+import { computeLightRadius, cellHasTrick, listFoes } from '@/lib/exploration'
 import { listSaveSlots } from '@/lib/save-state'
 import type { BoundaryData, CellEntity, Character, Facing, ItemInstance, Ruleset } from '@/lib/engine-types'
 import { objectUsedFlagKey, effectiveDoorState } from '@/lib/event-engine'
@@ -290,6 +290,8 @@ function FirstPersonView({ map, facing, isCellRevealed, revealedBoundaries, flag
 
   // Light: on dark maps the world fades to black beyond the party's light
   // radius. lightExtra ramps 0 → 0.55 at the radius edge → 1 one cell beyond.
+  const liveFoes = listFoes(map, flags).filter(f => !f.dead)
+
   const viewD = lightRadius === undefined ? MAX_D : Math.max(1, Math.min(MAX_D, Math.floor(lightRadius)))
   const lightExtra = (dd: number) => viewD >= MAX_D ? 0 : Math.max(0, Math.min(1, (dd - viewD + 1) * 0.55))
   const fogAt = (dd: number) => Math.min(1, depthFog(dd) + lightExtra(dd))
@@ -762,6 +764,73 @@ function FirstPersonView({ map, facing, isCellRevealed, revealedBoundaries, flag
     const eHH = PF_Y / ez
     const eMX = VP_X + (s * PF_X) / ez
     const entFace = { x1: eMX - eHW, y1: VP_Y - eHH, x2: eMX + eHW, y2: VP_Y + eHH }
+
+    // ── FOE patrol standing in this cell (threat — draws above all else) ─────
+    const foeHere = battle ? undefined : liveFoes.find(f => f.pos.x === fx && f.pos.y === fy)
+    if (foeHere) {
+      const def = ruleset?.enemies.find(en => en.id === foeHere.entity.enemy)
+      const face = entFace
+      const fh2 = face.y2 - face.y1
+      const ncx = (face.x1 + face.x2) / 2
+      const floor2 = face.y2
+      const foeSize = Math.max(14, fh2 * 0.52)
+      const foeFog = Math.max(0.35, 1 - depthFog(d) * 1.2)
+      nodes.push(
+        <g key={`foe_${d}_${s}`} opacity={foeFog}>
+          <ellipse cx={ncx} cy={floor2 - fh2 * 0.02} rx={foeSize * 0.45} ry={foeSize * 0.11} fill="rgba(0,0,0,0.55)" />
+          <ellipse cx={ncx} cy={floor2 - fh2 * 0.02} rx={foeSize * 0.5} ry={foeSize * 0.13} fill="none" stroke="rgba(239,68,68,0.55)" strokeWidth={1.5}>
+            <animate attributeName="opacity" values="1;0.4;1" dur="1.4s" repeatCount="indefinite" />
+          </ellipse>
+          {(def && creatureSprite({ sprite: def.sprite, id: def.id, name: def.name },
+            ncx, floor2 - foeSize * 0.52, foeSize, `foe_px_${d}_${s}`)) ?? (
+            <text x={ncx} y={floor2 - foeSize * 0.55} textAnchor="middle" dominantBaseline="middle"
+              fontSize={foeSize} style={{ userSelect: 'none' }}>{def?.icon ?? '👹'}</text>
+          )}
+          <text x={ncx} y={floor2 - foeSize * 1.14} textAnchor="middle"
+            fontSize={Math.max(7, foeSize * 0.14)} fill="rgba(248,113,113,0.9)"
+            style={{ userSelect: 'none' }}>{def?.name ?? 'Something terrible'}</text>
+        </g>,
+      )
+      return
+    }
+
+    // ── Visible fixed encounter: the monsters stand in the corridor ──────────
+    const fixedEnc = battle ? undefined : (frontCell.entities ?? []).find(
+      (e): e is Extract<CellEntity, { t: 'encounter' }> => e.t === 'encounter' && e.mode === 'fixed',
+    )
+    if (fixedEnc && fixedEnc.table && !(fixedEnc.oncePerVisit && flags[`enc.visited.${fixedEnc.table}`])) {
+      const table = ruleset?.encounterTables.find(t => t.id === fixedEnc.table)
+      const entry = table && [...table.entries].sort((a, b) => b.weight - a.weight)[0]
+      const def = entry ? ruleset?.enemies.find(en => en.id === entry.enemy) : undefined
+      if (def) {
+        const face = entFace
+        const fw2 = face.x2 - face.x1
+        const fh2 = face.y2 - face.y1
+        const floor2 = face.y2
+        const n = Math.max(1, Math.min(3, entry!.min))
+        const encSize = Math.max(12, fh2 * (n > 1 ? 0.34 : 0.42))
+        const encFog = Math.max(0.3, 1 - depthFog(d) * 1.3)
+        const lanes = n === 1 ? [0.5] : n === 2 ? [0.35, 0.65] : [0.25, 0.5, 0.75]
+        nodes.push(
+          <g key={`fenc_${d}_${s}`} opacity={encFog}>
+            {lanes.map((ln, i) => {
+              const ex = face.x1 + fw2 * ln
+              return (
+                <g key={i}>
+                  <ellipse cx={ex} cy={floor2 - fh2 * 0.02} rx={encSize * 0.4} ry={encSize * 0.1} fill="rgba(0,0,0,0.5)" />
+                  {creatureSprite({ sprite: def.sprite, id: def.id, name: def.name },
+                    ex, floor2 - encSize * 0.52, encSize, `fenc_px_${d}_${s}_${i}`) ?? (
+                    <text x={ex} y={floor2 - encSize * 0.55} textAnchor="middle" dominantBaseline="middle"
+                      fontSize={encSize} style={{ userSelect: 'none' }}>{def.icon ?? '👾'}</text>
+                  )}
+                </g>
+              )
+            })}
+          </g>,
+        )
+        return
+      }
+    }
 
     // ── Chest object entity ──────────────────────────────────────────────────
     const chestEnt = (frontCell.entities ?? []).find(

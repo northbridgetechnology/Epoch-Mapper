@@ -224,3 +224,80 @@ export function restParty(
     message: safe ? 'The party rests safely.' : 'The party makes camp and recovers.',
   }
 }
+
+// ── FOE patrols ────────────────────────────────────────────────────────────────
+
+type FoeEntity = Extract<CellEntity, { t: 'foe' }>
+
+export interface FoeRuntime {
+  /** Anchor cell key ("x,y") — identifies the patrol in save flags. */
+  cellKey: string
+  entity: FoeEntity
+  pos: { x: number; y: number }
+  dead: boolean
+}
+
+export function foeFlagKey(mapId: string, cellKey: string, field: 'idx' | 'dir' | 'dead'): string {
+  return `foe.${mapId}.${cellKey}.${field}`
+}
+
+function foeRoute(cellKey: string, entity: FoeEntity): { x: number; y: number }[] {
+  const [ax, ay] = cellKey.split(',').map(Number)
+  return [{ x: ax, y: ay }, ...(entity.path ?? [])]
+}
+
+/** All FOEs on a map with their current route positions (from save flags). */
+export function listFoes(
+  map: MapData,
+  flags: Record<string, boolean | number | string>,
+): FoeRuntime[] {
+  const out: FoeRuntime[] = []
+  for (const [key, cell] of Object.entries(map.cells)) {
+    for (const ent of cell.entities ?? []) {
+      if (ent.t !== 'foe') continue
+      const route = foeRoute(key, ent)
+      const idx = Math.min(route.length - 1, Math.max(0, Number(flags[foeFlagKey(map.id, key, 'idx')] ?? 0)))
+      out.push({
+        cellKey: key,
+        entity: ent,
+        pos: route[idx],
+        dead: !!flags[foeFlagKey(map.id, key, 'dead')],
+      })
+    }
+  }
+  return out
+}
+
+/**
+ * Advance every living FOE on the map by one route step (call once per player
+ * step). Returns the flag writes to merge into save state — empty when
+ * nothing moved.
+ */
+export function advanceFoes(
+  map: MapData,
+  flags: Record<string, boolean | number | string>,
+): Record<string, number> {
+  const updates: Record<string, number> = {}
+  for (const [key, cell] of Object.entries(map.cells)) {
+    for (const ent of cell.entities ?? []) {
+      if (ent.t !== 'foe') continue
+      if (flags[foeFlagKey(map.id, key, 'dead')]) continue
+      const route = foeRoute(key, ent)
+      if (route.length < 2) continue
+      const idx = Math.min(route.length - 1, Math.max(0, Number(flags[foeFlagKey(map.id, key, 'idx')] ?? 0)))
+      if ((ent.mode ?? 'loop') === 'loop') {
+        updates[foeFlagKey(map.id, key, 'idx')] = (idx + 1) % route.length
+      } else {
+        let dir = Number(flags[foeFlagKey(map.id, key, 'dir')] ?? 1)
+        let next = idx + dir
+        if (next < 0 || next >= route.length) {
+          dir = -dir
+          next = idx + dir
+        }
+        updates[foeFlagKey(map.id, key, 'idx')] = next
+        updates[foeFlagKey(map.id, key, 'dir')] = dir
+      }
+    }
+  }
+  return updates
+}

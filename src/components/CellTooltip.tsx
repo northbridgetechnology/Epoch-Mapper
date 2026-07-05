@@ -14,6 +14,7 @@ const ENTITY_ICONS: Record<CellEntity['t'], string> = {
   object: '📦',
   event: '⚡',
   trick: '🌀',
+  foe: '👹',
 }
 
 const TRICK_LABELS: Record<string, string> = {
@@ -29,6 +30,7 @@ function entityLabel(ent: CellEntity): string {
     case 'object': return ent.object.kind.charAt(0).toUpperCase() + ent.object.kind.slice(1)
     case 'event': return `Event (${ent.event.trigger})`
     case 'trick': return TRICK_LABELS[ent.kind] ?? 'Trick'
+    case 'foe': return 'FOE Patrol'
   }
 }
 

@@ -4,7 +4,7 @@
  */
 
 import assert from 'node:assert/strict'
-import { applyMoveTricks, cellHasTrick, computeLightRadius, tickLightBurn, restParty, DARK_BASE_RADIUS } from '../src/lib/exploration'
+import { applyMoveTricks, cellHasTrick, computeLightRadius, tickLightBurn, restParty, listFoes, advanceFoes, foeFlagKey, DARK_BASE_RADIUS } from '../src/lib/exploration'
 import { makeDefaultRuleset } from '../src/lib/default-ruleset'
 import type { CellData, MapData } from '../src/lib/types'
 import type { CellEntity, Character } from '../src/lib/engine-types'
@@ -133,6 +133,46 @@ test('rest: fractional tunables cap the restore', () => {
   const meta = { ...ruleset.meta, restHpFrac: 0.5 }
   const r = restParty([char({ hp: 2 })], meta, undefined, () => 0.99)
   assert.equal(r.party[0].hp, 5)
+})
+
+test('FOE patrols: loop advance, contact position, dead flag', () => {
+  const m: MapData = {
+    id: 'm1', name: 'm1', playerX: 0, playerY: 0,
+    cells: {
+      '2,2': { base: 1, overlays: [], entities: [
+        { t: 'foe', enemy: 'enemy.ogre', count: 2, mode: 'loop', path: [{ x: 3, y: 2 }, { x: 3, y: 3 }] },
+      ] },
+    },
+  }
+  let flags: Record<string, boolean | number | string> = {}
+  assert.deepEqual(listFoes(m, flags)[0].pos, { x: 2, y: 2 })
+  flags = { ...flags, ...advanceFoes(m, flags) }
+  assert.deepEqual(listFoes(m, flags)[0].pos, { x: 3, y: 2 })
+  flags = { ...flags, ...advanceFoes(m, flags) }
+  flags = { ...flags, ...advanceFoes(m, flags) }
+  assert.deepEqual(listFoes(m, flags)[0].pos, { x: 2, y: 2 }, 'loop wraps home')
+
+  flags[foeFlagKey('m1', '2,2', 'dead')] = true
+  assert.equal(listFoes(m, flags)[0].dead, true)
+  const before = { ...flags }
+  assert.deepEqual(advanceFoes(m, flags), {}, 'dead FOEs do not move')
+  assert.deepEqual(flags, before)
+})
+
+test('FOE patrols: pingpong reverses at the ends', () => {
+  const m: MapData = {
+    id: 'm1', name: 'm1', playerX: 0, playerY: 0,
+    cells: {
+      '0,0': { base: 1, overlays: [], entities: [
+        { t: 'foe', enemy: 'enemy.slime', mode: 'pingpong', path: [{ x: 1, y: 0 }] },
+      ] },
+    },
+  }
+  let flags: Record<string, boolean | number | string> = {}
+  flags = { ...flags, ...advanceFoes(m, flags) }
+  assert.deepEqual(listFoes(m, flags)[0].pos, { x: 1, y: 0 })
+  flags = { ...flags, ...advanceFoes(m, flags) }
+  assert.deepEqual(listFoes(m, flags)[0].pos, { x: 0, y: 0 }, 'bounces back')
 })
 
 console.log(`\n${passed} passed`)

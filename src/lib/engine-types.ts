@@ -367,6 +367,18 @@ export type CellEntity =
       oncePerVisit?: boolean
     }
   | { t: 'partyStart' }
+  | {
+      /** FOE-style patrolling super-enemy: visible on the playfield, moves one
+       *  cell per player step along its route, fixed battle on contact. */
+      t: 'foe'
+      enemy: DefRef<EnemyDef>
+      count?: number
+      /** Route waypoints in map coordinates; the entity's own cell is the
+       *  implicit first point. Empty/absent = stands still. */
+      path?: { x: number; y: number }[]
+      /** loop: wraps to the start; pingpong: walks the route back and forth. */
+      mode?: 'loop' | 'pingpong'
+    }
   | { t: 'mapLink'; mapId: string; x: number; y: number; facing?: Facing }
   | { t: 'object'; object: ObjectInstance }
   | { t: 'event'; event: CellEvent }

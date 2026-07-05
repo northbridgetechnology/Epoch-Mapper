@@ -443,6 +443,7 @@ const ENTITY_ICONS: Record<CellEntity['t'], string> = {
   object: '📦',
   event: '⚡',
   trick: '🌀',
+  foe: '👹',
 }
 
 const ENTITY_LABELS: Record<CellEntity['t'], string> = {
@@ -452,6 +453,7 @@ const ENTITY_LABELS: Record<CellEntity['t'], string> = {
   object: 'Object',
   event: 'Event',
   trick: 'Trick Tile',
+  foe: 'FOE Patrol',
 }
 
 const TRICK_KIND_OPTS = [
@@ -471,6 +473,7 @@ function entitySummary(ent: CellEntity): string {
     case 'object': return `${ent.object.kind} "${ent.object.id}"`
     case 'event': return `${ent.event.trigger}: ${ent.event.id || '—'}`
     case 'trick': return TRICK_KIND_OPTS.find(o => o.value === ent.kind)?.label ?? ent.kind
+    case 'foe': return `${ent.enemy || '—'} ×${ent.count ?? 1} · ${(ent.path?.length ?? 0) + 1} waypoints`
   }
 }
 
@@ -493,7 +496,70 @@ function makeBlankEntity(t: CellEntity['t']): CellEntity {
       return { t: 'event', event: { id: `event_${_evSeq++}`, trigger: 'onEnter', effects: [] } }
     case 'trick':
       return { t: 'trick', kind: 'spinner' }
+    case 'foe':
+      return { t: 'foe', enemy: '', count: 1, path: [], mode: 'loop' }
   }
+}
+
+// ── FOE patrol editor ─────────────────────────────────────────────────────────
+
+function FoeEntityEditor({
+  entity,
+  ruleset,
+  onChange,
+}: {
+  entity: CellEntity & { t: 'foe' }
+  ruleset: Ruleset
+  onChange: (e: CellEntity) => void
+}) {
+  return (
+    <div className="space-y-3 pt-2">
+      <div>
+        <label className={LABEL}>Enemy</label>
+        <select value={entity.enemy} onChange={e => onChange({ ...entity, enemy: e.target.value })}
+          className={cn(INPUT, 'w-full')}>
+          <option value="">— pick enemy —</option>
+          {ruleset.enemies.map(en => <option key={en.id} value={en.id}>{en.icon} {en.name}</option>)}
+        </select>
+      </div>
+      <div className="flex gap-3">
+        <div>
+          <label className={LABEL}>Count</label>
+          <input type="number" min={1} max={6} value={entity.count ?? 1}
+            onChange={e => onChange({ ...entity, count: Math.max(1, Math.min(6, e.target.valueAsNumber || 1)) })}
+            className={cn(INPUT, 'w-16')} />
+        </div>
+        <div>
+          <label className={LABEL}>Route mode</label>
+          <select value={entity.mode ?? 'loop'}
+            onChange={e => onChange({ ...entity, mode: e.target.value as 'loop' | 'pingpong' })}
+            className={INPUT}>
+            <option value="loop">Loop</option>
+            <option value="pingpong">Ping-pong</option>
+          </select>
+        </div>
+      </div>
+      <div>
+        <label className={LABEL}>Route waypoints (x,y per line — this cell is the start)</label>
+        <textarea
+          rows={3}
+          value={(entity.path ?? []).map(p => `${p.x},${p.y}`).join('\n')}
+          onChange={e => {
+            const path = e.target.value.split('\n')
+              .map(line => line.split(',').map(n => Number(n.trim())))
+              .filter(([x, y]) => Number.isFinite(x) && Number.isFinite(y))
+              .map(([x, y]) => ({ x, y }))
+            onChange({ ...entity, path })
+          }}
+          placeholder={'12,5\n12,8\n9,8'}
+          className={cn(INPUT, 'w-full font-mono resize-none')}
+        />
+        <p className="text-[10px] text-white/30 mt-1">
+          Moves one waypoint per player step. Visible in-game; walking into it starts a fixed battle. Stays dead once defeated.
+        </p>
+      </div>
+    </div>
+  )
 }
 
 // ── Trick tile editor ─────────────────────────────────────────────────────────
@@ -1076,6 +1142,9 @@ export function CellInspector({ x, y, cell, maps, ruleset, onChange, onSubcubeCh
                 {ent.t === 'trick' && (
                   <TrickEntityEditor entity={ent} maps={maps} onChange={upd => updateEntity(idx, upd)} />
                 )}
+                {ent.t === 'foe' && (
+                  <FoeEntityEditor entity={ent} ruleset={ruleset} onChange={upd => updateEntity(idx, upd)} />
+                )}
                 {ent.t === 'object' && (
                   <ObjectEntityEditor entity={ent} ruleset={ruleset} onChange={upd => updateEntity(idx, upd)} />
                 )}
@@ -1102,7 +1171,7 @@ export function CellInspector({ x, y, cell, maps, ruleset, onChange, onSubcubeCh
 
         {showAddMenu && (
           <div className="px-2 pb-2 flex flex-col gap-0.5">
-            {(['encounter', 'partyStart', 'mapLink', 'object', 'event', 'trick'] as CellEntity['t'][]).map(t => (
+            {(['encounter', 'partyStart', 'mapLink', 'object', 'event', 'trick', 'foe'] as CellEntity['t'][]).map(t => (
               <button
                 key={t}
                 onClick={() => addEntity(t)}
