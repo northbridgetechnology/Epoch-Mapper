@@ -1463,29 +1463,31 @@ export function DungeonMapper({
     const world = config.generate ? buildGeneratedWorld(config.name, config, ruleset) : null
     const map = world ? world.map : buildBaseMap(config.name, config)
 
-    // Generated story content (NPCs, quest, events) joins the ruleset so the
-    // map's dialogue, levers, and journal entries work out of the box
-    if (world && (world.npcs.length || world.quests.length || world.events.length)) {
+    // Generated story content (NPCs, quest, events, items) joins the ruleset so
+    // the map's dialogue, levers, journal entries, and relics work out of the box
+    if (world && (world.npcs.length || world.quests.length || world.events.length || world.items.length)) {
       setRuleset(r => ({
         ...r,
         npcs: [...(r.npcs ?? []).filter(n => !world.npcs.some(w => w.id === n.id)), ...world.npcs],
         quests: [...(r.quests ?? []).filter(q => !world.quests.some(w => w.id === q.id)), ...world.quests],
         events: [...(r.events ?? []).filter(e => !world.events.some(w => w.id === e.id)), ...world.events],
+        items: [...r.items.filter(i => !world.items.some(w => w.id === i.id)), ...world.items],
       }))
     }
 
+    const generated = world ? [map, ...world.extraMaps] : [map]
     if (newMapMode === 'session') {
       historyRef.current = []
       setCanUndo(false)
       setGameTitle('')
       setRomHash('')
       setCustomMarkers([])
-      setMaps([map])
+      setMaps(generated)
       setActiveIdx(0)
     } else {
       setMaps(prev => {
-        const next = [...prev, map]
-        setActiveIdx(next.length - 1)
+        const next = [...prev, ...generated]
+        setActiveIdx(next.length - generated.length)
         return next
       })
     }

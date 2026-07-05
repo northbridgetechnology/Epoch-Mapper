@@ -47,7 +47,7 @@ test('vault puzzle: sealed doors requiring exactly the two lever flags', () => {
 })
 
 test('story content: quest, unseal event, and a placed hermit with lines', () => {
-  assert.equal(world.quests.length, 1)
+  assert.equal(world.quests.length, 2)   // vault + depths
   assert.equal(world.quests[0].stages.length, 3)
   assert.ok(world.events.some(e => e.trigger === 'onFlag'))
   const hermit = world.npcs.find(n => n.name === 'Old Hermit')
@@ -61,6 +61,63 @@ test('switches face into the room they are mounted on', () => {
   for (const b of Object.values(world.map.boundaries ?? {})) {
     if (b.switch) assert.ok(['N', 'S', 'E', 'W'].includes(b.switch.facing))
   }
+})
+
+test('showcase Depths: dark second level linked by stairs and pit', () => {
+  assert.equal(world.extraMaps.length, 1)
+  const depths = world.extraMaps[0]
+  assert.ok(depths.dark, 'depths must be a dark map')
+  assert.ok(depths.name.includes('Depths'))
+
+  // Stairs Down on the main map links to the Depths, and back
+  const mainLink = Object.values(world.map.cells).find(c =>
+    c.base === 5 /* STAIRS_DOWN */ && c.entities?.some(e => e.t === 'mapLink' && e.mapId === depths.id))
+  assert.ok(mainLink, 'stairs down not linked to depths')
+  const backLink = Object.values(depths.cells).find(c =>
+    c.base === 4 /* STAIRS_UP */ && c.entities?.some(e => e.t === 'mapLink' && e.mapId === world.map.id))
+  assert.ok(backLink, 'depths stairs up not linked back')
+
+  // A pit on the main map drops into the Depths
+  const pit = Object.values(world.map.cells).flatMap(c => c.entities ?? [])
+    .find(e => e.t === 'trick' && e.kind === 'pit')
+  assert.ok(pit && pit.t === 'trick' && pit.mapId === depths.id, 'pit missing or unlinked')
+})
+
+test('showcase Depths: tricks, FOE, fixed guard, save point, inscriptions', () => {
+  const depths = world.extraMaps[0]
+  const ents = Object.values(depths.cells).flatMap(c => c.entities ?? [])
+  const trickKinds = new Set(ents.filter(e => e.t === 'trick').map(e => (e as { kind: string }).kind))
+  for (const k of ['safeRoom', 'spinner', 'darkness', 'antiMagic']) {
+    assert.ok(trickKinds.has(k), `missing trick ${k}`)
+  }
+  assert.ok(ents.some(e => e.t === 'foe'), 'no FOE patrol')
+  assert.ok(ents.some(e => e.t === 'encounter' && e.mode === 'fixed'), 'no visible fixed encounter')
+  assert.ok(Object.values(depths.cells).some(c => c.overlays?.includes(12)), 'no save point in the depths')
+  const inscriptions = Object.values(depths.boundaries ?? {}).filter(b => b.inscription)
+  assert.ok(inscriptions.length >= 1, 'no inscriptions below')
+  assert.ok(Object.values(world.map.boundaries ?? {}).some(b => b.inscription), 'no inscriptions above')
+})
+
+test('showcase: relics, torchbearer, inn, and the gameEnd finale', () => {
+  assert.equal(world.items.length, 3)
+  const blade = world.items.find(i => i.cursed)
+  assert.ok(blade?.unidentifiedName, 'cursed blade must drop unidentified')
+  assert.ok(world.items.some(i => i.onUse?.some(e => e.t === 'teachSpell')), 'no teachSpell scroll')
+  assert.ok(world.items.some(i => i.onUse?.some(e => e.t === 'identify') && i.onUse?.some(e => e.t === 'removeCurse')), 'no censer')
+
+  const torchbearer = world.npcs.find(n => n.name === 'Torchbearer')
+  assert.ok(torchbearer, 'no torchbearer NPC')
+  assert.ok(torchbearer!.lines.some(l => l.effects?.some(e => e.t === 'giveItem' && e.item === 'item.torch')), 'torchbearer gives no torches')
+
+  assert.ok(Object.values(world.map.cells).some(c =>
+    c.entities?.some(e => e.t === 'object' && e.object.kind === 'inn')), 'no inn placed')
+
+  const depths = world.extraMaps[0]
+  const heart = Object.values(depths.cells).flatMap(c => c.entities ?? [])
+    .find(e => e.t === 'event' && e.event.effects.some(ef => ef.t === 'gameEnd'))
+  assert.ok(heart, 'no gameEnd finale in the depths')
+  const dq = world.quests.find(q => q.id.startsWith('q.depths'))
+  assert.ok(dq && dq.stages.length === 3, 'depths quest missing')
 })
 
 console.log(`\n${passed} passed`)

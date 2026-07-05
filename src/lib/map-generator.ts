@@ -6,16 +6,20 @@
 
 import { BASE, EDGE, OVERLAY, CHUNK_SIZE, boundaryKey } from './constants'
 import type { CellMap, MapData, EdgeDir, SubcubeObject, SubcubePos } from './types'
-import type { BoundaryData, CellEntity, EventDef, NpcDef, QuestDef, Ruleset } from './engine-types'
+import type { BoundaryData, CellEntity, EventDef, ItemDef, NpcDef, QuestDef, Ruleset } from './engine-types'
 import { uid } from './utils'
 
 /** Everything a generated map contributes: the map itself plus the ruleset
  *  content (NPCs, quest, events) that its story wiring references. */
 export interface GeneratedWorld {
   map: MapData
+  /** Additional levels (the dark Depths) linked from the main map. */
+  extraMaps: MapData[]
   npcs: NpcDef[]
   quests: QuestDef[]
   events: EventDef[]
+  /** Generated ruleset items the placed content references (cursed loot, scrolls). */
+  items: ItemDef[]
 }
 
 export type MapSize = 'small' | 'medium' | 'large'
@@ -274,10 +278,12 @@ export function buildGeneratedWorld(name: string, config: NewMapConfig, ruleset:
   // Boss room: boss overlay + stairs down nearby
   setOverlay(bossC.x, bossC.y, OVERLAY.BOSS)
   const stairsCandidates = [`${bossC.x + 1},${bossC.y}`, `${bossC.x - 1},${bossC.y}`, `${bossC.x},${bossC.y + 1}`]
+  let stairsDownKey: string | null = null
   for (const sk of stairsCandidates) {
     const sc = cells[sk]
     if (sc && !sc.overlays?.length) {
       cells[sk] = { ...sc, base: BASE.STAIRS_DOWN }
+      stairsDownKey = sk
       break
     }
   }
@@ -525,15 +531,358 @@ export function buildGeneratedWorld(name: string, config: NewMapConfig, ruleset:
     }
   }
 
+  // ── Showcase: the Depths — a dark second level wiring every engine system ───
+  // Dark map + torches, trick tiles, inscriptions, inn, safe room + save point,
+  // visible fixed encounter, FOE patrol, cursed/unidentified loot, teachSpell
+  // scroll, identify/removeCurse censer, a three-stage quest, and a gameEnd.
+  const items: ItemDef[] = []
+  const extraMaps: MapData[] = []
+  const mainMapId = uid()
+  {
+    const seedTag = config.seed >>> 0
+    const dRng = makePrng(config.seed + 7)
+    const dDim = SIZE_DIM.small
+    const depthsId = uid()
+
+    // Carve the Depths with its own BSP
+    const dRoot: BSPNode = { rect: { x: 1, y: 1, w: dDim - 2, h: dDim - 2 }, depth: 0 }
+    bspSplit(dRoot, dRng, 10)
+    const dLeaves = collectLeaves(dRoot)
+    for (const leaf of dLeaves) {
+      const { x, y, w, h } = leaf.rect
+      const maxRW = w - margin * 2
+      const maxRH = h - margin * 2
+      if (maxRW < 4 || maxRH < 4) continue
+      const rw = randInt(dRng, 4, maxRW)
+      const rh = randInt(dRng, 4, maxRH)
+      leaf.room = {
+        x: x + margin + randInt(dRng, 0, maxRW - rw),
+        y: y + margin + randInt(dRng, 0, maxRH - rh),
+        w: rw, h: rh,
+      }
+    }
+    const dCells: CellMap = {}
+    const dBounds: Record<string, BoundaryData> = {}
+    const dRoomCells = new Set<string>()
+    const dRooms = dLeaves.filter((l): l is LeafWithRoom => l.room != null)
+    for (const leaf of dRooms) carveRoom(leaf.room, dCells, dRoomCells)
+    connectTree(dRoot, dCells, dRng)
+    for (const key of Object.keys(dCells)) {
+      const [x, y] = key.split(',').map(Number)
+      for (const dir of DIRS) {
+        const [dx, dy] = DELTA[dir]
+        if (!dCells[`${x + dx},${y + dy}`]) {
+          const bk = boundaryKey(x, y, dir)
+          if (!dBounds[bk]) dBounds[bk] = { wall: EDGE.WALL }
+        }
+      }
+    }
+    const dAddEnt = (key: string, ent: CellEntity) => {
+      const c = dCells[key] ?? { base: BASE.FLOOR, overlays: [] }
+      dCells[key] = { ...c, entities: [...(c.entities ?? []), ent] }
+    }
+    const dAddSub = (key: string, kind: string, pos: SubcubePos) => {
+      const c = dCells[key]
+      if (!c) return
+      dCells[key] = { ...c, subcubeObjects: [...(c.subcubeObjects ?? []), { id: uid(), kind, pos }] }
+    }
+
+    // Anchor rooms: arrival (closest to centre), sanctum (farthest from arrival)
+    const dMid = dDim / 2
+    let dStartLeaf = dRooms[0]
+    let dMin = Infinity
+    for (const l of dRooms) {
+      const c = center(l.room); const d = dist2(c.x, c.y, dMid, dMid)
+      if (d < dMin) { dMin = d; dStartLeaf = l }
+    }
+    const dStart = center(dStartLeaf.room)
+    let dBossLeaf = dRooms.find(l => l !== dStartLeaf) ?? dRooms[0]
+    let dMax = 0
+    for (const l of dRooms) {
+      if (l === dStartLeaf) continue
+      const c = center(l.room); const d = dist2(c.x, c.y, dStart.x, dStart.y)
+      if (d > dMax) { dMax = d; dBossLeaf = l }
+    }
+    const dBoss = center(dBossLeaf.room)
+    const dSide = dRooms.filter(l => l !== dStartLeaf && l !== dBossLeaf)
+
+    // Zone encounters in the dark corridors (denser than upstairs)
+    if (encTableIds.length > 0) {
+      for (const key of Object.keys(dCells)) {
+        if (dRoomCells.has(key)) continue
+        if (dRng() > 0.25) continue
+        dAddEnt(key, { t: 'encounter', table: pickRandom(dRng, encTableIds), mode: 'zone', rate: 0.15 })
+      }
+    }
+
+    // ── The quest that threads the whole descent ──
+    const dqid = `q.depths_${seedTag}`
+    quests.push({
+      id: dqid, name: 'The Heart of the Depths', icon: '🖤',
+      description: 'Something old beats beneath the dungeon floor.',
+      stages: [
+        { id: 's1', description: 'A dark stair descends below the boss den. The Depths devour unlit travellers — carry fire.' },
+        { id: 's2', description: 'The Depths are real, and something patrols them. Find the sanctum where magic dies.' },
+        { id: 's3', description: 'The Heart of the Depths is claimed. Its story is over — and so is this one.' },
+      ],
+    })
+
+    // ── Stairs Down (main) ⇄ Stairs Up (Depths), plus a warning inscription ──
+    if (stairsDownKey) {
+      const [sx, sy] = stairsDownKey.split(',').map(Number)
+      const sc = cells[stairsDownKey]
+      if (sc) cells[stairsDownKey] = { ...sc, entities: [...(sc.entities ?? []), { t: 'mapLink', mapId: depthsId, x: dStart.x, y: dStart.y }] }
+      const stairSpots: { x: number; y: number; dir: EdgeDir }[] = []
+      for (const dir of DIRS) {
+        const [dx, dy] = DELTA[dir]
+        if (!cells[`${sx + dx},${sy + dy}`]) stairSpots.push({ x: sx, y: sy, dir })
+      }
+      if (stairSpots.length === 0) {
+        // Interior stairs cell — carve the warning into the boss room's edge instead
+        edge: for (let ry = bossLeaf.room.y; ry < bossLeaf.room.y + bossLeaf.room.h; ry++) {
+          for (let rx = bossLeaf.room.x; rx < bossLeaf.room.x + bossLeaf.room.w; rx++) {
+            for (const dir of DIRS) {
+              const [dx, dy] = DELTA[dir]
+              if (!cells[`${rx + dx},${ry + dy}`]) { stairSpots.push({ x: rx, y: ry, dir }); break edge }
+            }
+          }
+        }
+      }
+      if (stairSpots.length > 0) {
+        const spot = stairSpots[0]
+        const bk = boundaryKey(spot.x, spot.y, spot.dir)
+        boundaries[bk] = {
+          ...(boundaries[bk] ?? { wall: EDGE.WALL }),
+          inscription: { text: ['Below, the dark eats light.', 'Carry fire, or be carried.'], facing: OPP[spot.dir] },
+        }
+      }
+    }
+    const dStartKey = `${dStart.x},${dStart.y}`
+    const dsc = dCells[dStartKey] ?? { base: BASE.FLOOR, overlays: [] }
+    dCells[dStartKey] = { ...dsc, base: BASE.STAIRS_UP }
+    if (stairsDownKey) {
+      const [sx, sy] = stairsDownKey.split(',').map(Number)
+      dAddEnt(dStartKey, { t: 'mapLink', mapId: mainMapId, x: sx, y: sy })
+    }
+    // Descending advances the quest
+    dAddEnt(dStartKey, {
+      t: 'event',
+      event: { id: `${dqid}.descend`, name: 'Into the Depths', trigger: 'onEnter', once: true,
+        effects: [{ t: 'questStage', quest: dqid, stage: 2 }, { t: 'message', text: 'The air is wet stone and old hunger. Light matters here.' }] },
+    })
+
+    // ── Torchbearer NPC guards the stairs and hands out fire ──
+    const torchbearerId = `npc.torchbearer_${seedTag}`
+    npcs.push({
+      id: torchbearerId, name: 'Torchbearer', portrait: '🕯️', sprite: 'cr_guard',
+      description: 'Keeps the last lit brazier above the Depths.',
+      level: 4, attributes: {},
+      lines: [
+        { id: 'hail', text: ['Take light. The dark below is hungry.'], bark: true, once: true },
+        {
+          id: 'gift', once: true,
+          text: ['Here — my last torches. Do not waste them.', 'And mark the floor. Some stones are lies.'],
+          effects: [
+            { t: 'giveItem', item: 'item.torch', qty: 2 },
+            { t: 'giveItem', item: 'item.lantern', qty: 1 },
+            { t: 'questStage', quest: dqid, stage: 1 },
+          ],
+        },
+        { id: 'talk', priority: -1, text: ['The pit takes the careless faster than the stairs take the brave.'] },
+      ],
+    })
+    if (stairsDownKey) {
+      const [sx, sy] = stairsDownKey.split(',').map(Number)
+      for (const [nx, ny] of [[sx + 1, sy], [sx, sy + 1], [sx - 1, sy], [sx, sy - 1]] as const) {
+        const nk = `${nx},${ny}`
+        const nc = cells[nk]
+        if (nc && !nc.entities?.length && !nc.overlays?.length && (nc.base ?? 0) === BASE.FLOOR) {
+          cells[nk] = { ...nc, entities: [{ t: 'object', object: { kind: 'npc', id: uid(), npc: torchbearerId } }] }
+          break
+        }
+      }
+    }
+
+    // ── An inn near the start ("The Weary Lantern") ──
+    if (sideRooms.length > 0) {
+      let innLeaf = sideRooms[0]
+      let iMin = Infinity
+      for (const l of sideRooms) {
+        const c = center(l.room); const d = dist2(c.x, c.y, startC.x, startC.y)
+        if (d < iMin) { iMin = d; innLeaf = l }
+      }
+      const ic = center(innLeaf.room)
+      const ik = `${ic.x + (innLeaf.room.w > 2 ? 1 : 0)},${ic.y}`
+      const icell = cells[ik]
+      if (icell && !icell.entities?.length) {
+        cells[ik] = { ...icell, entities: [{ t: 'object', object: { kind: 'inn', id: uid(), price: 20 } }] }
+        addSubcube(ik, 'banner', { x: side(), y: 1, z: 2 })
+      }
+    }
+
+    // ── A hidden pit on the main map drops into the Depths ──
+    const corridorKeys = Object.keys(cells).filter(k => {
+      if (roomCells.has(k)) return false
+      const c = cells[k]
+      if (c.entities?.length || c.overlays?.length || (c.base ?? 0) !== BASE.FLOOR) return false
+      const [x, y] = k.split(',').map(Number)
+      return dist2(x, y, startC.x, startC.y) > 36
+    })
+    if (corridorKeys.length > 0) {
+      const pk = corridorKeys[Math.floor(rng() * corridorKeys.length)]
+      const pc = cells[pk]
+      cells[pk] = { ...pc, entities: [...(pc.entities ?? []), { t: 'trick', kind: 'pit', damage: '1d6', mapId: depthsId, x: dStart.x, y: dStart.y }] }
+      const [px2, py2] = pk.split(',').map(Number)
+      for (const dir of DIRS) {
+        const [dx, dy] = DELTA[dir]
+        if (!cells[`${px2 + dx},${py2 + dy}`]) {
+          const bk = boundaryKey(px2, py2, dir)
+          boundaries[bk] = {
+            ...(boundaries[bk] ?? { wall: EDGE.WALL }),
+            inscription: { text: ['Watch thy step.'] },
+          }
+          break
+        }
+      }
+    }
+
+    // ── Depths tricks: safe room, spinner, darkness zone, silent teleport ──
+    if (dSide.length > 0) {
+      let safeLeaf = dSide[0]
+      let sMin = Infinity
+      for (const l of dSide) {
+        const c = center(l.room); const d = dist2(c.x, c.y, dStart.x, dStart.y)
+        if (d < sMin) { sMin = d; safeLeaf = l }
+      }
+      const scr = center(safeLeaf.room)
+      const sk2 = `${scr.x},${scr.y}`
+      dAddEnt(sk2, { t: 'trick', kind: 'safeRoom' })
+      const scc = dCells[sk2]
+      if (scc) dCells[sk2] = { ...scc, overlays: [OVERLAY.SAVE_POINT] }
+      dAddSub(sk2, 'torch', { x: 0, y: 1, z: 2 })
+      dAddSub(sk2, 'torch', { x: 2, y: 1, z: 2 })
+      dAddSub(`${scr.x},${scr.y + 1}`, 'bones', { x: 1, y: 0, z: 1 })
+    }
+    const dCorridors = Object.keys(dCells).filter(k => !dRoomCells.has(k) && !dCells[k].entities?.length)
+    if (dCorridors.length >= 3) {
+      const spinK = dCorridors[Math.floor(dRng() * dCorridors.length)]
+      dAddEnt(spinK, { t: 'trick', kind: 'spinner', rotate: 'random' })
+      const darkK = dCorridors[Math.floor(dRng() * dCorridors.length)]
+      if (darkK !== spinK) dAddEnt(darkK, { t: 'trick', kind: 'darkness' })
+      const tpK = dCorridors[Math.floor(dRng() * dCorridors.length)]
+      if (tpK !== spinK && tpK !== darkK) {
+        dAddEnt(tpK, { t: 'trick', kind: 'silentTeleport', x: dStart.x, y: dStart.y })
+      }
+    }
+
+    // ── FOE patrol pacing the widest Depths room ──
+    const foeRoom = [...dRooms].sort((a, b) => b.room.w - a.room.w)[0]
+    if (foeRoom && foeRoom.room.w >= 5) {
+      const r = foeRoom.room
+      const rowY = center(r).y
+      const path = Array.from({ length: r.w - 2 }, (_, i) => ({ x: r.x + 1 + i, y: rowY })).slice(1)
+      const foeDef = [...ruleset.enemies].sort((a, b) => b.hp - a.hp)[0]
+      if (foeDef && path.length >= 1) {
+        dAddEnt(`${r.x + 1},${rowY}`, { t: 'foe', enemy: foeDef.id, count: 1, mode: 'pingpong', path })
+      }
+    }
+
+    // ── Sanctum: anti-magic, inscription, visible guardians, the Heart ──
+    const dBossKey = `${dBoss.x},${dBoss.y}`
+    dAddEnt(dBossKey, { t: 'trick', kind: 'antiMagic' })
+    // Carve the warning into the first wall face found along the sanctum's edge
+    sanctum: for (let ry = dBossLeaf.room.y; ry < dBossLeaf.room.y + dBossLeaf.room.h; ry++) {
+      for (let rx = dBossLeaf.room.x; rx < dBossLeaf.room.x + dBossLeaf.room.w; rx++) {
+        for (const dir of DIRS) {
+          const [dx, dy] = DELTA[dir]
+          if (!dCells[`${rx + dx},${ry + dy}`]) {
+            const bk = boundaryKey(rx, ry, dir)
+            dBounds[bk] = {
+              ...(dBounds[bk] ?? { wall: EDGE.WALL }),
+              inscription: { text: ['Here, magic dies.', 'Only steel and breath remain.'], facing: OPP[dir] },
+            }
+            break sanctum
+          }
+        }
+      }
+    }
+    if (encTableIds.length > 0) {
+      const guardK = `${dBoss.x},${dBoss.y - 1}`
+      if (dCells[guardK]) dAddEnt(guardK, { t: 'encounter', table: pickRandom(dRng, encTableIds), mode: 'fixed', oncePerVisit: true })
+    }
+    dAddSub(dBossKey, 'altar', { x: 1, y: 0, z: 2 })
+    dAddSub(`${dBoss.x - 1},${dBoss.y}`, 'chains', { x: 0, y: 1, z: 1 })
+
+    // Generated relics referenced by the Heart cache
+    const bladeId = `item.gen.blade_${seedTag}`
+    const scrollId = `item.gen.scroll_${seedTag}`
+    const censerId = `item.gen.censer_${seedTag}`
+    const taughtSpell = ruleset.spells.find(s => s.inCombat) ?? ruleset.spells[0]
+    items.push(
+      {
+        id: bladeId, name: 'Heartsbane Blade', icon: '🗡️', color: '#7c3aed',
+        description: 'A blade that drinks. It does not let go.', kind: 'weapon',
+        slot: 'weapon', weaponKind: 'sword', value: 400, stackable: false,
+        unidentifiedName: '?Blade', cursed: true,
+        modifiers: [{ target: 'derived', key: 'attack', op: 'add', amount: 8 }],
+      },
+      {
+        id: scrollId, name: taughtSpell ? `Scroll of ${taughtSpell.name}` : 'Faded Scroll', icon: '📜', color: '#eab308',
+        description: 'Knowledge pressed into vellum. Read once, kept forever.', kind: 'consumable',
+        value: 250, stackable: true, unidentifiedName: '?Scroll',
+        onUse: taughtSpell ? [{ t: 'teachSpell', spell: taughtSpell.id }] : [],
+      },
+      {
+        id: censerId, name: 'Censer of Clarity', icon: '🕯️', color: '#f5f6fa',
+        description: 'Smoke that names all things and loosens every grip.', kind: 'consumable',
+        value: 300, stackable: true,
+        onUse: [{ t: 'identify' }, { t: 'removeCurse' }],
+      },
+    )
+
+    // The Heart: interact on the altar cell to claim everything and roll credits
+    const heartK = `${dBoss.x + 1},${dBoss.y}`
+    const heartCell = dCells[heartK] ? heartK : dBossKey
+    dAddEnt(heartCell, {
+      t: 'event',
+      event: {
+        id: `${dqid}.heart`, name: 'Claim the Heart', trigger: 'onInteract', once: true,
+        conditions: [{ c: 'questStage', quest: dqid, min: 2 }],
+        effects: [
+          { t: 'message', text: 'The Heart of the Depths comes free with a sound like a held breath released.' },
+          { t: 'giveItem', item: bladeId, qty: 1 },
+          { t: 'giveItem', item: scrollId, qty: 1 },
+          { t: 'giveItem', item: censerId, qty: 1 },
+          { t: 'gold', amount: 500 },
+          { t: 'questStage', quest: dqid, stage: 3 },
+          { t: 'gameEnd', text: 'The Heart is claimed and the Depths fall quiet.\n\nThe halls above will fill with new wanderers, new levers, new lies carved in stone.\n\nBut that is another dungeon.' },
+        ],
+      },
+    })
+    dAddEnt(heartCell, { t: 'object', object: { kind: 'chest', id: uid(), ...(lootIds.length > 0 ? { loot: pickRandom(dRng, lootIds) } : {}) } })
+
+    extraMaps.push({
+      id: depthsId, name: `${name} — Depths`,
+      cells: dCells, boundaries: dBounds,
+      playerX: dStart.x, playerY: dStart.y,
+      revealedChunks: allChunkKeys(dDim),
+      seed: config.seed + 7,
+      dark: true,
+    })
+  }
+
   return {
     map: {
-      id: uid(), name, cells, boundaries,
+      id: mainMapId, name, cells, boundaries,
       playerX: startC.x, playerY: startC.y,
       revealedChunks: allChunkKeys(dim),
       seed: config.seed,
     },
+    extraMaps,
     npcs,
     quests,
     events,
+    items,
   }
 }
+
