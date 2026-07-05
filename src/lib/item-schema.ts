@@ -47,6 +47,8 @@ export const ITEM_SCHEMA: FieldSchema[] = [
   { key: 'stackable', label: 'Stackable',   type: 'boolean' },
   { key: 'twoHanded', label: 'Two-Handed',  type: 'boolean', optional: true },
   { key: 'charges',   label: 'Charges (wands/staves)', type: 'number', min: 1, optional: true },
+  { key: 'lightRadius', label: 'Light Radius (cells, dark maps)', type: 'number', min: 1, optional: true },
+  { key: 'burnSteps',   label: 'Burn Steps (light source expires)', type: 'number', min: 1, optional: true },
 ]
 
 export const LOOT_TABLE_SCHEMA: FieldSchema[] = [

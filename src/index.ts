@@ -152,7 +152,11 @@ export { applyEffectToChar, applyConsumable } from './lib/apply-effects'
 
 // Encounter engine (Phase E3)
 export { resolveEncounterTable, checkCellForEncounter, visitedFlagKey } from './lib/encounter-engine'
-export type { ResolvedEncounter, EnemyInstance, CellEntity, ObjectInstance, Condition, CellEvent, BoundaryData, DoorDef, DoorState, Facing, SwitchDef, EventDef, NpcDef, NpcLine, QuestDef, QuestStage } from './lib/engine-types'
+
+// Exploration mechanics: trick tiles + party light (dark maps)
+export { applyMoveTricks, getTricks, cellHasTrick, computeLightRadius, tickLightBurn, DARK_BASE_RADIUS } from './lib/exploration'
+export type { TrickMoveResult } from './lib/exploration'
+export type { ResolvedEncounter, EnemyInstance, CellEntity, ObjectInstance, Condition, CellEvent, BoundaryData, DoorDef, DoorState, Facing, SwitchDef, InscriptionDef, TrickKind, EventDef, NpcDef, NpcLine, QuestDef, QuestStage } from './lib/engine-types'
 
 // Encounter modal (Phase E3)
 export { EncounterModal } from './components/EncounterModal'

@@ -13,6 +13,12 @@ const ENTITY_ICONS: Record<CellEntity['t'], string> = {
   mapLink: '🚪',
   object: '📦',
   event: '⚡',
+  trick: '🌀',
+}
+
+const TRICK_LABELS: Record<string, string> = {
+  spinner: 'Spinner', pit: 'Pit', silentTeleport: 'Silent Teleport',
+  antiMagic: 'Anti-Magic Zone', darkness: 'Darkness Zone', safeRoom: 'Safe Room',
 }
 
 function entityLabel(ent: CellEntity): string {
@@ -22,6 +28,7 @@ function entityLabel(ent: CellEntity): string {
     case 'mapLink': return 'Map Link'
     case 'object': return ent.object.kind.charAt(0).toUpperCase() + ent.object.kind.slice(1)
     case 'event': return `Event (${ent.event.trigger})`
+    case 'trick': return TRICK_LABELS[ent.kind] ?? 'Trick'
   }
 }
 

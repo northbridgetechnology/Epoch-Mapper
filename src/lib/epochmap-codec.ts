@@ -263,8 +263,11 @@ export function serializeDotEpochmap(file: EpochmapFile): Uint8Array {
     ruleset?: Ruleset
     mapEntities?: Array<Record<string, CellEntity[]>>
     mapBoundaries?: Array<Record<string, BoundaryData>>
+    mapMeta?: Array<{ theme?: string; dark?: boolean; seed?: number }>
   } = {}
   if (file.ruleset) v2ext.ruleset = file.ruleset
+  const mapMeta = maps.map(m => ({ theme: m.theme, dark: m.dark, seed: m.seed }))
+  if (mapMeta.some(m => m.theme !== undefined || m.dark !== undefined || m.seed !== undefined)) v2ext.mapMeta = mapMeta
   const mapEntities: Array<Record<string, CellEntity[]>> = maps.map(map => {
     const ent: Record<string, CellEntity[]> = {}
     for (const [key, cell] of Object.entries(map.cells)) {
@@ -405,8 +408,18 @@ export function parseDotEpochmap(buffer: ArrayBuffer | Uint8Array): EpochmapFile
           ruleset?: Ruleset
           mapEntities?: Array<Record<string, CellEntity[]>>
           mapBoundaries?: Array<Record<string, BoundaryData>>
+          mapMeta?: Array<{ theme?: string; dark?: boolean; seed?: number }>
         }
         if (ext.ruleset) result.ruleset = ext.ruleset
+        if (ext.mapMeta) {
+          ext.mapMeta.forEach((meta, mi) => {
+            const map = maps[mi]
+            if (!map || !meta) return
+            if (meta.theme !== undefined) map.theme = meta.theme
+            if (meta.dark !== undefined) map.dark = meta.dark
+            if (meta.seed !== undefined) map.seed = meta.seed
+          })
+        }
         if (ext.mapEntities) {
           ext.mapEntities.forEach((mapEnt, mi) => {
             const map = maps[mi]

@@ -8,6 +8,7 @@ import type { CellData, MapData, MarkerDef, EdgeDir } from '@/lib/types'
 import { getTheme, type MapThemeDef } from '@/lib/themes'
 import { getSubcubeDef } from '@/lib/subcube-defs'
 import { pixelSprite, pixelSpriteRect, spriteAspect, creatureSprite } from '@/lib/pixel-sprites'
+import { computeLightRadius, cellHasTrick } from '@/lib/exploration'
 import type { BoundaryData, CellEntity, Character, Facing, ItemInstance, Ruleset } from '@/lib/engine-types'
 import { objectUsedFlagKey, effectiveDoorState } from '@/lib/event-engine'
 import type { BattleViewState } from '@/lib/battle-scene'
@@ -268,15 +269,23 @@ interface FirstPersonViewProps {
   flags: Record<string, boolean | number | string>
   battle?: BattleViewState | null
   ruleset?: Ruleset
+  /** View distance in cells (dark maps). Absent = unlimited (lit map). */
+  lightRadius?: number
 }
 
-function FirstPersonView({ map, facing, isCellRevealed, revealedBoundaries, flags, battle, ruleset }: FirstPersonViewProps) {
+function FirstPersonView({ map, facing, isCellRevealed, revealedBoundaries, flags, battle, ruleset, lightRadius }: FirstPersonViewProps) {
   const [fd0, fd1] = facingDelta(facing)
   const [rd0, rd1] = rightDelta(facing)
   const px = map.playerX
   const py = map.playerY
   const theme = getTheme(map.theme)
   const pal = makeFpPalette(theme)
+
+  // Light: on dark maps the world fades to black beyond the party's light
+  // radius. lightExtra ramps 0 → 0.55 at the radius edge → 1 one cell beyond.
+  const viewD = lightRadius === undefined ? MAX_D : Math.max(1, Math.min(MAX_D, Math.floor(lightRadius)))
+  const lightExtra = (dd: number) => viewD >= MAX_D ? 0 : Math.max(0, Math.min(1, (dd - viewD + 1) * 0.55))
+  const fogAt = (dd: number) => Math.min(1, depthFog(dd) + lightExtra(dd))
 
   function cellAt(ahead: number, side: number): [number, number] {
     return [px + fd0 * ahead + rd0 * side, py + fd1 * ahead + rd1 * side]
@@ -311,8 +320,44 @@ function FirstPersonView({ map, facing, isCellRevealed, revealedBoundaries, flag
     const size = Math.max(8, Math.min(fw * 0.16, fh * 0.24))
     const spr = pixelSprite(on ? 'lever_on' : 'lever_off',
       near.x1 + fw / 2, near.y1 + fh * 0.52, size,
-      `swl_${d}_${s}`, Math.max(0.3, 1 - depthFog(d)))
+      `swl_${d}_${s}`, Math.max(0.3, 1 - fogAt(d)))
     if (spr) nodes.push(spr)
+  }
+
+  // ── Wall inscription plaque ──────────────────────────────────────────────────
+  // A carved stone tablet on the wall face when the boundary carries an
+  // inscription readable from this side (facing rules match switches).
+  function drawWallInscription(
+    ncx: number, ncy: number,
+    near: { x1: number; y1: number; x2: number; y2: number },
+    d: number, s: number,
+  ) {
+    const insc = map.boundaries?.[boundaryKey(ncx, ncy, frontOf(facing))]?.inscription
+    if (!insc) return
+    if (insc.facing && insc.facing !== OPP_DIR[facing as unknown as EdgeDir]) return
+    const fw = near.x2 - near.x1
+    const fh = near.y2 - near.y1
+    const pw = fw * 0.42, ph = fh * 0.30
+    const pxx = near.x1 + (fw - pw) / 2
+    const pyy = near.y1 + fh * 0.26
+    const op = Math.max(0.15, 1 - fogAt(d))
+    const lines = Math.min(4, Math.max(2, insc.text.join(' ').length > 40 ? 4 : 3))
+    const lineNodes: React.ReactNode[] = []
+    for (let li = 0; li < lines; li++) {
+      const ly = pyy + ph * (0.25 + (li * 0.55) / lines)
+      const inset = li === lines - 1 ? 0.30 : 0.14   // last line shorter, like real epitaphs
+      lineNodes.push(<line key={li} x1={pxx + pw * inset} y1={ly} x2={pxx + pw * (1 - inset)} y2={ly}
+        stroke="rgba(0,0,0,0.55)" strokeWidth={Math.max(0.8, ph * 0.06)} />)
+    }
+    nodes.push(
+      <g key={`insc_${d}_${s}`} opacity={op}>
+        <rect x={pxx - fw * 0.015} y={pyy - fh * 0.015} width={pw + fw * 0.03} height={ph + fh * 0.03}
+          rx={2} fill="rgba(0,0,0,0.35)" />
+        <rect x={pxx} y={pyy} width={pw} height={ph} rx={1.5} fill={pal.frontWall(Math.max(1, d - 1))} />
+        <rect x={pxx} y={pyy} width={pw} height={ph * 0.12} fill="rgba(255,255,255,0.08)" />
+        {lineNodes}
+      </g>,
+    )
   }
 
   // ── 1. Ceiling base ──────────────────────────────────────────────────────────
@@ -326,6 +371,7 @@ function FirstPersonView({ map, facing, isCellRevealed, revealedBoundaries, flag
     if (y1 <= y0) continue
     nodes.push(
       <rect key={`cb${d}`} x={0} y={y0} width={VW} height={y1 - y0} fill={pal.ceilBand(d + 1)} />,
+      lightExtra(d) > 0 && <rect key={`cbl${d}`} x={0} y={y0} width={VW} height={y1 - y0} fill={`rgba(0,0,0,${lightExtra(d)})`} />,
     )
   }
 
@@ -372,6 +418,7 @@ function FirstPersonView({ map, facing, isCellRevealed, revealedBoundaries, flag
     if (y1 <= y0) continue
     nodes.push(
       <rect key={`fb${d}`} x={0} y={y0} width={VW} height={y1 - y0} fill={pal.floorBand(d)} />,
+      lightExtra(d) > 0 && <rect key={`fbl${d}`} x={0} y={y0} width={VW} height={y1 - y0} fill={`rgba(0,0,0,${lightExtra(d)})`} />,
     )
   }
 
@@ -407,7 +454,7 @@ function FirstPersonView({ map, facing, isCellRevealed, revealedBoundaries, flag
     for (const s of lateralOrder) {
       const near = cellFaceRect(d - 1, s)
       const far  = cellFaceRect(d,     s)
-      const fog  = depthFog(d)
+      const fog  = fogAt(d)
       const fw = near.x2 - near.x1
       const fh = near.y2 - near.y1
 
@@ -429,6 +476,7 @@ function FirstPersonView({ map, facing, isCellRevealed, revealedBoundaries, flag
           fog > 0 && <rect key={`fwf_${d}_${s}`} x={near.x1} y={near.y1} width={fw} height={fh} fill={`rgba(0,0,0,${fog})`} />,
         )
         drawWallSwitch(ncx, ncy, near, d, s)
+        drawWallInscription(ncx, ncy, near, d, s)
         continue
       }
 
@@ -576,7 +624,7 @@ function FirstPersonView({ map, facing, isCellRevealed, revealedBoundaries, flag
       // Cell contents — entities first, then volume objects; the near boundary
       // (door/wall) is painted after so closed doors hide the room behind them
       const entGroup: React.ReactNode[] = []
-      drawCellEntities(d, s, entGroup)
+      if (d <= viewD) drawCellEntities(d, s, entGroup)
       if (entGroup.length > 0) nodes.push(<g key={`ce_${d}_${s}`}>{entGroup}</g>)
 
       // Sub-cube dressing at true perspective depth. The camera sits at the
@@ -584,7 +632,7 @@ function FirstPersonView({ map, facing, isCellRevealed, revealedBoundaries, flag
       // cell d is z = d + zFrac cells out — including the player's own cell,
       // where anything level with or behind the camera (z < 0.5) is culled.
       {
-        const scObjs = map.cells[`${cx},${cy}`]?.subcubeObjects
+        const scObjs = d <= viewD ? map.cells[`${cx},${cy}`]?.subcubeObjects : undefined
         if (scObjs && scObjs.length > 0) {
           const sorted = [...scObjs].sort((a, b) => {
             const za = subcubeScreenFracs(a.pos, facing).zFrac
@@ -677,6 +725,7 @@ function FirstPersonView({ map, facing, isCellRevealed, revealedBoundaries, flag
           fog > 0 && <rect key={`bwf_${d}_${s}`} x={near.x1} y={near.y1} width={fw} height={fh} fill={`rgba(0,0,0,${fog})`} />,
         )
         drawWallSwitch(ncx, ncy, near, d, s)
+        drawWallInscription(ncx, ncy, near, d, s)
       } else if (isDoor && doorEff === 'open') {
         const jamb = fw * 0.10, lintel = fh * 0.08, thresh = fh * 0.04
         nodes.push(
@@ -1172,6 +1221,12 @@ export function PlayWorkspace({
 
   const px = activeMap.playerX; const py = activeMap.playerY
 
+  // Dark maps (or local darkness zones) limit view to the party's light
+  const playerCell = activeMap.cells[`${px},${py}`]
+  const lightRadius = (activeMap.dark || cellHasTrick(playerCell, 'darkness'))
+    ? computeLightRadius(party, ruleset, playerCell)
+    : undefined
+
   return (
     <div className="flex flex-col h-full min-h-0">
 
@@ -1225,6 +1280,7 @@ export function PlayWorkspace({
             flags={flags}
             battle={battleView}
             ruleset={ruleset}
+            lightRadius={lightRadius}
           />
           {combat && <BattleOutcomeOverlay state={combat} ruleset={ruleset} onContinue={onCombatEnd} />}
           {showJournal && <JournalOverlay ruleset={ruleset} flags={flags} onClose={() => setShowJournal(false)} />}

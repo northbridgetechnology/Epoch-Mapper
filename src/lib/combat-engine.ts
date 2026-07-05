@@ -79,6 +79,8 @@ export interface CombatState {
   drops: { item: string; qty: number }[]
   /** Battle round (1-based); advances when the turn order wraps around. */
   round: number
+  /** Battle takes place in an anti-magic zone: party casting is disabled. */
+  antiMagic?: boolean
 }
 
 // ── Seeded RNG (mulberry32) ───────────────────────────────────────────────────
@@ -442,6 +444,8 @@ export interface InitCombatOpts {
   formation?: Formation
   /** Used for enemy size lookup (large enemies straddle both ranks) */
   ruleset?: Ruleset
+  /** The encounter cell is an anti-magic zone: spells cannot be cast. */
+  antiMagic?: boolean
 }
 
 export function initCombat(
@@ -519,6 +523,7 @@ export function initCombat(
     eventSeq: 0,
     drops: [],
     round: 1,
+    antiMagic: opts?.antiMagic || undefined,
   }
 }
 
@@ -578,6 +583,15 @@ export function resolvePlayerCast(
 ): CombatState {
   const caster = state.actors[state.turnIdx]
   if (!caster || !caster.alive) return state
+
+  if (state.antiMagic) {
+    return {
+      ...state,
+      eventSeq: state.eventSeq + 1,
+      events: [{ target: state.turnIdx, kind: 'miss' }],
+      log: [...state.log, { text: 'The magic fizzles — the anti-magic field devours the spell.', kind: 'info' }],
+    }
+  }
 
   const spell = ruleset.spells.find(s => s.id === spellId)
   if (!spell || caster.mp < spell.mpCost) return state

@@ -109,6 +109,11 @@ export interface ItemDef extends Definition {
   stackable: boolean
   twoHanded?: boolean
   charges?: number
+  /** Light shed while equipped (view distance in cells on dark maps). */
+  lightRadius?: number
+  /** Optional burn-down: the item is consumed after this many steps of being
+   *  equipped (classic torch pressure). Absent = burns forever. */
+  burnSteps?: number
 }
 
 export interface SpellDef extends Definition {
@@ -323,7 +328,24 @@ export interface CellEvent {
  * Entities placed on a map cell by the author.
  * Stored in CellData.entities[]. Evaluated by the engine on step.
  */
+/** Classic dungeon trick tiles — invisible cell mechanics applied on entry
+ *  (or, for the zone kinds, while standing on the cell). */
+export type TrickKind = 'spinner' | 'pit' | 'silentTeleport' | 'antiMagic' | 'darkness' | 'safeRoom'
+
 export type CellEntity =
+  | {
+      t: 'trick'
+      kind: TrickKind
+      /** spinner: how the party is rotated on entry (default 'random'). */
+      rotate?: 'random' | 'left' | 'right' | 'reverse'
+      /** pit: fall damage dice rolled once and applied to each party member. */
+      damage?: Dice
+      /** pit / silentTeleport destination. Pit default: next map in the session
+       *  at the same coordinates. silentTeleport default map: the current map. */
+      mapId?: string
+      x?: number
+      y?: number
+    }
   | {
       t: 'encounter'
       table: DefRef<EncounterTableDef>
@@ -493,12 +515,24 @@ export interface SwitchDef {
  * Data stored on the "line" between two adjacent cells (canonical key from boundaryKey()).
  * Replaces the old per-cell `edges` record.
  */
+/** Text carved into one face of a wall — the EotB storytelling staple.
+ *  Read by interacting while facing the wall from the mounted side. */
+export interface InscriptionDef {
+  /** Pages of text, advanced one at a time. */
+  text: string[]
+  /** Compass direction the inscribed face points (same convention as
+   *  SwitchDef.facing). Absent = readable from both sides. */
+  facing?: import('./types').EdgeDir
+}
+
 export interface BoundaryData {
   /** Visual wall type ID matching EDGE_TYPES (0=standard wall, 1=locked-door, etc). */
   wall?: number
   door?: DoorDef
   /** Wall-mounted lever (see SwitchDef). */
   switch?: SwitchDef
+  /** Text carved into the wall face (see InscriptionDef). */
+  inscription?: InscriptionDef
   secret?: boolean
   revealFlag?: string
   blocked?: boolean

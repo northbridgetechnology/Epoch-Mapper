@@ -106,6 +106,7 @@ export function useBattleController({ combat, ruleset, party, inventory, onActio
 
   const castableSpells = useMemo<SpellDef[]>(() => {
     if (!combat || !currentActor || currentActor.kind !== 'party') return []
+    if (combat.antiMagic) return []   // anti-magic zone: Spell command is dead
     const char = party[currentActor.idx]
     if (!char) return []
     return (char.knownSpells ?? [])
@@ -326,7 +327,8 @@ export function BattleHud({
             <MenuButton icon={<Swords className="w-3.5 h-3.5" />} label="Attack" onClick={onAttack} />
             <MenuButton icon={<Wand2 className="w-3.5 h-3.5" />} label="Spell"
               onClick={onOpenSpells} disabled={castableSpells.length === 0}
-              title={castableSpells.length === 0 ? 'No combat spells known' : undefined} />
+              title={combat.antiMagic ? 'An anti-magic field smothers all spellcraft here'
+                : castableSpells.length === 0 ? 'No combat spells known' : undefined} />
             <MenuButton icon={<FlaskConical className="w-3.5 h-3.5" />} label="Item"
               onClick={onOpenItems} disabled={usableItems.length === 0}
               title={usableItems.length === 0 ? 'No usable items' : undefined} />

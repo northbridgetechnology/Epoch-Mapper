@@ -560,6 +560,17 @@ export const DEFAULT_SPELLS: SpellDef[] = [
 // ── Items ──────────────────────────────────────────────────────────────────────
 
 export const DEFAULT_ITEMS: ItemDef[] = [
+  // ── Light sources (dark maps) ──────────────────────────────────────────────────
+  {
+    id: 'item.torch', name: 'Torch', icon: '🔥', color: '#ff9f43',
+    description: 'A pitch-soaked brand. Sheds light 3 cells ahead while held.', kind: 'misc',
+    slot: 'offhand', value: 10, stackable: false, lightRadius: 3,
+  },
+  {
+    id: 'item.lantern', name: 'Lantern', icon: '🏮', color: '#feca57',
+    description: 'A hooded oil lantern. Sheds steady light 4 cells ahead while held.', kind: 'misc',
+    slot: 'offhand', value: 60, stackable: false, lightRadius: 4,
+  },
   // ── Consumables ────────────────────────────────────────────────────────────────
   {
     id: 'item.medicine', name: 'Medicine', icon: '💊', color: '#dfe6e9',

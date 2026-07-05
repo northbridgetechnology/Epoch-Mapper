@@ -25,12 +25,13 @@ import { PartyWorkspace } from './workspaces/PartyWorkspace'
 import { DatabaseWorkspace } from './workspaces/DatabaseWorkspace'
 import { PlayWorkspace } from './workspaces/PlayWorkspace'
 import { SettingsWorkspace } from './workspaces/SettingsWorkspace'
-import type { BoundaryData, Character, CellEntity, DoorDef, DoorState, Facing, Formation, ItemInstance, ResolvedEncounter, Ruleset, SwitchDef } from '@/lib/engine-types'
+import type { BoundaryData, Character, CellEntity, DoorDef, DoorState, Facing, Formation, ItemInstance, ResolvedEncounter, InscriptionDef, Ruleset, SwitchDef } from '@/lib/engine-types'
 import { makeDefaultRuleset, normalizeRuleset } from '@/lib/default-ruleset'
 import { savePartyTemplate, loadPartyTemplate } from '@/lib/save-state'
 import { checkCellForEncounter, resolveEncounterTable, visitedFlagKey } from '@/lib/encounter-engine'
 import { EncounterModal } from './EncounterModal'
 import { DialogueOverlay } from './DialogueOverlay'
+import { applyMoveTricks, cellHasTrick, tickLightBurn } from '@/lib/exploration'
 import { initCombat, applyCombatOutcome, consumeCombatItems, type CombatState } from '@/lib/combat-engine'
 import { CellInspector } from './CellInspector'
 import { usePanelWidth } from './ui/ResizablePanel'
@@ -237,6 +238,9 @@ export function DungeonMapper({
   const [dialogue, setDialogue] = useState<{ npcId: string; lineId: string } | null>(null)
   const dialogueRef = useRef<typeof dialogue>(null)
   dialogueRef.current = dialogue
+  const [inscription, setInscription] = useState<string[] | null>(null)
+  const inscriptionRef = useRef<typeof inscription>(null)
+  inscriptionRef.current = inscription
   // Barks fire once per session per line (heard-flags handle 'once' lines)
   const sessionBarksRef = useRef<Set<string>>(new Set())
 
@@ -564,11 +568,43 @@ export function DungeonMapper({
       updateActiveMap((m) => ({ playerX: nx, playerY: ny, revealedChunks: revealAround(m, nx, ny) }))
       setCameraOffset({ x: 0, y: 0 })
 
+      // Burn-down light sources tick once per step (torches with burnSteps)
+      const burn = tickLightBurn(party, ruleset)
+      if (burn.party !== party) setParty(burn.party)
+      burn.messages.forEach(m => toast(m))
+
       const cellKey = `${nx},${ny}`
       const cell = activeMap.cells[cellKey]
+
+      // Trick tiles: pits and silent teleports relocate; spinners rotate
+      const trick = applyMoveTricks(cell, {
+        maps, mapId: activeMap.id, x: nx, y: ny, facing: facingRef.current,
+      })
+      if (trick.facing) setFacing(trick.facing)
+      trick.messages.forEach(m => toast(m))
+      if (trick.damage) {
+        const dmg = trick.damage
+        setParty(prev => prev.map(ch => ch.alive ? { ...ch, hp: Math.max(1, ch.hp - dmg) } : ch))
+      }
+      if (trick.teleportTo) {
+        const dest = trick.teleportTo
+        const targetIdx = maps.findIndex(m => m.id === dest.mapId)
+        if (targetIdx >= 0) {
+          setActiveIdx(targetIdx)
+          setMaps(prev => prev.map((m, i) => {
+            if (i !== targetIdx) return m
+            return { ...m, playerX: dest.x, playerY: dest.y, revealedChunks: revealAround(m, dest.x, dest.y) }
+          }))
+          setCameraOffset({ x: 0, y: 0 })
+          return
+        }
+      }
+
       if (cell) {
-        // Encounter check
-        const encounter = checkCellForEncounter(cell, flags, ruleset, Math.random)
+        // Encounter check (suppressed inside safe rooms)
+        const encounter = cellHasTrick(cell, 'safeRoom')
+          ? null
+          : checkCellForEncounter(cell, flags, ruleset, Math.random)
         if (encounter) {
           setActiveEncounter(encounter)
           const visitedKey = visitedFlagKey(encounter.tableId, nx, ny)
@@ -669,6 +705,16 @@ export function DungeonMapper({
           toast(wasOn
             ? 'You hear a heavy thud echo through the halls…'
             : 'You hear something click in the distance…')
+          return
+        }
+      }
+
+      // Wall inscription — readable when facing the inscribed side
+      if (boundary.inscription) {
+        const insc = boundary.inscription
+        const OPP: Record<EdgeDir, EdgeDir> = { N: 'S', S: 'N', E: 'W', W: 'E' }
+        if (!insc.facing || insc.facing === OPP[facingDir]) {
+          setInscription(insc.text.length > 0 ? insc.text : ['The carving is too worn to read.'])
           return
         }
       }
@@ -1359,7 +1405,7 @@ export function DungeonMapper({
 
       if (workspaceRef.current === 'play') {
         // Block movement while any overlay (combat/shop/encounter) is active — those handle keys themselves
-        if (combatStateRef.current || shopIdRef.current || activeEncounterRef.current || dialogueRef.current) return
+        if (combatStateRef.current || shopIdRef.current || activeEncounterRef.current || dialogueRef.current || inscriptionRef.current) return
         // Blobber controls: W=forward, S=back, A=turn-left, D=turn-right
         if (e.key === 'w' || e.key === 'W' || e.key === 'ArrowUp') { e.preventDefault(); stepForward(); return }
         if (e.key === 's' || e.key === 'S' || e.key === 'ArrowDown') { e.preventDefault(); stepBack(); return }
@@ -1558,6 +1604,9 @@ export function DungeonMapper({
       {workspace === 'settings' && (
         <SettingsWorkspace
           maps={maps}
+          onDarkChange={(idx, dark) =>
+            setMaps(prev => prev.map((m, i) => i === idx ? { ...m, dark: dark || undefined } : m))
+          }
           onThemeChange={(idx, themeId) =>
             setMaps(prev => prev.map((m, i) => i === idx ? { ...m, theme: themeId } : m))
           }
@@ -1958,12 +2007,24 @@ export function DungeonMapper({
         )
       })()}
 
+      {/* Wall inscription overlay */}
+      {inscription && (
+        <DialogueOverlay
+          npc={{ id: '_inscription', name: 'Inscription', portrait: '🪨', lines: [] }}
+          line={{ id: '_insc', text: inscription }}
+          onFinish={() => setInscription(null)}
+        />
+      )}
+
       {/* Encounter modal (shown over any workspace) */}
       {activeEncounter && (
         <EncounterModal
           encounter={activeEncounter}
           onFight={() => {
-            setCombatState(initCombat(party, activeEncounter, { formation, ruleset }))
+            setCombatState(initCombat(party, activeEncounter, {
+              formation, ruleset,
+              antiMagic: activeMap ? cellHasTrick(activeMap.cells[`${activeMap.playerX},${activeMap.playerY}`], 'antiMagic') : false,
+            }))
             setActiveEncounter(null)
             setWorkspace('play')   // battles play out in the first-person view
           }}
@@ -2023,6 +2084,10 @@ const OBJECT_GLYPHS: Record<string, string> = {
   trap: '☠️', teleporter: '🌀', lever: '🎚️', door: '🚪',
 }
 
+const TRICK_GLYPHS: Record<string, string> = {
+  spinner: '🌀', pit: '🕳', silentTeleport: '✨', antiMagic: '🚫', darkness: '🌑', safeRoom: '⛺',
+}
+
 function cellEntityBadges(cell: CellData, ruleset: Ruleset): { zoneEncounter: boolean; glyphs: string[] } {
   const glyphs: string[] = []
   let zoneEncounter = false
@@ -2035,6 +2100,7 @@ function cellEntityBadges(cell: CellData, ruleset: Ruleset): { zoneEncounter: bo
       case 'partyStart': glyphs.push('🏁'); break
       case 'mapLink':    glyphs.push('🚪'); break
       case 'event':      glyphs.push('⚡'); break
+      case 'trick':      glyphs.push(TRICK_GLYPHS[ent.kind] ?? '🌀'); break
       case 'object': {
         if (ent.object.kind === 'npc' && ent.object.npc) {
           glyphs.push((ruleset.npcs ?? []).find(n => n.id === ent.object.npc)?.portrait ?? '🧑')
@@ -2111,6 +2177,12 @@ function BoundaryInspector({ bk, x, y, dir, boundary, ruleset, onChange, onClose
     const next = { ...boundary } as BoundaryData
     if (sw) next.switch = sw
     else delete next.switch
+    onChange(bk, next)
+  }
+  function setInscriptionDef(insc: InscriptionDef | null) {
+    const next = { ...boundary } as BoundaryData
+    if (insc) next.inscription = insc
+    else delete next.inscription
     onChange(bk, next)
   }
 
@@ -2243,6 +2315,51 @@ function BoundaryInspector({ bk, x, y, dir, boundary, ruleset, onChange, onClose
           )}
           <p className="text-xs text-white/25 mt-1.5 leading-relaxed">
             A lever on the wall face. Interact from the mounted side to flip its flag.
+          </p>
+        </div>
+
+        {/* Wall inscription */}
+        <div>
+          <div className="text-xs font-semibold text-white/40 uppercase tracking-wider mb-2">Inscription</div>
+          {boundary.inscription ? (
+            <div className="space-y-2">
+              <textarea
+                rows={4}
+                value={boundary.inscription.text.join('\n\n')}
+                onChange={e => setInscriptionDef({
+                  ...boundary.inscription!,
+                  text: e.target.value.split('\n\n').map(s => s.trim()).filter(Boolean),
+                })}
+                placeholder={'First page…\n\nSecond page…'}
+                className="w-full rounded bg-zinc-800 border border-white/10 text-sm text-white/80 px-2 py-1.5 resize-none focus:outline-none focus:border-amber-500/40"
+              />
+              <select
+                value={boundary.inscription.facing ?? ''}
+                onChange={e => setInscriptionDef({ ...boundary.inscription!, facing: (e.target.value as EdgeDir) || undefined })}
+                className="w-full rounded bg-zinc-800 border border-white/10 text-sm text-white/80 px-2 py-1.5 focus:outline-none"
+              >
+                <option value="">Readable from both sides</option>
+                <option value={OPP[dir]}>This side only ({OPP[dir]}-facing)</option>
+                <option value={dir}>Far side only ({dir}-facing)</option>
+              </select>
+              <button
+                onClick={() => setInscriptionDef(null)}
+                className="w-full py-1 rounded text-xs border border-red-500/20 text-red-400/60 hover:text-red-300 hover:border-red-500/40 transition-colors"
+              >
+                Remove Inscription
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={() => setInscriptionDef({ text: ['Words are carved into the stone…'], facing: OPP[dir] })}
+              className="w-full py-1.5 rounded text-xs font-medium border border-amber-500/20 text-amber-300/70 hover:text-amber-200 hover:border-amber-500/40 transition-colors"
+            >
+              + Add Inscription (this side)
+            </button>
+          )}
+          <p className="text-xs text-white/25 mt-1.5 leading-relaxed">
+            Text carved into the wall face. Face it and interact to read. Blank
+            line separates pages.
           </p>
         </div>
 

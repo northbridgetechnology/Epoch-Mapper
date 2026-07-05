@@ -77,6 +77,9 @@ export interface MapData {
   seed?: number
   /** Visual theme ID — keys into THEMES in @/lib/themes. Defaults to 'stone_dungeon'. */
   theme?: string
+  /** Dark map: view distance collapses to the party's light radius (torches,
+   *  lanterns, light spells). Absent/false = fully lit (classic behavior). */
+  dark?: boolean
 }
 
 /** A user-defined cell type or overlay icon. IDs are 128–255. */

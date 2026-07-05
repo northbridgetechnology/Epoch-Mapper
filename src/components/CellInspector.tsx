@@ -431,6 +431,7 @@ const ENTITY_ICONS: Record<CellEntity['t'], string> = {
   mapLink: '🚪',
   object: '📦',
   event: '⚡',
+  trick: '🌀',
 }
 
 const ENTITY_LABELS: Record<CellEntity['t'], string> = {
@@ -439,7 +440,17 @@ const ENTITY_LABELS: Record<CellEntity['t'], string> = {
   mapLink: 'Map Link',
   object: 'Object',
   event: 'Event',
+  trick: 'Trick Tile',
 }
+
+const TRICK_KIND_OPTS = [
+  { value: 'spinner',        label: '🌀 Spinner — silently rotates the party' },
+  { value: 'pit',            label: '🕳 Pit — fall to the map below (damage)' },
+  { value: 'silentTeleport', label: '✨ Silent Teleport — relocate, no cue' },
+  { value: 'antiMagic',      label: '🚫 Anti-Magic — no casting here' },
+  { value: 'darkness',       label: '🌑 Darkness — light snuffed to 1 cell' },
+  { value: 'safeRoom',       label: '⛺ Safe Room — no ambush, no encounters' },
+] as const
 
 function entitySummary(ent: CellEntity): string {
   switch (ent.t) {
@@ -448,6 +459,7 @@ function entitySummary(ent: CellEntity): string {
     case 'mapLink': return `→ ${ent.mapId || '—'} (${ent.x},${ent.y})`
     case 'object': return `${ent.object.kind} "${ent.object.id}"`
     case 'event': return `${ent.event.trigger}: ${ent.event.id || '—'}`
+    case 'trick': return TRICK_KIND_OPTS.find(o => o.value === ent.kind)?.label ?? ent.kind
   }
 }
 
@@ -468,7 +480,92 @@ function makeBlankEntity(t: CellEntity['t']): CellEntity {
       return { t: 'object', object: { kind: 'chest', id: `obj_${_objSeq++}`, onInteract: [] } }
     case 'event':
       return { t: 'event', event: { id: `event_${_evSeq++}`, trigger: 'onEnter', effects: [] } }
+    case 'trick':
+      return { t: 'trick', kind: 'spinner' }
   }
+}
+
+// ── Trick tile editor ─────────────────────────────────────────────────────────
+
+function TrickEntityEditor({
+  entity,
+  maps,
+  onChange,
+}: {
+  entity: CellEntity & { t: 'trick' }
+  maps: MapData[]
+  onChange: (e: CellEntity) => void
+}) {
+  const showTarget = entity.kind === 'pit' || entity.kind === 'silentTeleport'
+  return (
+    <div className="space-y-3 pt-2">
+      <div>
+        <label className={LABEL}>Kind</label>
+        <select value={entity.kind}
+          onChange={e => onChange({ t: 'trick', kind: e.target.value as typeof entity.kind })}
+          className={cn(INPUT, 'w-full')}>
+          {TRICK_KIND_OPTS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+        </select>
+      </div>
+      {entity.kind === 'spinner' && (
+        <div>
+          <label className={LABEL}>Rotation</label>
+          <select value={entity.rotate ?? 'random'}
+            onChange={e => onChange({ ...entity, rotate: e.target.value as NonNullable<typeof entity.rotate> })}
+            className={cn(INPUT, 'w-full')}>
+            <option value="random">Random</option>
+            <option value="left">Left 90°</option>
+            <option value="right">Right 90°</option>
+            <option value="reverse">Reverse 180°</option>
+          </select>
+        </div>
+      )}
+      {entity.kind === 'pit' && (
+        <div>
+          <label className={LABEL}>Fall damage (dice)</label>
+          <input type="text" placeholder="1d6" value={entity.damage !== undefined ? String(entity.damage) : ''}
+            onChange={e => {
+              const v = e.target.value.trim()
+              const n = Number(v)
+              onChange({ ...entity, damage: v === '' ? undefined : isNaN(n) ? v : n })
+            }}
+            className={cn(INPUT, 'w-24 font-mono')} />
+        </div>
+      )}
+      {showTarget && (
+        <div className="space-y-2">
+          <div>
+            <label className={LABEL}>{entity.kind === 'pit' ? 'Fall target (blank = next map, same coords)' : 'Destination'}</label>
+            <select value={entity.mapId ?? ''}
+              onChange={e => onChange({ ...entity, mapId: e.target.value || undefined })}
+              className={cn(INPUT, 'w-full')}>
+              <option value="">{entity.kind === 'pit' ? '— next map below —' : '— this map —'}</option>
+              {maps.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+            </select>
+          </div>
+          <div className="flex gap-2">
+            <div>
+              <label className={LABEL}>X</label>
+              <input type="number" value={entity.x ?? ''} placeholder="same"
+                onChange={e => onChange({ ...entity, x: isNaN(e.target.valueAsNumber) ? undefined : e.target.valueAsNumber })}
+                className={cn(INPUT, 'w-20')} />
+            </div>
+            <div>
+              <label className={LABEL}>Y</label>
+              <input type="number" value={entity.y ?? ''} placeholder="same"
+                onChange={e => onChange({ ...entity, y: isNaN(e.target.valueAsNumber) ? undefined : e.target.valueAsNumber })}
+                className={cn(INPUT, 'w-20')} />
+            </div>
+          </div>
+        </div>
+      )}
+      {(entity.kind === 'antiMagic' || entity.kind === 'darkness' || entity.kind === 'safeRoom') && (
+        <p className="text-[11px] text-white/40">
+          Zone effect — active while the party stands on this cell. No other configuration.
+        </p>
+      )}
+    </div>
+  )
 }
 
 // ── Sub-cube volume editor ────────────────────────────────────────────────────
@@ -781,6 +878,7 @@ function boundarySummary(b?: BoundaryData): string {
     parts.push(edgeDef(b.wall).label)
   }
   if (b.switch) parts.push(`Switch → ${b.switch.flag}`)
+  if (b.inscription) parts.push('Inscription')
   return parts.join(' · ') || 'Boundary'
 }
 
@@ -964,6 +1062,9 @@ export function CellInspector({ x, y, cell, maps, ruleset, onChange, onSubcubeCh
                 {ent.t === 'mapLink' && (
                   <MapLinkEntityEditor entity={ent} maps={maps} onChange={upd => updateEntity(idx, upd)} />
                 )}
+                {ent.t === 'trick' && (
+                  <TrickEntityEditor entity={ent} maps={maps} onChange={upd => updateEntity(idx, upd)} />
+                )}
                 {ent.t === 'object' && (
                   <ObjectEntityEditor entity={ent} ruleset={ruleset} onChange={upd => updateEntity(idx, upd)} />
                 )}
@@ -990,7 +1091,7 @@ export function CellInspector({ x, y, cell, maps, ruleset, onChange, onSubcubeCh
 
         {showAddMenu && (
           <div className="px-2 pb-2 flex flex-col gap-0.5">
-            {(['encounter', 'partyStart', 'mapLink', 'object', 'event'] as CellEntity['t'][]).map(t => (
+            {(['encounter', 'partyStart', 'mapLink', 'object', 'event', 'trick'] as CellEntity['t'][]).map(t => (
               <button
                 key={t}
                 onClick={() => addEntity(t)}

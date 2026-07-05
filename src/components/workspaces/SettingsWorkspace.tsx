@@ -7,9 +7,10 @@ import { THEMES, getTheme } from '@/lib/themes'
 interface SettingsWorkspaceProps {
   maps: MapData[]
   onThemeChange: (mapIdx: number, themeId: string) => void
+  onDarkChange?: (mapIdx: number, dark: boolean) => void
 }
 
-export function SettingsWorkspace({ maps, onThemeChange }: SettingsWorkspaceProps) {
+export function SettingsWorkspace({ maps, onThemeChange, onDarkChange }: SettingsWorkspaceProps) {
   if (maps.length === 0) {
     return (
       <div className="flex-1 flex items-center justify-center text-white/20 text-sm">
@@ -81,6 +82,21 @@ export function SettingsWorkspace({ maps, onThemeChange }: SettingsWorkspaceProp
                   )
                 })}
               </div>
+
+              {onDarkChange && (
+                <label className="flex items-center gap-2.5 rounded-lg border border-white/8 bg-white/4 px-3 py-2 cursor-pointer hover:border-white/15">
+                  <input
+                    type="checkbox"
+                    checked={!!map.dark}
+                    onChange={e => onDarkChange(idx, e.target.checked)}
+                    className="h-4 w-4 rounded accent-amber-500"
+                  />
+                  <span className="text-xs text-white/70">🌑 Dark map</span>
+                  <span className="text-[10px] text-white/30">
+                    View collapses to the party&apos;s light — torches, lanterns, and light magic matter here.
+                  </span>
+                </label>
+              )}
             </div>
           )
         })}
