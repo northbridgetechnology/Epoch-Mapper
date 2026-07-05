@@ -491,15 +491,19 @@ function FirstPersonView({ map, facing, isCellRevealed, revealedBoundaries, flag
               points={`${sxAt(zn, fx)},${syAt(zn, 0)} ${sxAt(zf, fx)},${syAt(zf, 0)} ${sxAt(zf, fx)},${syAt(zf, uBot)} ${sxAt(zn, fx)},${syAt(zn, uBot)}`}
               fill="hsl(240 7% 5%)" />)
           }
-          // Treads, deepest first; a lit lip on each near edge makes them read as steps
+          // Treads, deepest first. Room light spills a short way into the
+          // shaft — the upper treads get a warm wash, the last melts into the
+          // void — and strong near-edge lips keep the steps legible.
           for (let i = N - 1; i >= 0; i--) {
-            const u = -0.5 * ((i + 1) / N)
+            const u = -0.42 * ((i + 1) / N)
             const zi = zAt(stepT(i))
+            const treadPts = quad(stepT(i), u, stepT(i + 1), u, fxa, fxb)
             well.push(
-              <polygon key={`t${i}`} points={quad(stepT(i), u, stepT(i + 1), u, fxa, fxb)} fill={pal.floorBand(d)} />,
-              <polygon key={`ts${i}`} points={quad(stepT(i), u, stepT(i + 1), u, fxa, fxb)} fill={`rgba(0,0,0,${0.18 + 0.17 * i})`} />,
+              <polygon key={`t${i}`} points={treadPts} fill={pal.floorBand(d)} />,
+              <polygon key={`ts${i}`} points={treadPts}
+                fill={i < 2 ? `rgba(255,220,160,${0.14 - 0.06 * i})` : `rgba(0,0,0,${0.18 + 0.3 * (i - 2)})`} />,
               <line key={`tl${i}`} x1={sxAt(zi, fxa)} y1={syAt(zi, u)} x2={sxAt(zi, fxb)} y2={syAt(zi, u)}
-                stroke={`rgba(255,255,255,${Math.max(0.03, 0.14 - 0.035 * i)})`} strokeWidth={1} />,
+                stroke={`rgba(255,235,200,${Math.max(0.06, 0.26 - 0.07 * i)})`} strokeWidth={1} />,
             )
           }
           if (fog > 0) well.push(<polygon key="fog" points={openPts} fill={`rgba(0,0,0,${fog * 0.8})`} />)
@@ -507,18 +511,24 @@ function FirstPersonView({ map, facing, isCellRevealed, revealedBoundaries, flag
           nodes.push(<line key={`strim_${d}_${s}`} x1={sxAt(zn, fxa)} y1={syAt(zn, 0)} x2={sxAt(zn, fxb)} y2={syAt(zn, 0)}
             stroke={pal.wallEdge(d)} strokeWidth={1} opacity={0.5} />)
         } else {
-          // A solid staircase rising away: warm glow spilling from the ceiling
-          // opening, stepped side masses so the flanks are closed, then
-          // riser + tread faces from far to near
-          const uTop = 0.6
+          // A solid staircase climbing the full wall height and passing through
+          // a warm-lit opening cut into the ceiling plane. Painter order:
+          // opening first, then side masses, then riser/tread faces far-to-near
+          // so the top steps correctly occlude the hole they climb into.
           const zf = zAt(1)
-          nodes.push(<polygon key={`stg_${d}_${s}`}
-            points={`${sxAt(zf, fxa + 0.04)},${syAt(zf, 1)} ${sxAt(zf, fxb - 0.04)},${syAt(zf, 1)} ${sxAt(zf, fxb - 0.04)},${syAt(zf, uTop)} ${sxAt(zf, fxa + 0.04)},${syAt(zf, uTop)}`}
-            fill="rgba(255,220,150,0.26)" />)
+          const tOpen = 0.45
+          const zo = zAt(tOpen)
+          const openPts = `${sxAt(zo, fxa)},${syAt(zo, 1)} ${sxAt(zo, fxb)},${syAt(zo, 1)} ${sxAt(zf, fxb)},${syAt(zf, 1)} ${sxAt(zf, fxa)},${syAt(zf, 1)}`
+          nodes.push(
+            <polygon key={`stuo_${d}_${s}`} points={openPts} fill="hsl(38 42% 26%)" />,
+            <polygon key={`stuog_${d}_${s}`} points={openPts} fill="rgba(255,220,150,0.30)" />,
+            <line key={`stuor_${d}_${s}`} x1={sxAt(zo, fxa)} y1={syAt(zo, 1)} x2={sxAt(zo, fxb)} y2={syAt(zo, 1)}
+              stroke="rgba(255,225,170,0.45)" strokeWidth={1} />,
+          )
           for (const [fx, kn] of [[fxa, 'l'], [fxb, 'r']] as const) {
             const pts: string[] = [`${sxAt(zAt(t0), fx)},${syAt(zAt(t0), 0)}`]
             for (let i = 0; i < N; i++) {
-              const uHi = uTop * ((i + 1) / N)
+              const uHi = (i + 1) / N
               pts.push(`${sxAt(zAt(stepT(i)), fx)},${syAt(zAt(stepT(i)), uHi)}`)
               pts.push(`${sxAt(zAt(stepT(i + 1)), fx)},${syAt(zAt(stepT(i + 1)), uHi)}`)
             }
@@ -529,18 +539,24 @@ function FirstPersonView({ map, facing, isCellRevealed, revealedBoundaries, flag
             )
           }
           for (let i = N - 1; i >= 0; i--) {
-            const uLo = uTop * (i / N), uHi = uTop * ((i + 1) / N)
+            const uLo = i / N, uHi = (i + 1) / N
             const zi = zAt(stepT(i))
             const riserPts = `${sxAt(zi, fxa)},${syAt(zi, uLo)} ${sxAt(zi, fxb)},${syAt(zi, uLo)} ${sxAt(zi, fxb)},${syAt(zi, uHi)} ${sxAt(zi, fxa)},${syAt(zi, uHi)}`
             nodes.push(
               <polygon key={`sr_${d}_${s}_${i}`}  points={riserPts} fill={pal.frontWall(d)} />,
-              <polygon key={`srw_${d}_${s}_${i}`} points={riserPts} fill={`rgba(255,220,150,${0.05 + 0.055 * i})`} />,
-              <polygon key={`st_${d}_${s}_${i}`}  points={quad(stepT(i), uHi, stepT(i + 1), uHi, fxa, fxb)} fill={pal.floorBand(d)} />,
-              <polygon key={`stw_${d}_${s}_${i}`} points={quad(stepT(i), uHi, stepT(i + 1), uHi, fxa, fxb)}
-                fill={`rgba(255,225,160,${0.05 + 0.06 * i})`} />,
+              <polygon key={`srw_${d}_${s}_${i}`} points={riserPts} fill={`rgba(255,220,150,${0.06 + 0.07 * i})`} />,
             )
+            // The tread above the top riser is the floor of the level above —
+            // it lives beyond the ceiling opening, so it isn't drawn
+            if (i < N - 1) {
+              nodes.push(
+                <polygon key={`st_${d}_${s}_${i}`}  points={quad(stepT(i), uHi, stepT(i + 1), uHi, fxa, fxb)} fill={pal.floorBand(d)} />,
+                <polygon key={`stw_${d}_${s}_${i}`} points={quad(stepT(i), uHi, stepT(i + 1), uHi, fxa, fxb)}
+                  fill={`rgba(255,225,160,${0.06 + 0.08 * i})`} />,
+              )
+            }
           }
-          if (fog > 0) nodes.push(<polygon key={`stf_${d}_${s}`} points={quad(t0, 0, 1, uTop + 0.2, fxa, fxb)} fill={`rgba(0,0,0,${fog * 0.8})`} />)
+          if (fog > 0) nodes.push(<polygon key={`stf_${d}_${s}`} points={quad(t0, 0, 1, 1, fxa, fxb)} fill={`rgba(0,0,0,${fog * 0.8})`} />)
         }
       }
 
