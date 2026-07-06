@@ -1208,36 +1208,6 @@ export function DungeonMapper({
     toast('The party stirs awake at the entrance, purses lighter…')
   }, [ruleset.meta.wipeGoldPenalty, maps, setMaps, setActiveIdx, moveReveal])
 
-  // Characters workspace: drop an NPC into the live party (testing), or place
-  // it as an object entity on the active map's marker cell.
-  const handleAddNpcToParty = useCallback((npcId: string) => {
-    const def = (ruleset.npcs ?? []).find(n => n.id === npcId)
-    if (!def) return
-    const cap = ruleset.meta.partySize ?? 6
-    setParty(prev => {
-      if (prev.length >= cap) { toast('Your party is full.'); return prev }
-      const ch = npcToCharacter(def, ruleset)
-      toast.success(`${ch.name} added to the party.`)
-      return [...prev, ch]
-    })
-  }, [ruleset])
-
-  const handlePlaceNpc = useCallback((npcId: string) => {
-    if (!activeMap) return
-    const def = (ruleset.npcs ?? []).find(n => n.id === npcId)
-    const key = `${activeMap.playerX},${activeMap.playerY}`
-    updateActiveMap((m) => {
-      const cell = m.cells[key] ?? { base: BASE.FLOOR, overlays: [] }
-      const already = (cell.entities ?? []).some(
-        e => e.t === 'object' && e.object.kind === 'npc' && e.object.npc === npcId,
-      )
-      if (already) return {}
-      const entity: CellEntity = { t: 'object', object: { kind: 'npc', id: `npcobj_${npcId}_${Date.now()}`, npc: npcId } }
-      return { cells: { ...m.cells, [key]: { ...cell, entities: [...(cell.entities ?? []), entity] } } }
-    })
-    toast.success(`${def?.name ?? 'NPC'} placed at (${activeMap.playerX}, ${activeMap.playerY}).`)
-  }, [activeMap, ruleset, updateActiveMap])
-
   const handleAbandonRun = useCallback(() => {
     deleteAllSlots()
     setParty([])
@@ -1905,9 +1875,12 @@ export function DungeonMapper({
             <CharactersWorkspace
               ruleset={ruleset}
               onRulesetChange={setRuleset}
-              marker={activeMap ? { mapName: activeMap.name, x: activeMap.playerX, y: activeMap.playerY } : null}
-              onPlaceNpc={handlePlaceNpc}
-              onAddToParty={handleAddNpcToParty}
+              party={party}
+              formation={formation}
+              inventory={inventory}
+              gold={gold}
+              onPartyChange={(p, f) => { setParty(p); setFormation(f); savePartyTemplate(p, f) }}
+              onInventoryChange={(inv, g) => { setInventory(inv); setGold(g) }}
             />
           </div>
         </div>

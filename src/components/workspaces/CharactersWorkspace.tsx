@@ -1,18 +1,22 @@
 'use client'
 
 /**
- * Characters workspace — the NPC Creator. Authors the game's cast (NpcDef): the
- * shared stat/dialogue editor, plus the two things that make an NPC part of the
- * world and the party: place it on the map, and (for testing) drop it straight
- * into the party. Recruitable / Starts-in-party are toggles on each definition.
+ * Characters workspace — one home for the whole cast, split into two tabs:
+ *
+ *  • Party — the live party (full runtime editing: identity, class/race,
+ *    attributes, equipment, formation). The player-built Main Character shows
+ *    with a crown; recruited members appear here too.
+ *  • Cast — authored NpcDef definitions (stat block + dialogue). An NPC that
+ *    has been recruited moves out of this list into the Party tab.
  */
 
 import { useState } from 'react'
-import { Plus, Trash2, MapPin, UserPlus, Users } from 'lucide-react'
+import { Plus, Trash2, Users, UserRound } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import type { NpcDef, Ruleset } from '@/lib/engine-types'
+import type { Character, Formation, ItemInstance, NpcDef, Ruleset } from '@/lib/engine-types'
 import { blankNpc } from '@/lib/npc-schema'
 import { NpcEditor } from '../forms/NpcEditor'
+import { PartyWorkspace } from './PartyWorkspace'
 import { Portrait, isBuiltinPortrait } from '@/lib/portraits'
 import { isBitmapSprite } from '@/lib/pixel-sprites'
 
@@ -28,44 +32,36 @@ function NpcAvatar({ npc, size = 28 }: { npc: NpcDef; size?: number }) {
   )
 }
 
-export function CharactersWorkspace({
-  ruleset, onRulesetChange, marker, onPlaceNpc, onAddToParty,
-}: {
+function CastTab({ ruleset, onRulesetChange, party }: {
   ruleset: Ruleset
   onRulesetChange: (r: Ruleset) => void
-  /** Active map marker — the placement target. */
-  marker?: { mapName: string; x: number; y: number } | null
-  /** Place the NPC as an object entity on the active map's marker cell. */
-  onPlaceNpc?: (npcId: string) => void
-  /** Drop the NPC into the live party right now (testing). */
-  onAddToParty?: (npcId: string) => void
+  party: Character[]
 }) {
-  const npcs = ruleset.npcs ?? []
+  // NPCs already recruited into the party live under the Party tab, not here.
+  const recruited = new Set(party.map(c => c.sourceNpc).filter(Boolean) as string[])
+  const npcs = (ruleset.npcs ?? []).filter(n => !recruited.has(n.id))
   const [selectedId, setSelectedId] = useState<string | null>(npcs[0]?.id ?? null)
   const selected = npcs.find(n => n.id === selectedId) ?? null
 
   function addNpc() {
-    const id = `npc.npc_${npcs.length + 1}_${Date.now() % 1000}`
-    onRulesetChange({ ...ruleset, npcs: [...npcs, blankNpc(id)] })
+    const id = `npc.npc_${(ruleset.npcs ?? []).length + 1}_${Date.now() % 1000}`
+    onRulesetChange({ ...ruleset, npcs: [...(ruleset.npcs ?? []), blankNpc(id)] })
     setSelectedId(id)
   }
   function updateNpc(n: NpcDef) {
-    onRulesetChange({ ...ruleset, npcs: npcs.map(x => x.id === n.id ? n : x) })
+    onRulesetChange({ ...ruleset, npcs: (ruleset.npcs ?? []).map(x => x.id === n.id ? n : x) })
   }
   function deleteNpc(id: string) {
-    const next = npcs.filter(n => n.id !== id)
+    const next = (ruleset.npcs ?? []).filter(n => n.id !== id)
     onRulesetChange({ ...ruleset, npcs: next })
-    if (selectedId === id) setSelectedId(next[0]?.id ?? null)
+    if (selectedId === id) setSelectedId(next.find(n => !recruited.has(n.id))?.id ?? null)
   }
 
   return (
     <div className="flex h-full min-h-0">
-      {/* Roster list */}
       <div className="w-60 flex-shrink-0 flex flex-col border-r border-white/10 bg-zinc-950 min-h-0">
         <div className="flex items-center justify-between px-3 py-2 border-b border-white/10">
-          <span className="text-xs font-semibold text-white/60 uppercase tracking-wide">
-            Characters ({npcs.length})
-          </span>
+          <span className="text-xs font-semibold text-white/60 uppercase tracking-wide">Cast ({npcs.length})</span>
           <button onClick={addNpc}
             className="flex items-center gap-1 px-2 py-0.5 rounded text-xs text-amber-300/80 hover:text-amber-200 hover:bg-amber-500/10">
             <Plus className="w-3 h-3" /> New
@@ -100,36 +96,9 @@ export function CharactersWorkspace({
           ))}
         </div>
       </div>
-
-      {/* Detail: actions + editor */}
-      <div className="flex-1 min-h-0 flex flex-col">
+      <div className="flex-1 min-h-0">
         {selected ? (
-          <>
-            <div className="flex items-center gap-2 px-4 py-2 border-b border-white/10 bg-zinc-950/60 flex-shrink-0">
-              <NpcAvatar npc={selected} size={22} />
-              <span className="text-sm font-semibold text-white/80 truncate">{selected.name}</span>
-              <div className="ml-auto flex items-center gap-2">
-                <button
-                  onClick={() => onPlaceNpc?.(selected.id)}
-                  disabled={!marker || !onPlaceNpc}
-                  title={marker ? `Place on ${marker.mapName} at (${marker.x}, ${marker.y})` : 'Move the player marker onto a cell first'}
-                  className="flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-medium border border-sky-500/30 text-sky-300 hover:bg-sky-500/10 disabled:opacity-30 disabled:cursor-not-allowed">
-                  <MapPin className="w-3.5 h-3.5" />
-                  {marker ? `Place at (${marker.x}, ${marker.y})` : 'Place'}
-                </button>
-                <button
-                  onClick={() => onAddToParty?.(selected.id)}
-                  disabled={!onAddToParty}
-                  title="Add to the live party now (for testing)"
-                  className="flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-medium border border-emerald-500/30 text-emerald-300 hover:bg-emerald-500/10 disabled:opacity-30">
-                  <UserPlus className="w-3.5 h-3.5" /> Add to party
-                </button>
-              </div>
-            </div>
-            <div className="flex-1 min-h-0">
-              <NpcEditor npc={selected} ruleset={ruleset} onChange={updateNpc} />
-            </div>
-          </>
+          <NpcEditor npc={selected} ruleset={ruleset} onChange={updateNpc} />
         ) : (
           <div className="h-full flex flex-col items-center justify-center text-white/20 text-sm gap-2">
             <Users className="w-8 h-8 opacity-30" />
@@ -138,5 +107,60 @@ export function CharactersWorkspace({
         )}
       </div>
     </div>
+  )
+}
+
+export function CharactersWorkspace({
+  ruleset, onRulesetChange, party, formation, inventory, gold, onPartyChange, onInventoryChange,
+}: {
+  ruleset: Ruleset
+  onRulesetChange: (r: Ruleset) => void
+  party: Character[]
+  formation: Formation
+  inventory: ItemInstance[]
+  gold: number
+  onPartyChange: (party: Character[], formation: Formation) => void
+  onInventoryChange: (inventory: ItemInstance[], gold: number) => void
+}) {
+  const [tab, setTab] = useState<'party' | 'cast'>('party')
+
+  return (
+    <div className="flex flex-col h-full min-h-0">
+      <div className="flex items-center gap-1 px-3 py-1.5 border-b border-white/10 flex-shrink-0">
+        <TabButton active={tab === 'party'} onClick={() => setTab('party')} icon={<UserRound className="w-3.5 h-3.5" />}>
+          Party ({party.length})
+        </TabButton>
+        <TabButton active={tab === 'cast'} onClick={() => setTab('cast')} icon={<Users className="w-3.5 h-3.5" />}>
+          Cast ({(ruleset.npcs ?? []).length})
+        </TabButton>
+      </div>
+      <div className="flex-1 min-h-0">
+        {tab === 'party' ? (
+          <PartyWorkspace
+            ruleset={ruleset}
+            party={party}
+            formation={formation}
+            inventory={inventory}
+            gold={gold}
+            onPartyChange={onPartyChange}
+            onInventoryChange={onInventoryChange}
+          />
+        ) : (
+          <CastTab ruleset={ruleset} onRulesetChange={onRulesetChange} party={party} />
+        )}
+      </div>
+    </div>
+  )
+}
+
+function TabButton({ active, onClick, icon, children }: {
+  active: boolean; onClick: () => void; icon: React.ReactNode; children: React.ReactNode
+}) {
+  return (
+    <button onClick={onClick}
+      className={cn('flex items-center gap-1.5 px-3 py-1 rounded text-xs font-medium transition-colors',
+        active ? 'bg-amber-600/20 text-amber-300' : 'text-white/40 hover:text-white hover:bg-white/5')}>
+      {icon}{children}
+    </button>
   )
 }
