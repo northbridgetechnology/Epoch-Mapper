@@ -7,15 +7,14 @@
  * attributes, and an optional bio, with a live derived-stat preview.
  */
 
-import { useMemo, useRef, useState } from 'react'
-import { Upload } from 'lucide-react'
+import { useMemo, useState } from 'react'
 import type { Character, Pronoun, Ruleset } from '@/lib/engine-types'
 import {
   emptyAlloc, attrScore, pointsRemaining, canRaise, canLower, raise, lower,
   buildCharacter, pointPool, type BuildDraft,
 } from '@/lib/char-build'
-import { Portrait, portraitIds, suggestPortrait } from '@/lib/portraits'
-import { fileToSpriteDataUri, SPRITE_ACCEPT_ATTR } from '@/lib/sprite-upload'
+import { Portrait, isBuiltinPortrait, suggestPortrait } from '@/lib/portraits'
+import { PortraitPicker } from './forms/PortraitPicker'
 
 const PRONOUNS: { id: Pronoun; label: string }[] = [
   { id: 'he', label: 'He / him' },
@@ -40,10 +39,6 @@ export function CharacterBuilder({ ruleset, onDone, onCancel, title = 'Create yo
     bio: '',
     alloc: emptyAlloc(ruleset),
   })
-  const fileRef = useRef<HTMLInputElement>(null)
-  const [uploads, setUploads] = useState<string[]>([])   // player-uploaded portrait data-URIs
-  const [err, setErr] = useState<string | null>(null)
-
   const pointBuy = (ruleset.meta.attrMethod ?? 'pointBuy') !== 'fixed'
   const pool = pointPool(ruleset)
   const remaining = pointsRemaining(ruleset, draft.alloc)
@@ -51,20 +46,6 @@ export function CharacterBuilder({ ruleset, onDone, onCancel, title = 'Create yo
   const patch = (p: Partial<BuildDraft>) => setDraft(d => ({ ...d, ...p }))
 
   const cls = ruleset.classes.find(c => c.id === draft.classId)
-
-  async function onUpload(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0]
-    e.target.value = ''
-    if (!file) return
-    try {
-      const uri = await fileToSpriteDataUri(file)
-      setUploads(u => (u.includes(uri) ? u : [...u, uri]))
-      patch({ portrait: uri })
-      setErr(null)
-    } catch (ex) {
-      setErr(ex instanceof Error ? ex.message : 'Could not read that image.')
-    }
-  }
 
   const finalAttrs = ruleset.attributes.map(a => ({
     def: a,
@@ -94,26 +75,7 @@ export function CharacterBuilder({ ruleset, onDone, onCancel, title = 'Create yo
 
             <div>
               <div className="text-[11px] uppercase tracking-wide text-white/40 mb-1.5">Portrait</div>
-              <div className="grid grid-cols-5 gap-1.5">
-                {portraitIds().map(id => (
-                  <button key={id} onClick={() => patch({ portrait: id })}
-                    className={`rounded-md overflow-hidden border ${draft.portrait === id ? 'border-amber-400 ring-1 ring-amber-400/50' : 'border-white/10 hover:border-white/30'}`}>
-                    <Portrait value={id} size={40} rounded={false} />
-                  </button>
-                ))}
-                {uploads.map((uri, n) => (
-                  <button key={`u${n}`} onClick={() => patch({ portrait: uri })}
-                    className={`rounded-md overflow-hidden border ${draft.portrait === uri ? 'border-amber-400 ring-1 ring-amber-400/50' : 'border-white/10 hover:border-white/30'}`}>
-                    <Portrait value={uri} size={40} rounded={false} />
-                  </button>
-                ))}
-                <button onClick={() => fileRef.current?.click()} title="Upload portrait"
-                  className="grid place-items-center h-10 rounded-md border border-dashed border-white/20 text-white/40 hover:text-white hover:border-white/40">
-                  <Upload className="w-4 h-4" />
-                </button>
-              </div>
-              <input ref={fileRef} type="file" accept={SPRITE_ACCEPT_ATTR} className="hidden" onChange={onUpload} />
-              {err && <div className="mt-1 text-[11px] text-red-400">{err}</div>}
+              <PortraitPicker value={draft.portrait} onChange={p => patch({ portrait: p })} columns={5} />
             </div>
 
             <div>
@@ -135,7 +97,7 @@ export function CharacterBuilder({ ruleset, onDone, onCancel, title = 'Create yo
               <label className="flex flex-col gap-1">
                 <span className="text-[11px] uppercase tracking-wide text-white/40">Class</span>
                 <select value={draft.classId}
-                  onChange={e => patch({ classId: e.target.value, portrait: draft.portrait && !portraitIds().includes(draft.portrait) ? draft.portrait : suggestPortrait(ruleset.classes.find(c => c.id === e.target.value)?.name) })}
+                  onChange={e => patch({ classId: e.target.value, portrait: draft.portrait && !isBuiltinPortrait(draft.portrait) ? draft.portrait : suggestPortrait(ruleset.classes.find(c => c.id === e.target.value)?.name) })}
                   className="px-2 py-1.5 rounded bg-zinc-800 border border-white/10 text-sm text-white/90 focus:outline-none focus:border-amber-500/50">
                   {ruleset.classes.map(c => <option key={c.id} value={c.id}>{c.icon} {c.name}</option>)}
                 </select>

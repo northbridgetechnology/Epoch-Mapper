@@ -11,6 +11,7 @@ import { NPC_SCHEMA } from '@/lib/npc-schema'
 import { ConditionBuilder } from '@/components/CellInspector'
 import { SchemaForm } from './SchemaForm'
 import { EffectBuilder } from './EffectBuilder'
+import { PortraitPicker } from './PortraitPicker'
 
 function NpcLineEditor({ line, ruleset, onChange, onRemove }: {
   line: NpcLine
@@ -69,6 +70,10 @@ export function NpcEditor({ npc, ruleset, onChange }: {
         value={npc as unknown as Record<string, unknown>}
         onChange={v => onChange({ ...npc, ...(v as Partial<NpcDef>) })}
       />
+      <div>
+        <div className="text-[11px] uppercase tracking-wide text-white/40 mb-1.5">Portrait</div>
+        <PortraitPicker value={npc.portrait} onChange={p => onChange({ ...npc, portrait: p })} allowEmoji columns={8} />
+      </div>
       <div className="pt-2 border-t border-white/10">
         <div className="flex items-center justify-between mb-1.5">
           <span className="text-xs font-medium text-white/50 uppercase tracking-wide">
