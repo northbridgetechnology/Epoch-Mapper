@@ -43,6 +43,19 @@ export default function AboutPage() {
           </p>
         </div>
 
+        <div className="rounded-xl border border-amber-500/20 bg-amber-500/[0.04] p-5 space-y-2">
+          <h2 className="font-semibold text-amber-300">☕ Enjoying Epoch Mapper?</h2>
+          <p className="text-white/70 leading-relaxed text-sm">
+            It&apos;s free and always will be — no accounts, no ads, no paywalls. If it&apos;s saved you time or
+            you just appreciate the work, you can show your support by{' '}
+            <a href="https://www.buymeacoffee.com/northbridgetechnology" className="text-amber-300 hover:underline">
+              buying me a coffee
+            </a>
+            . Every cup helps keep the project going and is hugely appreciated. There&apos;s also a coffee button in
+            the bottom-right corner. Thank you!
+          </p>
+        </div>
+
         <div className="text-sm text-white/40 space-y-1">
           <p>MIT licensed · Built with Next.js, TypeScript, and Tailwind CSS.</p>
           <p>

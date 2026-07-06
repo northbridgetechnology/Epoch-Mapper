@@ -261,6 +261,16 @@ Consumers (Epoch) authenticate to the same registry for `@northbridgetechnology`
 
 ---
 
+## Support the project ☕
+
+Epoch Mapper is free and open source — no accounts, no ads, no paywalls. If it
+has saved you time or you simply appreciate the work, you can show your support
+by [**buying me a coffee**](https://www.buymeacoffee.com/northbridgetechnology).
+Every cup helps keep the project maintained and is genuinely appreciated. The
+app also has a coffee button in the bottom-right corner. Thank you!
+
+---
+
 ## License
 
 MIT — see [`LICENSE`](LICENSE).
