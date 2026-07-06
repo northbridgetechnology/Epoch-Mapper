@@ -31,7 +31,7 @@ import { savePartyTemplate, loadPartyTemplate, saveToSlot, loadFromSlot, deleteA
 import { checkCellForEncounter, resolveEncounterTable, makeFixedEncounter, visitedFlagKey } from '@/lib/encounter-engine'
 import { EncounterModal } from './EncounterModal'
 import { DialogueOverlay } from './DialogueOverlay'
-import { applyMoveTricks, cellHasTrick, tickLightBurn, restParty, advanceFoes, listFoes, foeFlagKey, seenCellsFrom } from '@/lib/exploration'
+import { applyMoveTricks, cellHasTrick, computeLightRadius, tickLightBurn, restParty, advanceFoes, listFoes, foeFlagKey, seenCellsFrom } from '@/lib/exploration'
 import { initCombat, applyCombatOutcome, consumeCombatItems, type CombatState } from '@/lib/combat-engine'
 import { CellInspector } from './CellInspector'
 import { usePanelWidth } from './ui/ResizablePanel'
@@ -235,6 +235,8 @@ export function DungeonMapper({
   combatStateRef.current = combatState
   const flagsRef = useRef<Record<string, boolean | number | string>>({})
   flagsRef.current = flags
+  const partyRef = useRef<Character[]>([])
+  partyRef.current = party
   const [dialogue, setDialogue] = useState<{ npcId: string; lineId: string } | null>(null)
   const dialogueRef = useRef<typeof dialogue>(null)
   dialogueRef.current = dialogue
@@ -401,13 +403,19 @@ export function DungeonMapper({
   // party sees standing on (x,y) (cardinal line of sight, stops at walls/doors)
   // into the map's persisted `seenCells`. Chunk fog above stays independent.
   const revealSeen = useCallback((map: MapData, x: number, y: number): string[] => {
+    // On dark maps sight is clamped to the party's light radius, so a torch
+    // only ever remembers as far as it could actually see; lit maps see full.
+    const cell = map.cells[`${x},${y}`]
+    const maxDist = (map.dark || cellHasTrick(cell, 'darkness'))
+      ? computeLightRadius(partyRef.current, ruleset, cell)
+      : undefined
     const set = new Set(map.seenCells ?? [])
     let changed = false
-    for (const k of seenCellsFrom(map, x, y, flagsRef.current)) {
+    for (const k of seenCellsFrom(map, x, y, flagsRef.current, maxDist)) {
       if (!set.has(k)) { set.add(k); changed = true }
     }
     return changed ? [...set] : (map.seenCells ?? [])
-  }, [])
+  }, [ruleset])
 
   // Convenience: the full position patch applied on every party move.
   const moveReveal = useCallback((m: MapData, x: number, y: number) => ({

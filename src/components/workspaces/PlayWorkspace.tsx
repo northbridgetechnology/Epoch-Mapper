@@ -1411,7 +1411,7 @@ export function PlayWorkspace({
             lightRadius={lightRadius}
           />
           {!combat && (
-            <Minimap map={activeMap} facing={facing} flags={flags} ruleset={ruleset} />
+            <Minimap map={activeMap} facing={facing} flags={flags} ruleset={ruleset} sightRadius={lightRadius} />
           )}
           {combat && <BattleOutcomeOverlay state={combat} ruleset={ruleset} onContinue={onCombatEnd} />}
           {showJournal && <JournalOverlay ruleset={ruleset} flags={flags} onClose={() => setShowJournal(false)} />}

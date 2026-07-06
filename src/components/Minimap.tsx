@@ -44,12 +44,15 @@ const FILL_COLOR: Record<Fill, string> = {
 }
 
 export function Minimap({
-  map, facing, flags, ruleset,
+  map, facing, flags, ruleset, sightRadius,
 }: {
   map: MapData
   facing: Facing
   flags: Record<string, boolean | number | string>
   ruleset?: Ruleset
+  /** Current view distance in cells (party light on dark maps). Undefined =
+   *  fully lit, so the live line of sight uses the default reveal distance. */
+  sightRadius?: number
 }) {
   const px = map.playerX
   const py = map.playerY
@@ -59,7 +62,7 @@ export function Minimap({
 
   // Exploration reveal: everything ever seen, plus the current line of sight.
   const revealedSet = new Set(map.seenCells ?? [])
-  for (const k of seenCellsFrom(map, px, py, flags)) revealedSet.add(k)
+  for (const k of seenCellsFrom(map, px, py, flags, sightRadius)) revealedSet.add(k)
   const isRevealed = (gx: number, gy: number) => revealedSet.has(`${gx},${gy}`)
 
   const sx = (gx: number) => (gx - x0) * CELL
