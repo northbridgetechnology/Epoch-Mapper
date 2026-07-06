@@ -3,6 +3,7 @@
 import type { MapData, EdgeDir } from '@/lib/types'
 import type { Facing, Ruleset } from '@/lib/engine-types'
 import { BASE, EDGE, OVERLAY, boundaryKey } from '@/lib/constants'
+import { npcRecruitedFlagKey } from '@/lib/event-engine'
 import { seenCellsFrom } from '@/lib/exploration'
 import { getTheme } from '@/lib/themes'
 
@@ -128,7 +129,7 @@ export function Minimap({
         for (const e of cell.entities ?? []) {
           if (e.t !== 'object') continue
           if (e.object.kind === 'inn') marks.push(dot(gx, gy, '#34d399', `inn_${gx}_${gy}`))
-          else if (e.object.kind === 'npc') {
+          else if (e.object.kind === 'npc' && !(e.object.npc && flags[npcRecruitedFlagKey(e.object.npc)])) {
             const npc = e.object.npc ? ruleset?.npcs?.find(n => n.id === e.object.npc) : undefined
             marks.push(dot(gx, gy, npc?.color ?? '#facc15', `npc_${gx}_${gy}`))
           }

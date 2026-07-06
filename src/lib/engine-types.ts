@@ -61,6 +61,8 @@ export type Effect =
   | { t: 'teachSpell'; spell: DefRef<SpellDef> }
   /** Roll credits: ends the game with optional epilogue text. */
   | { t: 'gameEnd'; text?: string }
+  /** Recruit an NPC into the party (dialogue "will you join me?", quest reward). */
+  | { t: 'recruit'; npc: DefRef<NpcDef> }
 
 // ── Stat modifier ──────────────────────────────────────────────────────────────
 
@@ -229,6 +231,10 @@ export interface NpcDef extends Definition {
   equipment?: Partial<Record<ItemSlot, ItemInstance>>
   knownSpells?: DefRef<SpellDef>[]
   lines: NpcLine[]
+  /** Can join the party (via a `recruit` effect). Placements vanish once recruited. */
+  recruitable?: boolean
+  /** Instantiated into the party at New Game (alongside the player's Main Character). */
+  startsInParty?: boolean
 }
 
 export interface QuestStage {
@@ -482,6 +488,8 @@ export interface Character {
   pronoun?: Pronoun
   /** Optional backstory shown in the Journal. */
   bio?: string
+  /** The NpcDef this party member was recruited/instantiated from (if any). */
+  sourceNpc?: string
 }
 
 export type Pronoun = 'he' | 'she' | 'they'

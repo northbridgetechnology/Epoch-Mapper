@@ -92,14 +92,21 @@ export interface ExploreEffect {
   partyCure: string[]
   /** Revive one random fallen member at partial HP (reviveRandom effect). */
   revive?: boolean
+  /** NPC ids to recruit into the party (dialogue/quest `recruit` effects). */
+  recruits: string[]
 }
 
 function emptyExploreEffect(): ExploreEffect {
   return {
     flagSets: {}, messages: [], goldDelta: 0, itemsGained: [], itemsLost: [],
-    questUpdates: [], npcMoves: [], teachSpells: [],
+    questUpdates: [], npcMoves: [], teachSpells: [], recruits: [],
     heal: 0, restoreMp: 0, partyDamage: [], partyStatus: [], partyCure: [],
   }
+}
+
+/** Save flag marking an NPC as recruited — its world placement then vanishes. */
+export function npcRecruitedFlagKey(npcId: string): string {
+  return `npc.recruited.${npcId}`
 }
 
 // ── Condition evaluation ──────────────────────────────────────────────────────
@@ -260,6 +267,12 @@ function applyEffectsInto(
         break
       case 'gameEnd':
         if (!result.gameEnd) result.gameEnd = { text: eff.text }
+        break
+      case 'recruit':
+        if (eff.npc && !result.recruits.includes(eff.npc)) {
+          result.recruits.push(eff.npc)
+          result.flagSets[npcRecruitedFlagKey(eff.npc)] = true   // placement vanishes
+        }
         break
       default:
         break

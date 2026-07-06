@@ -127,6 +127,7 @@ export {
   SAVE_SLOT_COUNT,
   newSaveState,
   newCharacter,
+  npcToCharacter,
   SaveStateParseError,
   type NewCharacterOpts,
 } from './lib/save-state'
@@ -224,6 +225,7 @@ export {
   pickNpcLine,
   finishNpcLine,
   npcLineHeardFlagKey,
+  npcRecruitedFlagKey,
 } from './lib/event-engine'
 export type { EventContext, ExploreEffect, PartyHarm } from './lib/event-engine'
 

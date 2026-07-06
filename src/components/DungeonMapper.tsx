@@ -27,7 +27,7 @@ import { PlayWorkspace } from './workspaces/PlayWorkspace'
 import { SettingsWorkspace } from './workspaces/SettingsWorkspace'
 import type { BoundaryData, Character, CellEntity, DoorDef, DoorState, Effect, Facing, Formation, GameMeta, ItemInstance, ResolvedEncounter, InscriptionDef, Ruleset, SaveState, SwitchDef } from '@/lib/engine-types'
 import { makeDefaultRuleset, normalizeRuleset } from '@/lib/default-ruleset'
-import { savePartyTemplate, loadPartyTemplate, saveToSlot, loadFromSlot, deleteAllSlots, listSaveSlots } from '@/lib/save-state'
+import { savePartyTemplate, loadPartyTemplate, saveToSlot, loadFromSlot, deleteAllSlots, listSaveSlots, npcToCharacter } from '@/lib/save-state'
 import { checkCellForEncounter, resolveEncounterTable, makeFixedEncounter, visitedFlagKey } from '@/lib/encounter-engine'
 import { EncounterModal } from './EncounterModal'
 import { DialogueOverlay } from './DialogueOverlay'
@@ -39,7 +39,7 @@ import { initCombat, applyCombatOutcome, consumeCombatItems, type CombatState } 
 import { CellInspector } from './CellInspector'
 import { usePanelWidth } from './ui/ResizablePanel'
 import { ShopModal } from './ShopModal'
-import { runCellEvents, applyFlagWriteWithReactions, resolveExploreEffects, applyExploreHarm, pickNpcLine, finishNpcLine, getInteractableObjects, objectUsedFlagKey, resolveLootTable, effectiveDoorState, type ExploreEffect, type EventContext } from '@/lib/event-engine'
+import { runCellEvents, applyFlagWriteWithReactions, resolveExploreEffects, applyExploreHarm, pickNpcLine, finishNpcLine, getInteractableObjects, objectUsedFlagKey, resolveLootTable, effectiveDoorState, npcRecruitedFlagKey, type ExploreEffect, type EventContext } from '@/lib/event-engine'
 
 const DRAFT_KEY = 'epochmapper.draft'
 const WELCOME_KEY = 'epochmapper.welcomed'
@@ -631,6 +631,24 @@ export function DungeonMapper({
         return nextParty
       })
     }
+    // Recruitment: instantiate joining NPCs into the party (flat, capped at
+    // partySize; the recruited flag — already in flagSets — hides their placement).
+    if (result.recruits.length > 0) {
+      const cap = ruleset.meta.partySize ?? 6
+      setParty(prev => {
+        let next = prev
+        for (const npcId of result.recruits) {
+          if (next.some(c => c.sourceNpc === npcId)) continue          // already in the party
+          if (next.length >= cap) { toast('Your party is full.'); continue }
+          const def = (ruleset.npcs ?? []).find(n => n.id === npcId)
+          if (!def) continue
+          const hero = npcToCharacter(def, ruleset)
+          next = [...next, hero]
+          toast.success(`${hero.name} joined the party!`)
+        }
+        return next
+      })
+    }
   }, [updateActiveMap, moveReveal, ruleset, setInventory, setGold, setFlags, setShopId, setActiveEncounter, setParty, setMaps, setGameOver])
 
   const makeEventContext = useCallback((): EventContext => ({
@@ -822,6 +840,7 @@ export function DungeonMapper({
     if (!aheadCell?.entities?.length) return
     for (const ent of aheadCell.entities) {
       if (ent.t !== 'object' || ent.object.kind !== 'npc' || !ent.object.npc) continue
+      if (flagsRef.current[npcRecruitedFlagKey(ent.object.npc)]) continue   // recruited — no longer here
       const def = (ruleset.npcs ?? []).find(n => n.id === ent.object.npc)
       if (!def) continue
       const ctx = makeEventContext()
@@ -985,7 +1004,7 @@ export function DungeonMapper({
           applyExploreEffect(result)
           return
         }
-        if (obj.kind === 'npc' && obj.npc) {
+        if (obj.kind === 'npc' && obj.npc && !flagsRef.current[npcRecruitedFlagKey(obj.npc)]) {
           const def = (ruleset.npcs ?? []).find(n => n.id === obj.npc)
           if (def) {
             const line = pickNpcLine(def, ctx)
@@ -1087,21 +1106,35 @@ export function DungeonMapper({
     () => (ruleset.meta.partyCreation ?? 'customMc') !== 'fixed' && !party.some(c => c.isMc),
     [ruleset.meta.partyCreation, party],
   )
+  // Assemble the starting party: the player's hero (if built) plus every NpcDef
+  // flagged `startsInParty`, capped at partySize. Legacy games with neither keep
+  // the currently-loaded (template/test) party.
+  const startNewGame = useCallback((hero?: Character | null) => {
+    const cap = ruleset.meta.partySize ?? 6
+    const seeded = (ruleset.npcs ?? []).filter(n => n.startsInParty).map(n => npcToCharacter(n, ruleset))
+    let next: Character[]
+    if (hero) next = [hero, ...seeded]
+    else if (seeded.length > 0) next = seeded
+    else next = partyRef.current
+    next = next.slice(0, cap)
+    setParty(next)
+    setFormation({ front: next.map((_, i) => i), back: [] })
+    setActiveIdx(0)
+    setIntroPhase(null)
+  }, [ruleset, setParty, setFormation, setActiveIdx])
   const beginNewGame = useCallback(() => {
     setShowTitle(false)
     if (ruleset.meta.opening?.slides?.length) setIntroPhase('opening')
     else if (needsBuilder()) setIntroPhase('build')
-    else setIntroPhase(null)
-  }, [ruleset.meta.opening, needsBuilder])
+    else startNewGame(null)
+  }, [ruleset.meta.opening, needsBuilder, startNewGame])
   const finishOpening = useCallback(() => {
-    setIntroPhase(needsBuilder() ? 'build' : null)
-  }, [needsBuilder])
+    if (needsBuilder()) setIntroPhase('build')
+    else startNewGame(null)
+  }, [needsBuilder, startNewGame])
   const finishBuilder = useCallback((hero: Character) => {
-    setParty([hero])
-    setFormation({ front: [0], back: [] })
-    setActiveIdx(0)
-    setIntroPhase(null)
-  }, [setParty, setFormation, setActiveIdx])
+    startNewGame(hero)
+  }, [startNewGame])
 
   // Save-point policy: saving anywhere, or only on Save Point cells
   const canSaveHere = (ruleset.meta.savePolicy ?? 'anywhere') === 'anywhere'

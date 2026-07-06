@@ -6,7 +6,7 @@
  */
 
 import { gzipSync, gunzipSync, strToU8, strFromU8 } from 'fflate'
-import type { Character, ClassDef, Formation, Pronoun, Ruleset, SaveState } from './engine-types'
+import type { Character, ClassDef, Formation, NpcDef, Pronoun, Ruleset, SaveState } from './engine-types'
 import { deriveMaxHp, deriveMaxMp } from './engine-types'
 import { uid } from './utils'
 
@@ -214,6 +214,60 @@ export function newCharacter(
   char.maxMp = deriveMaxMp({ level: 1, attributes: attrByShort }, cls as ClassDef)
   char.mp = char.maxMp
 
+  return char
+}
+
+/**
+ * Instantiate a runtime `Character` from an `NpcDef` — the bridge that lets an
+ * authored NPC join the party (recruitment) or be seeded at New Game
+ * (`startsInParty`). Explicit `def.attributes` are authoritative; missing ones
+ * fall back to class/race-modified defaults. HP/MP derive at the NPC's level.
+ */
+export function npcToCharacter(def: NpcDef, ruleset: Ruleset): Character {
+  const classId = def.classId ?? ruleset.classes[0]?.id ?? ''
+  const raceId = def.raceId ?? ruleset.races[0]?.id ?? ''
+  const cls = ruleset.classes.find(c => c.id === classId) ?? ruleset.classes[0]
+  const race = ruleset.races.find(r => r.id === raceId) ?? ruleset.races[0]
+  const level = Math.max(1, def.level ?? 1)
+
+  const attributes: Record<string, number> = {}
+  for (const attr of ruleset.attributes) {
+    const short = attr.id.replace('attr.', '')
+    const explicit = def.attributes?.[attr.id] ?? def.attributes?.[short]
+    const raw = explicit !== undefined
+      ? explicit
+      : attr.default
+        + (cls.attrModifiers[attr.id] ?? cls.attrModifiers[short] ?? 0)
+        + (race.attrModifiers[attr.id] ?? race.attrModifiers[short] ?? 0)
+    attributes[attr.id] = Math.min(attr.max, Math.max(attr.min, raw))
+  }
+
+  const attrByShort: Record<string, number> = {}
+  for (const [k, v] of Object.entries(attributes)) attrByShort[k.replace('attr.', '')] = v
+
+  const char: Character = {
+    id: uid(),
+    name: def.name,
+    classId,
+    raceId,
+    level,
+    xp: 0,
+    attributes,
+    hp: 0,
+    maxHp: 0,
+    mp: 0,
+    maxMp: 0,
+    equipment: def.equipment ? { ...def.equipment } : {},
+    knownSpells: [...(def.knownSpells ?? [])],
+    statuses: [],
+    alive: true,
+    sourceNpc: def.id,
+    ...(def.portrait ? { portrait: def.portrait } : {}),
+  }
+  char.maxHp = deriveMaxHp({ level, attributes: attrByShort }, cls as ClassDef)
+  char.hp = char.maxHp
+  char.maxMp = deriveMaxMp({ level, attributes: attrByShort }, cls as ClassDef)
+  char.mp = char.maxMp
   return char
 }
 

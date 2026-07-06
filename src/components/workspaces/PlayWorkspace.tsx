@@ -11,7 +11,7 @@ import { pixelSprite, pixelSpriteRect, spriteAspect, creatureSprite } from '@/li
 import { computeLightRadius, cellHasTrick, listFoes } from '@/lib/exploration'
 import { listSaveSlots } from '@/lib/save-state'
 import type { BoundaryData, CellEntity, Character, Facing, ItemInstance, Ruleset } from '@/lib/engine-types'
-import { objectUsedFlagKey, effectiveDoorState } from '@/lib/event-engine'
+import { objectUsedFlagKey, effectiveDoorState, npcRecruitedFlagKey } from '@/lib/event-engine'
 import type { BattleViewState } from '@/lib/battle-scene'
 import type { CombatState } from '@/lib/combat-engine'
 import { useBattleController, BattleHud, BattleOutcomeOverlay } from '@/components/BattleHud'
@@ -873,7 +873,9 @@ function FirstPersonView({ map, facing, isCellRevealed, revealedBoundaries, flag
 
     // ── NPC standing in the cell ─────────────────────────────────────────────
     const npcEnt = (frontCell.entities ?? []).find(
-      (e): e is Extract<CellEntity, { t: 'object' }> => e.t === 'object' && e.object.kind === 'npc',
+      (e): e is Extract<CellEntity, { t: 'object' }> =>
+        e.t === 'object' && e.object.kind === 'npc'
+        && !(e.object.npc && flags[npcRecruitedFlagKey(e.object.npc)]),
     )
     if (npcEnt) {
       const def = npcEnt.object.npc ? ruleset?.npcs.find(n => n.id === npcEnt.object.npc) : undefined

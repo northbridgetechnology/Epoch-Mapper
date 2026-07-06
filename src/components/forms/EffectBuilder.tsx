@@ -37,6 +37,7 @@ const ALL_VERBS = [
   { t: 'runEvent',    label: '🧩 Run Event',          group: 'Scripting' },
   { t: 'questStage',  label: '📜 Quest Stage',        group: 'Scripting' },
   { t: 'moveNpc',     label: '🚶 Move NPC',           group: 'Scripting' },
+  { t: 'recruit',     label: '🤝 Recruit NPC',        group: 'Scripting' },
   { t: 'gameEnd',     label: '🏆 End Game (credits)', group: 'Scripting' },
 ] as const
 
@@ -64,6 +65,7 @@ function blankEffect(verb: Verb): Effect {
     case 'runEvent':     return { t: 'runEvent', event: '' }
     case 'questStage':   return { t: 'questStage', quest: '', stage: 1 }
     case 'moveNpc':      return { t: 'moveNpc', npc: '', x: 0, y: 0 }
+    case 'recruit':      return { t: 'recruit', npc: '' }
     case 'identify':     return { t: 'identify' }
     case 'removeCurse':  return { t: 'removeCurse' }
     case 'teachSpell':   return { t: 'teachSpell', spell: '' }
@@ -127,6 +129,10 @@ function effectLabel(e: Effect, ruleset: Ruleset): string {
     case 'moveNpc': {
       const name = ruleset.npcs?.find(n => n.id === e.npc)?.name ?? e.npc
       return `Move ${name} to ${e.mapId ? `${e.mapId} ` : ''}(${e.x},${e.y})`
+    }
+    case 'recruit': {
+      const name = ruleset.npcs?.find(n => n.id === e.npc)?.name ?? e.npc
+      return `Recruit ${name} into the party`
     }
     default:          return (e as Effect).t
   }
@@ -203,6 +209,16 @@ function EffectRow({ effect, ruleset, onChange, onRemove }: EffectRowProps) {
               <input type="number" value={e.y} onChange={ev => onChange({ ...e, y: ev.target.valueAsNumber || 0 })} className={cn(INPUT_CLS, 'w-14')} />
             </div>
           </>
+        )}
+
+        {e.t === 'recruit' && (
+          <select value={e.npc} onChange={ev => onChange({ ...e, npc: ev.target.value })}
+            className={cn(INPUT_CLS, 'min-w-[9rem]')}>
+            <option value="">— pick NPC —</option>
+            {(ruleset.npcs ?? []).map(n => (
+              <option key={n.id} value={n.id}>{n.portrait ?? ''} {n.name}{n.recruitable ? '' : ' (not recruitable)'}</option>
+            ))}
+          </select>
         )}
 
         {e.t === 'teachSpell' && (

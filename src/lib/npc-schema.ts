@@ -13,6 +13,8 @@ export const NPC_SCHEMA: FieldSchema[] = [
   { key: 'color',       label: 'Color',       type: 'color',   optional: true },
   { key: 'description', label: 'Description', type: 'textarea', optional: true },
   { key: 'level',       label: 'Level',       type: 'number',  min: 1, optional: true },
+  { key: 'recruitable', label: 'Recruitable', type: 'boolean', optional: true },
+  { key: 'startsInParty', label: 'Starts in party', type: 'boolean', optional: true },
 ]
 
 export const EVENT_SCHEMA: FieldSchema[] = [
