@@ -27,11 +27,22 @@ const DATA: Record<string, string> = {
 
 export function BuyMeACoffee() {
   useEffect(() => {
-    if (document.querySelector('script[data-name="BMC-Widget"]')) return
+    // Already injected (or the button already exists) — don't double up.
+    if (document.querySelector('script[data-name="BMC-Widget"]') || document.getElementById('bmc-wbtn')) return
+
     const script = document.createElement('script')
     script.src = WIDGET_SRC
     script.async = true
     for (const [key, value] of Object.entries(DATA)) script.setAttribute(key, value)
+
+    // The widget bootstraps itself on the document's `DOMContentLoaded` event.
+    // That event fired long before this effect runs, so the widget's listener
+    // would never trigger — re-dispatch it once the script has loaded so the
+    // floating button actually mounts.
+    script.addEventListener('load', () => {
+      document.dispatchEvent(new Event('DOMContentLoaded', { bubbles: true, cancelable: true }))
+    })
+
     document.body.appendChild(script)
   }, [])
   return null
