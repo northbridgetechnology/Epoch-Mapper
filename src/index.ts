@@ -119,6 +119,7 @@ export {
   deleteDraft,
   savePartyTemplate,
   loadPartyTemplate,
+  clearPartyTemplate,
   saveToSlot,
   loadFromSlot,
   deleteSlot,

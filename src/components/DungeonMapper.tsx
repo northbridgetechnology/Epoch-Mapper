@@ -27,7 +27,7 @@ import { PlayWorkspace } from './workspaces/PlayWorkspace'
 import { SettingsWorkspace } from './workspaces/SettingsWorkspace'
 import type { BoundaryData, Character, CellEntity, DoorDef, DoorState, Effect, Facing, Formation, GameMeta, ItemInstance, ResolvedEncounter, InscriptionDef, Ruleset, SaveState, SwitchDef } from '@/lib/engine-types'
 import { makeDefaultRuleset, normalizeRuleset } from '@/lib/default-ruleset'
-import { savePartyTemplate, loadPartyTemplate, saveToSlot, loadFromSlot, deleteAllSlots, listSaveSlots, npcToCharacter } from '@/lib/save-state'
+import { savePartyTemplate, loadPartyTemplate, clearPartyTemplate, saveToSlot, loadFromSlot, deleteAllSlots, listSaveSlots, npcToCharacter } from '@/lib/save-state'
 import { checkCellForEncounter, resolveEncounterTable, makeFixedEncounter, visitedFlagKey } from '@/lib/encounter-engine'
 import { EncounterModal } from './EncounterModal'
 import { DialogueOverlay } from './DialogueOverlay'
@@ -1627,6 +1627,16 @@ export function DungeonMapper({
       setCustomMarkers([])
       setMaps(generated)
       setActiveIdx(0)
+      // Clean slate: forget the party (incl. the Main Character), its saved
+      // template, inventory/flags, and reset the New Game intro flow.
+      setParty([])
+      setFormation({ front: [], back: [] })
+      setInventory([])
+      setFlags({})
+      setGold(ruleset.meta.startingGold)
+      clearPartyTemplate()
+      setShowTitle(true)
+      setIntroPhase(null)
     } else {
       setMaps(prev => {
         const next = [...prev, ...generated]

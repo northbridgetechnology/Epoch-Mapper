@@ -310,3 +310,12 @@ export function loadPartyTemplate(): { party: Character[]; formation: Formation 
     return null
   }
 }
+
+/** Forget the persisted party template (clean-slate on New Session). */
+export function clearPartyTemplate(): void {
+  try {
+    localStorage.removeItem(PARTY_DRAFT_KEY)
+  } catch {
+    // ignore
+  }
+}

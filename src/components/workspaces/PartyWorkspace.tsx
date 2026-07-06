@@ -89,14 +89,16 @@ function CharacterCard({
         <div className="text-xs text-red-400">{char.hp}/{char.maxHp} HP</div>
         {char.maxMp > 0 && <div className="text-xs text-blue-400">{char.mp}/{char.maxMp} MP</div>}
       </div>
-      {char.isMc ? (
-        <span className="p-1 text-[9px] uppercase tracking-wide text-amber-400/60 font-semibold" title="The Main Character can't be dismissed">Hero</span>
-      ) : (
-        <button onClick={e => { e.stopPropagation(); onRemove() }}
-          className="p-1 rounded text-white/30 hover:text-red-400 hover:bg-white/10">
-          <Trash2 className="w-3.5 h-3.5" />
-        </button>
-      )}
+      <button
+        onClick={e => {
+          e.stopPropagation()
+          if (char.isMc && !window.confirm(`Delete ${char.name}, your Main Character? This removes them from the party.`)) return
+          onRemove()
+        }}
+        title={char.isMc ? 'Delete the Main Character' : 'Remove from party'}
+        className="p-1 rounded text-white/30 hover:text-red-400 hover:bg-white/10">
+        <Trash2 className="w-3.5 h-3.5" />
+      </button>
     </div>
   )
 }
@@ -642,10 +644,20 @@ export function PartyWorkspace({
       <div className="w-72 flex-shrink-0 flex flex-col border-r border-white/10 min-h-0">
         <div className="flex items-center justify-between px-3 py-2 border-b border-white/10">
           <div className="text-sm font-semibold text-white/80">Party ({party.length}/{maxParty})</div>
-          <button onClick={() => setShowAdd(true)} disabled={party.length >= maxParty}
-            className="flex items-center gap-1 px-2 py-1 rounded bg-amber-600 hover:bg-amber-500 disabled:opacity-40 text-white text-xs font-medium">
-            <Plus className="w-3 h-3" /> Add
-          </button>
+          <div className="flex items-center gap-1.5">
+            {party.length > 0 && (
+              <button
+                onClick={() => { if (window.confirm('Remove every party member (including the Main Character)?')) { updateParty([], { front: [], back: [] }); setSelectedIdx(null) } }}
+                title="Remove all party members"
+                className="flex items-center gap-1 px-2 py-1 rounded text-white/40 hover:text-red-400 hover:bg-white/10 text-xs font-medium">
+                <Trash2 className="w-3 h-3" /> Clear
+              </button>
+            )}
+            <button onClick={() => setShowAdd(true)} disabled={party.length >= maxParty}
+              className="flex items-center gap-1 px-2 py-1 rounded bg-amber-600 hover:bg-amber-500 disabled:opacity-40 text-white text-xs font-medium">
+              <Plus className="w-3 h-3" /> Add
+            </button>
+          </div>
         </div>
 
         <div className="flex-1 overflow-y-auto p-2 space-y-1.5 min-h-0">
