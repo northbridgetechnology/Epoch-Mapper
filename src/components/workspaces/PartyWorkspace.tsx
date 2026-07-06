@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { Plus, Trash2, ChevronDown, ChevronUp, User, Package, ShieldCheck, Crown } from 'lucide-react'
+import { Plus, Trash2, ChevronDown, ChevronUp, User, Package, ShieldCheck, Crown, ArrowDownToLine, ArrowUpToLine } from 'lucide-react'
 import { Portrait } from '@/lib/portraits'
 import { cn } from '@/lib/utils'
 import type {
@@ -17,10 +17,14 @@ import { toast } from 'sonner'
 interface PartyWorkspaceProps {
   ruleset: Ruleset
   party: Character[]
+  /** Benched members — retained but not fielded. Defaults to none. */
+  reserve?: Character[]
   formation: Formation
   inventory: ItemInstance[]
   gold: number
-  onPartyChange: (party: Character[], formation: Formation) => void
+  /** Emits the whole roster (active party + reserve) so recruited-flag sync and
+   *  persistence stay atomic. */
+  onRosterChange: (party: Character[], formation: Formation, reserve: Character[]) => void
   onInventoryChange: (inventory: ItemInstance[], gold: number) => void
 }
 
@@ -53,10 +57,10 @@ const ALL_SLOTS: { slot: ItemSlot; label: string }[] = [
 // ── Character card (roster row) ───────────────────────────────────────────────
 
 function CharacterCard({
-  char, ruleset, selected, onSelect, onRemove,
+  char, ruleset, selected, onSelect, onRemove, onBench,
 }: {
   char: Character; ruleset: Ruleset; selected: boolean
-  onSelect: () => void; onRemove: () => void
+  onSelect: () => void; onRemove: () => void; onBench?: () => void
 }) {
   const cls = classOf(ruleset, char.classId)
   const race = raceOf(ruleset, char.raceId)
@@ -89,13 +93,57 @@ function CharacterCard({
         <div className="text-xs text-red-400">{char.hp}/{char.maxHp} HP</div>
         {char.maxMp > 0 && <div className="text-xs text-blue-400">{char.mp}/{char.maxMp} MP</div>}
       </div>
+      {onBench && (
+        <button onClick={e => { e.stopPropagation(); onBench() }}
+          title="Bench (keep on the roster, hidden from the world)"
+          className="p-1 rounded text-white/30 hover:text-sky-300 hover:bg-white/10">
+          <ArrowDownToLine className="w-3.5 h-3.5" />
+        </button>
+      )}
       <button
         onClick={e => {
           e.stopPropagation()
-          if (char.isMc && !window.confirm(`Delete ${char.name}, your Main Character? This removes them from the party.`)) return
+          if (char.isMc && !window.confirm(`Dismiss ${char.name}, your Main Character? This removes them from the roster.`)) return
           onRemove()
         }}
-        title={char.isMc ? 'Delete the Main Character' : 'Remove from party'}
+        title={char.isMc ? 'Dismiss the Main Character' : 'Dismiss from the roster'}
+        className="p-1 rounded text-white/30 hover:text-red-400 hover:bg-white/10">
+        <Trash2 className="w-3.5 h-3.5" />
+      </button>
+    </div>
+  )
+}
+
+// ── Reserve (bench) row ───────────────────────────────────────────────────────
+
+function ReserveCard({ char, ruleset, canField, onField, onDismiss }: {
+  char: Character; ruleset: Ruleset; canField: boolean
+  onField: () => void; onDismiss: () => void
+}) {
+  const cls = classOf(ruleset, char.classId)
+  const race = raceOf(ruleset, char.raceId)
+  return (
+    <div className="flex items-center gap-3 px-3 py-1.5 rounded-lg border border-white/5 bg-zinc-900/40">
+      {char.portrait ? (
+        <div className="flex-shrink-0 opacity-70"><Portrait value={char.portrait} size={26} /></div>
+      ) : (
+        <div className="w-6 h-6 grid place-items-center rounded-full text-sm flex-shrink-0 opacity-70"
+          style={{ backgroundColor: cls?.color ?? '#555' }}>{cls?.icon ?? <User className="w-3.5 h-3.5" />}</div>
+      )}
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-1.5 text-xs font-medium text-white/70 truncate">
+          {char.isMc && <Crown className="w-3 h-3 text-amber-400/70 flex-shrink-0" aria-label="Main Character" />}
+          <span className="truncate">{char.name}</span>
+        </div>
+        <div className="text-[10px] text-white/40">Lv.{char.level} {race?.name} {cls?.name}</div>
+      </div>
+      <button onClick={onField} disabled={!canField}
+        title={canField ? 'Field (add to the active party)' : 'Party is full'}
+        className="p-1 rounded text-white/30 hover:text-emerald-300 hover:bg-white/10 disabled:opacity-25 disabled:cursor-not-allowed">
+        <ArrowUpToLine className="w-3.5 h-3.5" />
+      </button>
+      <button onClick={() => { if (!char.isMc || window.confirm(`Dismiss ${char.name}, your Main Character, from the roster?`)) onDismiss() }}
+        title="Dismiss from the roster"
         className="p-1 rounded text-white/30 hover:text-red-400 hover:bg-white/10">
         <Trash2 className="w-3.5 h-3.5" />
       </button>
@@ -603,7 +651,7 @@ function NewCharacterModal({ ruleset, onAdd, onClose }: {
 type Tab = 'sheet' | 'inventory'
 
 export function PartyWorkspace({
-  ruleset, party, formation, inventory, gold, onPartyChange, onInventoryChange,
+  ruleset, party, reserve = [], formation, inventory, gold, onRosterChange, onInventoryChange,
 }: PartyWorkspaceProps) {
   const [selectedIdx, setSelectedIdx] = useState<number | null>(party.length > 0 ? 0 : null)
   const [showAdd, setShowAdd] = useState(false)
@@ -612,7 +660,7 @@ export function PartyWorkspace({
   const maxParty = ruleset.meta.partySize
 
   function updateParty(newParty: Character[], newFormation?: Formation) {
-    onPartyChange(newParty, newFormation ?? formation)
+    onRosterChange(newParty, newFormation ?? formation, reserve)
   }
 
   function addChar(c: Character) {
@@ -624,12 +672,43 @@ export function PartyWorkspace({
     setSelectedIdx(np.length - 1)
   }
 
+  // Remove index from the formation and shift higher indices down.
+  const remapFormation = (nf: Formation, idx: number): Formation => {
+    const remap = (arr: number[]) => arr.filter(i => i !== idx).map(i => (i > idx ? i - 1 : i))
+    return { front: remap(nf.front), back: remap(nf.back) }
+  }
+
   function removeChar(idx: number) {
     const np = party.filter((_, i) => i !== idx)
-    const remap = (arr: number[]) => arr.filter(i => i !== idx).map(i => (i > idx ? i - 1 : i))
-    const nf = { front: remap(formation.front), back: remap(formation.back) }
-    updateParty(np, nf)
+    updateParty(np, remapFormation(formation, idx))
     setSelectedIdx(np.length > 0 ? Math.min(idx, np.length - 1) : null)
+  }
+
+  // Move a party member to the bench (retained, hidden from the world).
+  function benchChar(idx: number) {
+    const char = party[idx]
+    if (!char) return
+    const np = party.filter((_, i) => i !== idx)
+    onRosterChange(np, remapFormation(formation, idx), [...reserve, char])
+    setSelectedIdx(np.length > 0 ? Math.min(idx, np.length - 1) : null)
+  }
+
+  // Bring a benched member back into the active party (if there's room).
+  function fieldChar(rIdx: number) {
+    const char = reserve[rIdx]
+    if (!char) return
+    if (party.length >= maxParty) { toast('The party is full — bench or dismiss someone first.'); return }
+    const np = [...party, char]
+    const nf = { ...formation }
+    if (np.length <= Math.ceil(maxParty / 2)) nf.front = [...nf.front, np.length - 1]
+    else nf.back = [...nf.back, np.length - 1]
+    onRosterChange(np, nf, reserve.filter((_, i) => i !== rIdx))
+    setSelectedIdx(np.length - 1)
+  }
+
+  // Dismiss a benched member from the roster entirely (recruited → world returns).
+  function dismissReserve(rIdx: number) {
+    onRosterChange(party, formation, reserve.filter((_, i) => i !== rIdx))
   }
 
   function updateChar(idx: number, c: Character) {
@@ -670,8 +749,23 @@ export function PartyWorkspace({
             <CharacterCard key={char.id} char={char} ruleset={ruleset}
               selected={selectedIdx === idx}
               onSelect={() => { setSelectedIdx(idx); setTab('sheet') }}
-              onRemove={() => removeChar(idx)} />
+              onRemove={() => removeChar(idx)}
+              onBench={() => benchChar(idx)} />
           ))}
+
+          {reserve.length > 0 && (
+            <div className="pt-2 mt-1 border-t border-white/10 space-y-1.5">
+              <div className="px-1 text-[10px] uppercase tracking-wide text-white/35 font-semibold">
+                Reserve ({reserve.length})
+              </div>
+              {reserve.map((char, rIdx) => (
+                <ReserveCard key={char.id} char={char} ruleset={ruleset}
+                  canField={party.length < maxParty}
+                  onField={() => fieldChar(rIdx)}
+                  onDismiss={() => dismissReserve(rIdx)} />
+              ))}
+            </div>
+          )}
         </div>
 
         {party.length > 0 && (

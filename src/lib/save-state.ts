@@ -293,19 +293,20 @@ export function newSaveState(ruleset: Ruleset, mapHash = ''): SaveState {
 
 const PARTY_DRAFT_KEY = 'epochengine.partyTemplate'
 
-export function savePartyTemplate(party: Character[], formation: Formation): void {
+export function savePartyTemplate(party: Character[], formation: Formation, reserve: Character[] = []): void {
   try {
-    localStorage.setItem(PARTY_DRAFT_KEY, JSON.stringify({ party, formation }))
+    localStorage.setItem(PARTY_DRAFT_KEY, JSON.stringify({ party, formation, reserve }))
   } catch {
     // ignore
   }
 }
 
-export function loadPartyTemplate(): { party: Character[]; formation: Formation } | null {
+export function loadPartyTemplate(): { party: Character[]; formation: Formation; reserve: Character[] } | null {
   try {
     const raw = localStorage.getItem(PARTY_DRAFT_KEY)
     if (!raw) return null
-    return JSON.parse(raw)
+    const parsed = JSON.parse(raw) as { party: Character[]; formation: Formation; reserve?: Character[] }
+    return { ...parsed, reserve: parsed.reserve ?? [] }
   } catch {
     return null
   }

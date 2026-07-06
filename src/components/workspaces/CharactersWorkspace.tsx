@@ -111,15 +111,16 @@ function CastTab({ ruleset, onRulesetChange, party }: {
 }
 
 export function CharactersWorkspace({
-  ruleset, onRulesetChange, party, formation, inventory, gold, onPartyChange, onInventoryChange,
+  ruleset, onRulesetChange, party, reserve, formation, inventory, gold, onRosterChange, onInventoryChange,
 }: {
   ruleset: Ruleset
   onRulesetChange: (r: Ruleset) => void
   party: Character[]
+  reserve: Character[]
   formation: Formation
   inventory: ItemInstance[]
   gold: number
-  onPartyChange: (party: Character[], formation: Formation) => void
+  onRosterChange: (party: Character[], formation: Formation, reserve: Character[]) => void
   onInventoryChange: (inventory: ItemInstance[], gold: number) => void
 }) {
   const [tab, setTab] = useState<'party' | 'cast'>('party')
@@ -143,10 +144,11 @@ export function CharactersWorkspace({
           <PartyWorkspace
             ruleset={ruleset}
             party={party}
+            reserve={reserve}
             formation={formation}
             inventory={inventory}
             gold={gold}
-            onPartyChange={onPartyChange}
+            onRosterChange={onRosterChange}
             onInventoryChange={onInventoryChange}
           />
         ) : (

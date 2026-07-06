@@ -504,6 +504,8 @@ export interface SaveState {
   mapHash: string
   position: { mapId: string; x: number; y: number; facing: Facing }
   party: Character[]
+  /** Benched members — kept on the roster, hidden from the world, re-fieldable. */
+  reserve?: Character[]
   formation: Formation
   gold: number
   sharedInventory: ItemInstance[]

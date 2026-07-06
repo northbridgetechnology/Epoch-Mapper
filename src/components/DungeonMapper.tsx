@@ -225,6 +225,7 @@ export function DungeonMapper({
   workspaceRef.current = workspace
   const [ruleset, setRuleset] = useState<Ruleset>(() => makeDefaultRuleset())
   const [party, setParty] = useState<Character[]>([])
+  const [reserve, setReserve] = useState<Character[]>([])
   const [formation, setFormation] = useState<Formation>({ front: [], back: [] })
   const [inventory, setInventory] = useState<ItemInstance[]>([])
   const [gold, setGold] = useState<number>(100)
@@ -251,6 +252,8 @@ export function DungeonMapper({
   flagsRef.current = flags
   const partyRef = useRef<Character[]>([])
   partyRef.current = party
+  const reserveRef = useRef<Character[]>([])
+  reserveRef.current = reserve
   const [dialogue, setDialogue] = useState<{ npcId: string; lineId: string } | null>(null)
   const dialogueRef = useRef<typeof dialogue>(null)
   dialogueRef.current = dialogue
@@ -282,7 +285,7 @@ export function DungeonMapper({
   // Load persisted party template on mount
   useEffect(() => {
     const saved = loadPartyTemplate()
-    if (saved) { setParty(saved.party); setFormation(saved.formation) }
+    if (saved) { setParty(saved.party); setFormation(saved.formation); setReserve(saved.reserve ?? []) }
   }, [])
 
   const activeMap = maps[activeIdx] ?? null
@@ -1067,7 +1070,7 @@ export function DungeonMapper({
     rulesetVersion: ruleset.meta.version,
     mapHash: 'session',
     position: { mapId: activeMap?.id ?? '', x: activeMap?.playerX ?? 0, y: activeMap?.playerY ?? 0, facing },
-    party, formation, gold,
+    party, reserve, formation, gold,
     sharedInventory: inventory,
     flags,
     revealed: Object.fromEntries(maps.map(m => [m.id, m.revealedChunks ?? []])),
@@ -1075,10 +1078,11 @@ export function DungeonMapper({
     revealedBoundaries: Array.from(revealedBoundaries),
     rngSeed: 0,
     playtimeMs: 0,
-  }), [ruleset.meta.version, activeMap, facing, party, formation, gold, inventory, flags, maps, revealedBoundaries])
+  }), [ruleset.meta.version, activeMap, facing, party, reserve, formation, gold, inventory, flags, maps, revealedBoundaries])
 
   const applySaveState = useCallback((s: SaveState) => {
     setParty(s.party)
+    setReserve(s.reserve ?? [])
     setFormation(s.formation)
     setGold(s.gold)
     setInventory(s.sharedInventory)
@@ -1121,10 +1125,11 @@ export function DungeonMapper({
     else next = partyRef.current
     next = next.slice(0, cap)
     setParty(next)
+    setReserve([])
     setFormation({ front: next.map((_, i) => i), back: [] })
     setActiveIdx(0)
     setIntroPhase(null)
-  }, [ruleset, setParty, setFormation, setActiveIdx])
+  }, [ruleset, setParty, setReserve, setFormation, setActiveIdx])
   const beginNewGame = useCallback(() => {
     setShowTitle(false)
     if (ruleset.meta.opening?.slides?.length) setIntroPhase('opening')
@@ -1211,13 +1216,15 @@ export function DungeonMapper({
     toast('The party stirs awake at the entrance, purses lighter…')
   }, [ruleset.meta.wipeGoldPenalty, maps, setMaps, setActiveIdx, moveReveal])
 
-  // Party edits from the Characters workspace. When a recruited member leaves
-  // the party, clear their `npc.recruited.<id>` flag so their world placement
-  // reappears and they can be recruited again (otherwise the flag hides every
-  // placement of that NPC forever).
-  const handlePartyChange = useCallback((p: Character[], f: Formation) => {
-    const freed = partyRef.current
-      .filter(c => c.sourceNpc && !p.some(n => n.id === c.id))
+  // Roster edits from the Characters workspace (active party + reserve/bench).
+  // A recruited member's `npc.recruited.<id>` flag hides their world placement;
+  // clear it only when they leave the roster ENTIRELY (party ∪ reserve) — so
+  // benching keeps them hidden, but dismissing returns them to the world.
+  const handleRosterChange = useCallback((p: Character[], f: Formation, r: Character[]) => {
+    const prevRoster = [...partyRef.current, ...reserveRef.current]
+    const nextRoster = [...p, ...r]
+    const freed = prevRoster
+      .filter(c => c.sourceNpc && !nextRoster.some(n => n.id === c.id))
       .map(c => c.sourceNpc as string)
     if (freed.length > 0) {
       setFlags(fl => {
@@ -1227,13 +1234,15 @@ export function DungeonMapper({
       })
     }
     setParty(p)
+    setReserve(r)
     setFormation(f)
-    savePartyTemplate(p, f)
-  }, [setFlags, setParty, setFormation])
+    savePartyTemplate(p, f, r)
+  }, [setFlags, setParty, setReserve, setFormation])
 
   const handleAbandonRun = useCallback(() => {
     deleteAllSlots()
     setParty([])
+    setReserve([])
     setFormation({ front: [], back: [] })
     setInventory([])
     setFlags({})
@@ -1650,6 +1659,7 @@ export function DungeonMapper({
       // Clean slate: forget the party (incl. the Main Character), its saved
       // template, inventory/flags, and reset the New Game intro flow.
       setParty([])
+      setReserve([])
       setFormation({ front: [], back: [] })
       setInventory([])
       setFlags({})
@@ -1909,10 +1919,11 @@ export function DungeonMapper({
               ruleset={ruleset}
               onRulesetChange={setRuleset}
               party={party}
+              reserve={reserve}
               formation={formation}
               inventory={inventory}
               gold={gold}
-              onPartyChange={handlePartyChange}
+              onRosterChange={handleRosterChange}
               onInventoryChange={(inv, g) => { setInventory(inv); setGold(g) }}
             />
           </div>
@@ -1967,7 +1978,7 @@ export function DungeonMapper({
                   })
                 }
               }
-              savePartyTemplate(updatedParty, formation)
+              savePartyTemplate(updatedParty, formation, reserve)
               levelUps.forEach(name => toast.success(`${name} leveled up!`))
               setCombatState(null)
               if (pendingFoeKillRef.current) {
