@@ -101,6 +101,8 @@ export type {
   Definition,
   FieldSchema,
   FieldType,
+  Pronoun,
+  OpeningStory,
 } from './lib/engine-types'
 export { deriveMaxHp, deriveMaxMp, xpToNextLevel } from './lib/engine-types'
 
@@ -126,6 +128,7 @@ export {
   newSaveState,
   newCharacter,
   SaveStateParseError,
+  type NewCharacterOpts,
 } from './lib/save-state'
 
 // Schema-driven form generator
@@ -150,6 +153,16 @@ export { NPC_SCHEMA, EVENT_SCHEMA, QUEST_SCHEMA, blankNpc, blankEventDef, blankQ
 export { DialogueOverlay } from './components/DialogueOverlay'
 export { JournalOverlay } from './components/JournalOverlay'
 export { Minimap } from './components/Minimap'
+
+// Story & protagonist (Batch F)
+export { resolveText, resolveTextList, type TextActor } from './lib/text-tokens'
+export { Portrait, portraitIds, portraitLabel, isBuiltinPortrait, suggestPortrait, portraitGrid } from './lib/portraits'
+export {
+  DEFAULT_POINT_POOL, pointPool, emptyAlloc, attrScore, pointsSpent, pointsRemaining,
+  canRaise, canLower, raise, lower, buildCharacter, type BuildDraft,
+} from './lib/char-build'
+export { CharacterBuilder } from './components/CharacterBuilder'
+export { OpeningStoryOverlay } from './components/OpeningStory'
 
 // Spell + status-effect schema helpers (Phase E5)
 export { SPELL_SCHEMA, STATUS_SCHEMA, blankSpell, blankStatusEffect } from './lib/spell-schema'

@@ -51,6 +51,11 @@ the **Cell Inspector**, then switch to **Play** to walk your dungeon.
 - **Story systems** — cell events (sequential, `onEnter`/`onInteract`/`onFlag`
   reactive), a global event library, quests-as-flags with a lore journal, and
   From-Software-style NPCs (the player listens; NPCs speak).
+- **Story & protagonist** — a paced **opening story** (slides with optional
+  splash art) on New Game, a player **Character Builder** (name, built-in or
+  uploaded portrait, pronoun, class/race, point-buy attributes) that creates the
+  **Main Character**, `{mc}`/pronoun text tokens resolved across all authored
+  text, and an optional protagonist-death-ends-game rule.
 - **Exploration systems** — light & darkness (torches/lanterns with optional
   burn-down), trick tiles (spinner, pit, silent teleport, anti-magic, darkness,
   safe room), wall switches & switch-sealed doors, wall inscriptions, camp/rest

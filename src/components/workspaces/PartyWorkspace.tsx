@@ -1,7 +1,8 @@
 'use client'
 
 import { useState } from 'react'
-import { Plus, Trash2, ChevronDown, ChevronUp, User, Package, ShieldCheck } from 'lucide-react'
+import { Plus, Trash2, ChevronDown, ChevronUp, User, Package, ShieldCheck, Crown } from 'lucide-react'
+import { Portrait } from '@/lib/portraits'
 import { cn } from '@/lib/utils'
 import type {
   AttributeDef, Character, ClassDef, Formation, ItemDef,
@@ -67,22 +68,35 @@ function CharacterCard({
       )}
       onClick={onSelect}
     >
-      <div className="w-8 h-8 grid place-items-center rounded-full text-base flex-shrink-0"
-        style={{ backgroundColor: cls?.color ?? '#555', opacity: char.alive ? 1 : 0.4 }}>
-        {cls?.icon ?? <User className="w-4 h-4" />}
-      </div>
+      {char.portrait ? (
+        <div className="flex-shrink-0" style={{ opacity: char.alive ? 1 : 0.4 }}>
+          <Portrait value={char.portrait} size={32} />
+        </div>
+      ) : (
+        <div className="w-8 h-8 grid place-items-center rounded-full text-base flex-shrink-0"
+          style={{ backgroundColor: cls?.color ?? '#555', opacity: char.alive ? 1 : 0.4 }}>
+          {cls?.icon ?? <User className="w-4 h-4" />}
+        </div>
+      )}
       <div className="flex-1 min-w-0">
-        <div className="text-sm font-semibold text-white/90 truncate">{char.name}</div>
+        <div className="flex items-center gap-1.5 text-sm font-semibold text-white/90 truncate">
+          {char.isMc && <Crown className="w-3.5 h-3.5 text-amber-400 flex-shrink-0" aria-label="Main Character" />}
+          <span className="truncate">{char.name}</span>
+        </div>
         <div className="text-xs text-white/50">Lv.{char.level} {race?.name} {cls?.name}</div>
       </div>
       <div className="text-right flex-shrink-0">
         <div className="text-xs text-red-400">{char.hp}/{char.maxHp} HP</div>
         {char.maxMp > 0 && <div className="text-xs text-blue-400">{char.mp}/{char.maxMp} MP</div>}
       </div>
-      <button onClick={e => { e.stopPropagation(); onRemove() }}
-        className="p-1 rounded text-white/30 hover:text-red-400 hover:bg-white/10">
-        <Trash2 className="w-3.5 h-3.5" />
-      </button>
+      {char.isMc ? (
+        <span className="p-1 text-[9px] uppercase tracking-wide text-amber-400/60 font-semibold" title="The Main Character can't be dismissed">Hero</span>
+      ) : (
+        <button onClick={e => { e.stopPropagation(); onRemove() }}
+          className="p-1 rounded text-white/30 hover:text-red-400 hover:bg-white/10">
+          <Trash2 className="w-3.5 h-3.5" />
+        </button>
+      )}
     </div>
   )
 }

@@ -1,9 +1,15 @@
 'use client'
 
+import { useRef } from 'react'
+import { Upload, Plus, Trash2, ChevronUp, ChevronDown, Image as ImageIcon } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { MapData } from '@/lib/types'
-import type { GameMeta } from '@/lib/engine-types'
+import type { GameMeta, OpeningStory } from '@/lib/engine-types'
 import { THEMES, getTheme } from '@/lib/themes'
+import { fileToSpriteDataUri, SPRITE_ACCEPT_ATTR } from '@/lib/sprite-upload'
+
+const OPENING_IMG_MAXDIM = 640
+const OPENING_IMG_MAXBYTES = 400 * 1024
 
 interface SettingsWorkspaceProps {
   maps: MapData[]
@@ -73,6 +79,141 @@ function GameRules({ meta, onMetaChange }: { meta: GameMeta; onMetaChange: (patc
   )
 }
 
+function StoryAndProtagonist({ meta, onMetaChange }: { meta: GameMeta; onMetaChange: (patch: Partial<GameMeta>) => void }) {
+  const opening: OpeningStory = meta.opening ?? { slides: [] }
+  const setOpening = (next: OpeningStory) =>
+    onMetaChange({ opening: next.slides.length === 0 && next.skippable !== false ? undefined : next })
+  const patchSlide = (i: number, p: Partial<{ text: string; image?: string }>) =>
+    setOpening({ ...opening, slides: opening.slides.map((s, n) => (n === i ? { ...s, ...p } : s)) })
+  const addSlide = () => setOpening({ ...opening, slides: [...opening.slides, { text: '' }] })
+  const removeSlide = (i: number) => setOpening({ ...opening, slides: opening.slides.filter((_, n) => n !== i) })
+  const moveSlide = (i: number, dir: -1 | 1) => {
+    const j = i + dir
+    if (j < 0 || j >= opening.slides.length) return
+    const next = [...opening.slides]
+    ;[next[i], next[j]] = [next[j], next[i]]
+    setOpening({ ...opening, slides: next })
+  }
+
+  return (
+    <div className="space-y-3">
+      <div>
+        <h2 className="text-sm font-semibold text-white/70 mb-1">Story &amp; Protagonist</h2>
+        <p className="text-xs text-white/35 leading-relaxed">
+          The opening shown on New Game, and how the player&apos;s Main Character is made. Use
+          <code className="text-amber-200/80"> {'{mc}'} </code> and pronoun tokens
+          (<code className="text-amber-200/80">{'{they}'}</code>, <code className="text-amber-200/80">{'{their}'}</code>…)
+          anywhere in dialogue, quests, story, and endings — they resolve to the hero.
+        </p>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3">
+        <label className="flex flex-col gap-1 rounded-lg border border-white/8 bg-white/4 px-3 py-2">
+          <span className="text-[11px] text-white/60 font-medium">Party creation</span>
+          <select value={meta.partyCreation ?? 'customMc'}
+            onChange={e => onMetaChange({ partyCreation: e.target.value as 'customMc' | 'fixed' })}
+            className="px-2 py-1 rounded bg-zinc-800 border border-white/10 text-xs text-white/80 focus:outline-none">
+            <option value="customMc">Player builds the hero</option>
+            <option value="fixed">Author ships the party</option>
+          </select>
+        </label>
+        <label className="flex flex-col gap-1 rounded-lg border border-white/8 bg-white/4 px-3 py-2">
+          <span className="text-[11px] text-white/60 font-medium">Attributes</span>
+          <select value={meta.attrMethod ?? 'pointBuy'}
+            onChange={e => onMetaChange({ attrMethod: e.target.value as 'pointBuy' | 'fixed' })}
+            className="px-2 py-1 rounded bg-zinc-800 border border-white/10 text-xs text-white/80 focus:outline-none">
+            <option value="pointBuy">Point-buy</option>
+            <option value="fixed">Fixed (class/race only)</option>
+          </select>
+        </label>
+        <label className="flex flex-col gap-1 rounded-lg border border-white/8 bg-white/4 px-3 py-2">
+          <span className="text-[11px] text-white/60 font-medium">Point-buy pool</span>
+          <input type="number" min={0} max={99} value={meta.pointBuyPool ?? 10}
+            onChange={e => onMetaChange({ pointBuyPool: Math.min(99, Math.max(0, e.target.valueAsNumber || 0)) })}
+            className={RULE_INPUT} />
+        </label>
+        <label className="flex items-center gap-2.5 rounded-lg border border-white/8 bg-white/4 px-3 py-2 cursor-pointer">
+          <input type="checkbox" checked={!!meta.mcDeathEndsGame}
+            onChange={e => onMetaChange({ mcDeathEndsGame: e.target.checked || undefined })}
+            className="h-4 w-4 rounded accent-red-500" />
+          <span className="text-[11px] text-white/60 font-medium">⚔️ MC death ends the game</span>
+        </label>
+      </div>
+
+      <div className="rounded-lg border border-white/8 bg-white/4 px-3 py-3 space-y-2">
+        <div className="flex items-center justify-between">
+          <span className="text-[11px] text-white/60 font-medium">Opening story ({opening.slides.length} {opening.slides.length === 1 ? 'slide' : 'slides'})</span>
+          <label className="flex items-center gap-1.5 text-[10px] text-white/40 cursor-pointer">
+            <input type="checkbox" checked={opening.skippable !== false}
+              onChange={e => setOpening({ ...opening, skippable: e.target.checked })}
+              className="h-3.5 w-3.5 rounded accent-amber-500" />
+            Skippable (Esc)
+          </label>
+        </div>
+        {opening.slides.map((slide, i) => (
+          <OpeningSlideRow key={i} slide={slide} index={i} count={opening.slides.length}
+            onText={t => patchSlide(i, { text: t })}
+            onImage={img => patchSlide(i, { image: img })}
+            onMove={dir => moveSlide(i, dir)}
+            onRemove={() => removeSlide(i)} />
+        ))}
+        <button onClick={addSlide}
+          className="w-full flex items-center justify-center gap-1.5 py-1.5 rounded border border-dashed border-white/15 text-xs text-white/45 hover:text-white hover:border-white/30">
+          <Plus className="w-3.5 h-3.5" /> Add slide
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function OpeningSlideRow({ slide, index, count, onText, onImage, onMove, onRemove }: {
+  slide: { text: string; image?: string }
+  index: number
+  count: number
+  onText: (t: string) => void
+  onImage: (img: string | undefined) => void
+  onMove: (dir: -1 | 1) => void
+  onRemove: () => void
+}) {
+  const fileRef = useRef<HTMLInputElement>(null)
+  async function onFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    try { onImage(await fileToSpriteDataUri(file, OPENING_IMG_MAXDIM, OPENING_IMG_MAXBYTES)) } catch { /* ignore */ }
+  }
+  return (
+    <div className="flex gap-2 rounded-md border border-white/8 bg-zinc-900/50 p-2">
+      <div className="flex flex-col items-center gap-1 pt-0.5">
+        <span className="text-[10px] font-mono text-white/30">{index + 1}</span>
+        <button onClick={() => onMove(-1)} disabled={index === 0} className="text-white/30 hover:text-white disabled:opacity-20"><ChevronUp className="w-3.5 h-3.5" /></button>
+        <button onClick={() => onMove(1)} disabled={index === count - 1} className="text-white/30 hover:text-white disabled:opacity-20"><ChevronDown className="w-3.5 h-3.5" /></button>
+      </div>
+      <div className="flex-1 min-w-0 space-y-1.5">
+        <textarea value={slide.text} onChange={e => onText(e.target.value)} rows={2}
+          placeholder="A screen of the tale…"
+          className="w-full px-2 py-1 rounded bg-zinc-800 border border-white/10 text-xs text-white/85 placeholder:text-white/25 focus:outline-none focus:border-amber-500/40 resize-none" />
+        <div className="flex items-center gap-2">
+          {slide.image
+            ? (
+              <span className="flex items-center gap-1.5 text-[10px] text-emerald-400/70">
+                <ImageIcon className="w-3.5 h-3.5" /> image set
+                <button onClick={() => onImage(undefined)} className="text-white/30 hover:text-red-400">clear</button>
+              </span>
+            )
+            : (
+              <button onClick={() => fileRef.current?.click()} className="flex items-center gap-1 text-[10px] text-white/40 hover:text-white">
+                <Upload className="w-3 h-3" /> add image
+              </button>
+            )}
+          <input ref={fileRef} type="file" accept={SPRITE_ACCEPT_ATTR} className="hidden" onChange={onFile} />
+        </div>
+      </div>
+      <button onClick={onRemove} className="self-start text-white/25 hover:text-red-400"><Trash2 className="w-3.5 h-3.5" /></button>
+    </div>
+  )
+}
+
 export function SettingsWorkspace({ maps, onThemeChange, onDarkChange, meta, onMetaChange }: SettingsWorkspaceProps) {
   if (maps.length === 0) {
     return (
@@ -86,6 +227,7 @@ export function SettingsWorkspace({ maps, onThemeChange, onDarkChange, meta, onM
     <div className="flex-1 min-h-0 overflow-y-auto">
       <div className="max-w-2xl mx-auto px-6 py-6 space-y-8">
         {meta && onMetaChange && <GameRules meta={meta} onMetaChange={onMetaChange} />}
+        {meta && onMetaChange && <StoryAndProtagonist meta={meta} onMetaChange={onMetaChange} />}
         <div>
           <h2 className="text-sm font-semibold text-white/70 mb-1">Visual Themes</h2>
           <p className="text-xs text-white/35 leading-relaxed">

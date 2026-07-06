@@ -6,7 +6,7 @@
  */
 
 import { gzipSync, gunzipSync, strToU8, strFromU8 } from 'fflate'
-import type { Character, ClassDef, Formation, Ruleset, SaveState } from './engine-types'
+import type { Character, ClassDef, Formation, Pronoun, Ruleset, SaveState } from './engine-types'
 import { deriveMaxHp, deriveMaxMp } from './engine-types'
 import { uid } from './utils'
 
@@ -153,18 +153,29 @@ export function downloadSaveState(state: SaveState, filename?: string): void {
 
 // ── Character factory ─────────────────────────────────────────────────────────
 
+/** Optional identity + attribute overrides used by the player Character Builder. */
+export interface NewCharacterOpts {
+  /** Pre-modifier attribute scores by id (from point-buy). Missing attrs use `default`. */
+  attrBase?: Record<string, number>
+  portrait?: string
+  pronoun?: Pronoun
+  bio?: string
+  isMc?: boolean
+}
+
 export function newCharacter(
   name: string,
   classId: string,
   raceId: string,
   ruleset: Ruleset,
+  opts: NewCharacterOpts = {},
 ): Character {
   const cls = ruleset.classes.find(c => c.id === classId) ?? ruleset.classes[0]
   const race = ruleset.races.find(r => r.id === raceId) ?? ruleset.races[0]
 
   const attributes: Record<string, number> = {}
   for (const attr of ruleset.attributes) {
-    const base = attr.default
+    const base = opts.attrBase?.[attr.id] ?? attr.default
     const classMod = (cls.attrModifiers[attr.id] ?? cls.attrModifiers[attr.id.replace('attr.', '')] ?? 0)
     const raceMod = (race.attrModifiers[attr.id] ?? race.attrModifiers[attr.id.replace('attr.', '')] ?? 0)
     attributes[attr.id] = Math.min(attr.max, Math.max(attr.min, base + classMod + raceMod))
@@ -192,6 +203,10 @@ export function newCharacter(
     knownSpells: [],
     statuses: [],
     alive: true,
+    ...(opts.portrait ? { portrait: opts.portrait } : {}),
+    ...(opts.pronoun ? { pronoun: opts.pronoun } : {}),
+    ...(opts.bio ? { bio: opts.bio } : {}),
+    ...(opts.isMc ? { isMc: true } : {}),
   }
 
   char.maxHp = deriveMaxHp({ level: 1, attributes: attrByShort }, cls as ClassDef)

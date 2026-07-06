@@ -25,12 +25,15 @@ import { PartyWorkspace } from './workspaces/PartyWorkspace'
 import { DatabaseWorkspace } from './workspaces/DatabaseWorkspace'
 import { PlayWorkspace } from './workspaces/PlayWorkspace'
 import { SettingsWorkspace } from './workspaces/SettingsWorkspace'
-import type { BoundaryData, Character, CellEntity, DoorDef, DoorState, Effect, Facing, Formation, ItemInstance, ResolvedEncounter, InscriptionDef, Ruleset, SaveState, SwitchDef } from '@/lib/engine-types'
+import type { BoundaryData, Character, CellEntity, DoorDef, DoorState, Effect, Facing, Formation, GameMeta, ItemInstance, ResolvedEncounter, InscriptionDef, Ruleset, SaveState, SwitchDef } from '@/lib/engine-types'
 import { makeDefaultRuleset, normalizeRuleset } from '@/lib/default-ruleset'
 import { savePartyTemplate, loadPartyTemplate, saveToSlot, loadFromSlot, deleteAllSlots, listSaveSlots } from '@/lib/save-state'
 import { checkCellForEncounter, resolveEncounterTable, makeFixedEncounter, visitedFlagKey } from '@/lib/encounter-engine'
 import { EncounterModal } from './EncounterModal'
 import { DialogueOverlay } from './DialogueOverlay'
+import { resolveText } from '@/lib/text-tokens'
+import { OpeningStoryOverlay } from './OpeningStory'
+import { CharacterBuilder } from './CharacterBuilder'
 import { applyMoveTricks, cellHasTrick, computeLightRadius, tickLightBurn, restParty, advanceFoes, listFoes, foeFlagKey, seenCellsFrom } from '@/lib/exploration'
 import { initCombat, applyCombatOutcome, consumeCombatItems, type CombatState } from '@/lib/combat-engine'
 import { CellInspector } from './CellInspector'
@@ -74,6 +77,17 @@ function stampCell(sample: CellData): CellData {
 // ── Cell helpers ───────────────────────────────────────────────────────────────
 
 const EMPTY_CELL: CellData = { base: 0, overlays: [] }
+
+/** Game-over test: the whole party has fallen, or (with meta.mcDeathEndsGame)
+ *  the Main Character has fallen even if companions still stand. */
+function partyDefeated(party: Character[], meta: GameMeta): boolean {
+  if (party.length > 0 && party.every(c => !c.alive)) return true
+  if (meta.mcDeathEndsGame) {
+    const protagonist = party.find(c => c.isMc)
+    if (protagonist && !protagonist.alive) return true
+  }
+  return false
+}
 
 function isCellEmpty(c: CellData) {
   return (c.base ?? 0) === 0 && c.overlays.length === 0 && !c.note && !c.entities?.length
@@ -248,6 +262,10 @@ export function DungeonMapper({
   gameOverRef.current = gameOver
   // Batch E: title screen (per play session) + gameEnd credits overlay
   const [showTitle, setShowTitle] = useState(true)
+  // Batch F: New Game intro flow — title → opening story → character builder → play
+  const [introPhase, setIntroPhase] = useState<'opening' | 'build' | null>(null)
+  const introActiveRef = useRef(false)
+  introActiveRef.current = showTitle || introPhase !== null
   const [gameEnding, setGameEnding] = useState<{ text?: string } | null>(null)
   const gameEndingRef = useRef<typeof gameEnding>(null)
   gameEndingRef.current = gameEnding
@@ -607,9 +625,9 @@ export function DungeonMapper({
       || result.partyCure.length > 0 || result.revive
     if (hasHarm) {
       setParty(prev => {
-        const { party: nextParty, messages, wiped } = applyExploreHarm(prev, ruleset, result)
+        const { party: nextParty, messages } = applyExploreHarm(prev, ruleset, result)
         messages.forEach(m => toast(m))
-        if (wiped) setGameOver(true)
+        if (partyDefeated(nextParty, ruleset.meta)) setGameOver(true)
         return nextParty
       })
     }
@@ -1059,6 +1077,31 @@ export function DungeonMapper({
     setCombatState(null); setActiveEncounter(null); setDialogue(null); setInscription(null); setGameOver(false)
     toast('Game loaded.')
   }, [maps, setMaps, setActiveIdx])
+
+  // The player-built protagonist, if any — drives authored-text tokens.
+  const mc = useMemo(() => party.find(c => c.isMc) ?? null, [party])
+
+  // New Game intro flow: after the title, run the opening story (if authored)
+  // then the character builder (unless the author ships a fixed party).
+  const needsBuilder = useCallback(
+    () => (ruleset.meta.partyCreation ?? 'customMc') !== 'fixed' && !party.some(c => c.isMc),
+    [ruleset.meta.partyCreation, party],
+  )
+  const beginNewGame = useCallback(() => {
+    setShowTitle(false)
+    if (ruleset.meta.opening?.slides?.length) setIntroPhase('opening')
+    else if (needsBuilder()) setIntroPhase('build')
+    else setIntroPhase(null)
+  }, [ruleset.meta.opening, needsBuilder])
+  const finishOpening = useCallback(() => {
+    setIntroPhase(needsBuilder() ? 'build' : null)
+  }, [needsBuilder])
+  const finishBuilder = useCallback((hero: Character) => {
+    setParty([hero])
+    setFormation({ front: [0], back: [] })
+    setActiveIdx(0)
+    setIntroPhase(null)
+  }, [setParty, setFormation, setActiveIdx])
 
   // Save-point policy: saving anywhere, or only on Save Point cells
   const canSaveHere = (ruleset.meta.savePolicy ?? 'anywhere') === 'anywhere'
@@ -1679,7 +1722,7 @@ export function DungeonMapper({
 
       if (workspaceRef.current === 'play') {
         // Block movement while any overlay (combat/shop/encounter) is active — those handle keys themselves
-        if (combatStateRef.current || shopIdRef.current || activeEncounterRef.current || dialogueRef.current || inscriptionRef.current || gameOverRef.current || gameEndingRef.current) return
+        if (introActiveRef.current || combatStateRef.current || shopIdRef.current || activeEncounterRef.current || dialogueRef.current || inscriptionRef.current || gameOverRef.current || gameEndingRef.current) return
         // Blobber controls: W=forward, S=back, A=turn-left, D=turn-right
         if (e.key === 'w' || e.key === 'W' || e.key === 'ArrowUp') { e.preventDefault(); stepForward(); return }
         if (e.key === 's' || e.key === 'S' || e.key === 'ArrowDown') { e.preventDefault(); stepBack(); return }
@@ -1872,7 +1915,9 @@ export function DungeonMapper({
                 }
                 pendingFoeKillRef.current = null
               }
-              if (combatState.phase === 'defeat' && updatedParty.every(c => !c.alive)) setGameOver(true)
+              // Game over on total defeat, or the moment the MC falls (even in
+              // a won battle) when meta.mcDeathEndsGame is set.
+              if (partyDefeated(updatedParty, ruleset.meta)) setGameOver(true)
             }}
             onMoveForward={stepForward}
             onMoveBack={stepBack}
@@ -2287,6 +2332,7 @@ export function DungeonMapper({
           <DialogueOverlay
             npc={npcDef}
             line={line}
+            mc={mc}
             onFinish={() => {
               const cell = activeMap.cells[`${activeMap.playerX},${activeMap.playerY}`] ?? null
               applyExploreEffect(finishNpcLine(npcDef, line, cell, makeEventContext(), ruleset))
@@ -2301,6 +2347,7 @@ export function DungeonMapper({
         <DialogueOverlay
           npc={{ id: '_inscription', name: 'Inscription', portrait: '🪨', lines: [] }}
           line={{ id: '_insc', text: inscription }}
+          mc={mc}
           onFinish={() => setInscription(null)}
         />
       )}
@@ -2319,10 +2366,10 @@ export function DungeonMapper({
             </div>
             <div className="space-y-2">
               <button
-                onClick={() => setShowTitle(false)}
+                onClick={beginNewGame}
                 className="w-full py-2.5 rounded-lg text-sm font-semibold border border-amber-500/40 text-amber-200 hover:bg-amber-500/10"
               >
-                Begin
+                New Game
               </button>
               {listSaveSlots().some(Boolean) && (
                 <button
@@ -2332,6 +2379,7 @@ export function DungeonMapper({
                       s && (best < 0 || s.at > (slots[best]?.at ?? 0)) ? i : best, -1)
                     if (latest >= 0) handleLoadSlot(latest)
                     setShowTitle(false)
+                    setIntroPhase(null)
                   }}
                   className="w-full py-2 rounded-lg text-xs border border-sky-500/25 text-sky-300/80 hover:bg-sky-500/10"
                 >
@@ -2343,6 +2391,16 @@ export function DungeonMapper({
         </div>
       )}
 
+      {/* Opening story — after New Game, before the character builder */}
+      {introPhase === 'opening' && workspace === 'play' && ruleset.meta.opening && (
+        <OpeningStoryOverlay story={ruleset.meta.opening} mc={mc} onDone={finishOpening} />
+      )}
+
+      {/* Character Builder — player creates the Main Character */}
+      {introPhase === 'build' && workspace === 'play' && (
+        <CharacterBuilder ruleset={ruleset} onDone={finishBuilder} />
+      )}
+
       {/* Ending — gameEnd effect fired */}
       {gameEnding && (
         <div className="fixed inset-0 z-[75] bg-black/95 grid place-items-center">
@@ -2350,7 +2408,7 @@ export function DungeonMapper({
             <div className="text-4xl">🏆</div>
             <h2 className="text-2xl font-bold text-amber-100">The End</h2>
             {gameEnding.text && (
-              <p className="text-sm text-white/70 leading-relaxed whitespace-pre-wrap">{gameEnding.text}</p>
+              <p className="text-sm text-white/70 leading-relaxed whitespace-pre-wrap">{resolveText(gameEnding.text, mc)}</p>
             )}
             <div className="text-xs text-white/40 space-y-1">
               <div>{ruleset.meta.title || 'Untitled Dungeon'}</div>

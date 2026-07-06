@@ -1414,7 +1414,7 @@ export function PlayWorkspace({
             <Minimap map={activeMap} facing={facing} flags={flags} ruleset={ruleset} sightRadius={lightRadius} />
           )}
           {combat && <BattleOutcomeOverlay state={combat} ruleset={ruleset} onContinue={onCombatEnd} />}
-          {showJournal && <JournalOverlay ruleset={ruleset} flags={flags} onClose={() => setShowJournal(false)} />}
+          {showJournal && <JournalOverlay ruleset={ruleset} flags={flags} mc={party.find(c => c.isMc) ?? null} onClose={() => setShowJournal(false)} />}
         </div>
       ) : (
         <DungeonViewport

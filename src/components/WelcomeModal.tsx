@@ -78,6 +78,27 @@ export function WelcomeModal({ onClose }: { onClose: () => void }) {
             </ul>
           </Section>
 
+          <Section title="Story & your hero">
+            <ul className="list-disc pl-5 space-y-1">
+              <li>
+                Give your game an <strong className="text-white/85">opening story</strong> (paced slides with
+                optional splash art) that plays on New Game — authored in Settings.
+              </li>
+              <li>
+                Players build their <strong className="text-white/85">Main Character</strong> in a Character
+                Builder: name, portrait (built-in pixel faces or an upload), pronoun, class, race, and
+                <strong className="text-white/85"> point-buy</strong> attributes. The party starts with the hero
+                and grows as you play.
+              </li>
+              <li>
+                Address the hero anywhere in dialogue, inscriptions, quests, story, and endings with
+                <code className="text-amber-200"> {'{mc}'} </code> and pronoun tokens
+                (<code className="text-amber-200">{'{they}'}</code>, <code className="text-amber-200">{'{their}'}</code>…).
+                Optionally, the Main Character&apos;s death ends the game — the classic protagonist rule.
+              </li>
+            </ul>
+          </Section>
+
           <Section title="How maps are organized">
             <ul className="list-disc pl-5 space-y-1">
               <li>

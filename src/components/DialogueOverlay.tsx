@@ -8,14 +8,16 @@
 
 import { useEffect, useState } from 'react'
 import type { NpcDef, NpcLine } from '@/lib/engine-types'
+import { resolveText, type TextActor } from '@/lib/text-tokens'
 
-export function DialogueOverlay({ npc, line, onFinish }: {
+export function DialogueOverlay({ npc, line, mc, onFinish }: {
   npc: NpcDef
   line: NpcLine
+  mc?: TextActor | null
   onFinish: () => void
 }) {
   const [page, setPage] = useState(0)
-  const pages = line.text.length > 0 ? line.text : ['…']
+  const pages = line.text.length > 0 ? line.text.map(t => resolveText(t, mc)) : ['…']
   const last = page >= pages.length - 1
 
   useEffect(() => {

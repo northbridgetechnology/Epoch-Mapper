@@ -265,6 +265,25 @@ export interface GameMeta {
   savePolicy?: 'anywhere' | 'savePoints'
   /** Fraction of gold lost when respawning after a party wipe (default 0.5). */
   wipeGoldPenalty?: number
+  /** Opening story shown once on New Game (before the character builder). */
+  opening?: OpeningStory
+  /** Who owns the party: 'fixed' = author ships it; 'customMc' = the player
+   *  builds their protagonist and starts solo (default 'customMc'). */
+  partyCreation?: 'fixed' | 'customMc'
+  /** SMT/Wizardry rule: the game ends the moment the Main Character dies,
+   *  even if other party members still stand. */
+  mcDeathEndsGame?: boolean
+  /** How the builder allocates attributes (default 'pointBuy'). */
+  attrMethod?: 'fixed' | 'pointBuy'
+  /** Points the player distributes in point-buy (default 10). */
+  pointBuyPool?: number
+}
+
+/** A short, paced intro shown once when starting a new game. */
+export interface OpeningStory {
+  slides: { text: string; image?: string }[]
+  /** Allow Esc to skip (default true). */
+  skippable?: boolean
 }
 
 /** Combat constants tunable per game — engine falls back to classic defaults. */
@@ -454,8 +473,18 @@ export interface Character {
   knownSpells: DefRef<SpellDef>[]
   statuses: ActiveStatus[]
   alive: boolean
+  /** Portrait: a built-in portrait id (see portraits.tsx) or an uploaded data-URI. */
   portrait?: string
+  /** The one player-built protagonist. Drives text tokens, undismissable slot,
+   *  and (with meta.mcDeathEndsGame) the game-over rule. */
+  isMc?: boolean
+  /** Grammatical pronoun set for authored-text substitution. */
+  pronoun?: Pronoun
+  /** Optional backstory shown in the Journal. */
+  bio?: string
 }
+
+export type Pronoun = 'he' | 'she' | 'they'
 
 export interface Formation {
   front: number[]

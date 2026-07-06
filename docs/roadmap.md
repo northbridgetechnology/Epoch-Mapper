@@ -11,8 +11,91 @@ Current in-flight plan (implemented batch by batch):
 - **Batch C** — visible fixed encounters, FOE-style patrols (pure patrol loops) *(shipped)*
 - **Batch D** — unidentified & cursed items, spell learning *(shipped)*
 - **Batch E** — title / ending flow *(shipped)*
+- **Batch F** — story & protagonist: opening story slides, Main Character
+  (name/pronoun tokens, MC-death-ends-game, undismissable), player Character
+  Builder (point-buy + portraits) *(shipped)*
 
 Everything below is deferred beyond those batches.
+
+> **Follow-up to Batch F — recruitment.** The player starts solo; converting an
+> authored `NpcDef` into a playable party member (a `recruit` effect, respecting
+> `partySize`) is the next batch. See §2 (negotiation & recruitment) for the
+> broader talk/recruit design this slots into.
+
+---
+
+## Batch F — Story & Protagonist *(shipped)*
+
+Give a game a hand-authored opening and a player-built protagonist. Three
+connected pieces; recruitment of authored NPCs into the party is a **separate
+follow-up** (see §2 above) — this batch starts the player solo and lets the
+party run under `partySize` until companions join later.
+
+### F0. Data model
+
+```ts
+// Character (runtime, lives in SaveState.party)
+isMc?: boolean                     // the one player-built protagonist
+pronoun?: 'he' | 'she' | 'they'    // drives text substitution
+bio?: string                       // backstory, shown in the Journal
+// portrait?: string  — already present (data-URI or built-in portrait id)
+
+// GameMeta (authoring, lives in .epochmap)
+opening?: { slides: { text: string; image?: string }[]; skippable?: boolean }
+partyCreation?: 'fixed' | 'customMc'   // default 'customMc'
+mcDeathEndsGame?: boolean              // SMT/Wizardry protagonist rule
+attrMethod?: 'fixed' | 'pointBuy'      // default 'pointBuy'
+pointBuyPool?: number                  // points to spend (default 10)
+```
+
+All optional; `normalizeRuleset` backfills. `.epochmap` v2 JSON ext block
+carries the meta additions; the player's MC only ever rides in save slots.
+
+### F1. Text tokens (`text-tokens.ts`, pure)
+
+`resolveText(str, mc?)` substitutes, case-insensitively:
+`{mc}` / `{name}` → MC name; `{they}/{them}/{their}/{theirs}/{themself}`
+and capitalized forms → pronoun set (he/him/his…, she/her…, they/them…).
+Threaded through every authored-text surface: dialogue lines, inscriptions,
+quest/journal text, opening slides, ending text. Missing MC → tokens pass
+through unchanged.
+
+### F2. Opening story
+
+Multi-slide, skippable, optional per-slide splash image (data-URI, reuses the
+sprite-upload pipeline). New-game phase machine in `DungeonMapper`:
+`title → opening → build → play`. Slides advance on click/Enter, Esc skips;
+loading a save skips straight to play. Authored via a slide list in
+`SettingsWorkspace`. Reuses the ending overlay's styling.
+
+### F3. Main Character behaviors
+
+- **MC-death-ends-game** (`meta.mcDeathEndsGame`): when the MC's `alive`
+  flips false — in combat defeat resolution and in exploration harm — trigger
+  the existing game-over flow immediately, even if other members live.
+- **Undismissable**: `PartyWorkspace` blocks removing the `isMc` member.
+- **Identity**: portrait + name on the title/HUD/ending; bio in the Journal.
+
+### F4. Character Builder (player-facing, `CharacterBuilder.tsx`)
+
+Shown after the opening when `partyCreation === 'customMc'`, before spawn;
+also reachable from `PartyWorkspace` for authoring/testing. Fields: name,
+portrait (built-in pixel faces + upload), pronoun, class, race, **point-buy**
+attributes, optional bio. Live derived-stat preview via `deriveMaxHp` /
+`deriveMaxMp`.
+
+Point-buy model (**flat pool, 1:1**): every attribute starts at its `default`;
+the player spends `meta.pointBuyPool` points at 1 point = +1, clamped to each
+attribute's `min`/`max`; class/race modifiers apply **after** allocation
+(so the displayed pool is pure player choice). Pure helpers in
+`char-build.ts` with tests; produces a `Character` (extends `newCharacter`).
+
+### F5. Portraits (`portraits.tsx`)
+
+~8–10 hand-drawn archetype faces in the existing pixel-sprite grid style,
+keyed loosely to class/race (fighter, mage, cleric, rogue, ranger, …), with a
+resolver `portraitSprite(id)` mirroring `creatureSprite`. Player may instead
+upload a portrait (data-URI). Built-in ids travel in save state; uploads embed.
 
 ---
 

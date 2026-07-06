@@ -11,10 +11,12 @@ import { ScrollText, BookOpen, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { questStageFlagKey, npcLineHeardFlagKey } from '@/lib/event-engine'
 import type { Ruleset } from '@/lib/engine-types'
+import { resolveText, type TextActor } from '@/lib/text-tokens'
 
-export function JournalOverlay({ ruleset, flags, onClose }: {
+export function JournalOverlay({ ruleset, flags, mc, onClose }: {
   ruleset: Ruleset
   flags: Record<string, boolean | number | string>
+  mc?: TextActor | null
   onClose: () => void
 }) {
   const [tab, setTab] = useState<'quests' | 'lore'>('quests')
@@ -78,7 +80,7 @@ export function JournalOverlay({ ruleset, flags, onClose }: {
                     <span className="ml-auto font-normal text-white/30">stage {stage}/{q.stages.length}</span>
                   </div>
                   <div className="mt-1 text-xs text-white/65 leading-relaxed">
-                    {q.stages[stage - 1]?.description ?? q.description}
+                    {resolveText(q.stages[stage - 1]?.description ?? q.description, mc)}
                   </div>
                 </div>
               ))}
@@ -110,7 +112,7 @@ export function JournalOverlay({ ruleset, flags, onClose }: {
                   <div className="space-y-1.5">
                     {heard.map(l => (
                       <div key={l.id} className="text-xs text-white/55 italic leading-relaxed">
-                        &ldquo;{l.text.join(' ')}&rdquo;
+                        &ldquo;{resolveText(l.text.join(' '), mc)}&rdquo;
                       </div>
                     ))}
                   </div>
