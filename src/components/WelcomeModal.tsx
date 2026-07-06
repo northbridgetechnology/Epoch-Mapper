@@ -6,6 +6,7 @@ const KEYS: Array<[string, string]> = [
   ['Arrow keys / WASD', 'Move player'],
   ['E', 'Interact (Play mode): doors, switches, NPCs, chests, inscriptions'],
   ['J', 'Open the Journal — quests & lore (Play mode)'],
+  ['M', 'Toggle the full map view (Play mode) — a minimap is always shown in 3D'],
   ['F', 'Toggle fog of war reveal for current cell'],
   ['N', 'Add / edit note on current cell'],
   ['Z / Ctrl+Z', 'Undo last cell edit'],

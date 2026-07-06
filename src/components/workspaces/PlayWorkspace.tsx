@@ -16,6 +16,7 @@ import type { BattleViewState } from '@/lib/battle-scene'
 import type { CombatState } from '@/lib/combat-engine'
 import { useBattleController, BattleHud, BattleOutcomeOverlay } from '@/components/BattleHud'
 import { JournalOverlay } from '@/components/JournalOverlay'
+import { Minimap } from '@/components/Minimap'
 
 // ── Props ─────────────────────────────────────────────────────────────────────
 
@@ -1265,15 +1266,15 @@ export function PlayWorkspace({
   // Battles play out in first person — snap to the 3D view when one starts
   useEffect(() => { if (combat) setView('3d') }, [combat])
 
-  // Journal (J) — quests + lore, derived from save flags
+  // Journal (J) — quests + lore; M toggles the full map view on/off
   const [showJournal, setShowJournal] = useState(false)
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.key === 'j' || e.key === 'J') && !e.metaKey && !e.ctrlKey) {
-        const tag = (e.target as HTMLElement)?.tagName
-        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
-        setShowJournal(v => !v)
-      }
+      if (e.metaKey || e.ctrlKey || e.altKey) return
+      const tag = (e.target as HTMLElement)?.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
+      if (e.key === 'j' || e.key === 'J') setShowJournal(v => !v)
+      else if (e.key === 'm' || e.key === 'M') setView(v => v === '3d' ? 'map' : '3d')
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -1409,6 +1410,9 @@ export function PlayWorkspace({
             ruleset={ruleset}
             lightRadius={lightRadius}
           />
+          {!combat && (
+            <Minimap map={activeMap} facing={facing} isCellRevealed={isCellRevealed} ruleset={ruleset} />
+          )}
           {combat && <BattleOutcomeOverlay state={combat} ruleset={ruleset} onContinue={onCombatEnd} />}
           {showJournal && <JournalOverlay ruleset={ruleset} flags={flags} onClose={() => setShowJournal(false)} />}
         </div>

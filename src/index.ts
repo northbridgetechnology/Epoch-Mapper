@@ -149,6 +149,7 @@ export { ENEMY_SCHEMA, ENCOUNTER_TABLE_SCHEMA, blankEnemy, blankEncounterTable }
 export { NPC_SCHEMA, EVENT_SCHEMA, QUEST_SCHEMA, blankNpc, blankEventDef, blankQuest } from './lib/npc-schema'
 export { DialogueOverlay } from './components/DialogueOverlay'
 export { JournalOverlay } from './components/JournalOverlay'
+export { Minimap } from './components/Minimap'
 
 // Spell + status-effect schema helpers (Phase E5)
 export { SPELL_SCHEMA, STATUS_SCHEMA, blankSpell, blankStatusEffect } from './lib/spell-schema'
