@@ -4,6 +4,8 @@ import { X } from 'lucide-react'
 
 const KEYS: Array<[string, string]> = [
   ['Arrow keys / WASD', 'Move player'],
+  ['E', 'Interact (Play mode): doors, switches, NPCs, chests, inscriptions'],
+  ['J', 'Open the Journal — quests & lore (Play mode)'],
   ['F', 'Toggle fog of war reveal for current cell'],
   ['N', 'Add / edit note on current cell'],
   ['Z / Ctrl+Z', 'Undo last cell edit'],
@@ -46,12 +48,33 @@ export function WelcomeModal({ onClose }: { onClose: () => void }) {
         <div className="px-6 py-5 space-y-5">
           <Section title="What is Epoch Mapper?">
             <p>
-              Epoch Mapper is a free, open-source dungeon and world map editor built for retro gaming. Draw room
-              layouts, mark shops, inns, bosses, and points of interest as you explore a game. Export your maps as a
-              beautifully formatted PDF or as a compact <code className="text-amber-200">.epochmap</code> file you can
-              share with other players. If you use the Epoch game library, your maps sync to your profile and are always
-              one click away from your game drawer.
+              Epoch Mapper is a free, open-source first-person dungeon-crawler engine and authoring tool — in the
+              tradition of Eye of the Beholder, Shin Megami Tensei, and Wizardry. Draw grid maps, build a full ruleset,
+              and <strong className="text-white/85">play the result in a pseudo-3D first-person view</strong> with
+              turn-based combat, a party, and exploration hazards. Export your maps as a beautifully formatted PDF or as
+              a compact <code className="text-amber-200">.epochmap</code> file you can share. If you use the Epoch game
+              library, your maps sync to your profile and are always one click away from your game drawer.
             </p>
+          </Section>
+
+          <Section title="Play mode">
+            <ul className="list-disc pl-5 space-y-1">
+              <li>
+                Switch to <strong className="text-white/85">Play</strong> (the ▶ activity-bar icon) to walk your dungeon
+                in first person: turn-based combat, party HUD, camp/rest, save slots, a Journal (<code className="text-amber-200">J</code>),
+                and a title/ending flow.
+              </li>
+              <li>
+                <strong className="text-white/85">Hazards are live.</strong> Traps spring their effects when stepped on,
+                damage edges bite every crossing, and events can deal damage or inflict status — all lethal, so a party
+                wipe triggers game-over.
+              </li>
+              <li>
+                <strong className="text-white/85">Dark maps</strong> collapse your view to the party&apos;s light — carry a
+                torch or lantern. Trick tiles (spinners, pits, teleporters, anti-magic and darkness zones, safe rooms)
+                lurk in the walls.
+              </li>
+            </ul>
           </Section>
 
           <Section title="How maps are organized">
@@ -81,22 +104,27 @@ export function WelcomeModal({ onClose }: { onClose: () => void }) {
           <Section title="Overlays">
             <ul className="list-disc pl-5 space-y-1">
               <li>
-                <strong className="text-white/85">Overlays</strong> are icons placed on top of a cell: NPC, Shop, Inn,
-                Boss, Chest, Trap, Save Point, Note, and any custom markers you create.
+                <strong className="text-white/85">Overlays</strong> are planning icons placed on top of a cell: Inn,
+                Boss, Mini-Boss, Save Point, Player Start, and any custom markers you create.
               </li>
-              <li>A single cell can hold multiple overlays (e.g., a Boss room with a Chest).</li>
-              <li>Each overlay type has a distinct icon and color.</li>
+              <li>
+                Interactive content (NPCs, shops, chests, <strong className="text-white/85">traps</strong>, levers,
+                teleporters, encounters, events) lives as <em>cell entities</em> — add them with the Cell Inspector.
+                Traps fire their effects in Play; Save Point cells become functional when the save policy requires them.
+              </li>
+              <li>A single cell can hold multiple overlays and entities (e.g., a Boss room with a Chest).</li>
             </ul>
           </Section>
 
           <Section title="Edges">
             <ul className="list-disc pl-5 space-y-1">
               <li>
-                <strong className="text-white/85">Edges</strong> mark the borders of a cell: one-way doors, locked
-                doors, illusory walls, damage floors, etc.
+                <strong className="text-white/85">Edges</strong> mark the borders of a cell: standard & one-way walls,
+                doors, illusory walls, secret passages, and <strong className="text-white/85">damage edges</strong> that
+                deal damage each time the party crosses them in Play.
               </li>
-              <li>Each of the four sides (N, S, E, W) can be independently marked.</li>
-              <li>Edges appear as colored lines on the cell border.</li>
+              <li>Doors can be key-locked or sealed behind wall switches; illusory walls reveal on interact.</li>
+              <li>Each of the four sides (N, S, E, W) can be independently marked; edges appear as colored lines.</li>
             </ul>
           </Section>
 

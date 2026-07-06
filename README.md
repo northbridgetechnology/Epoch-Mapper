@@ -1,28 +1,69 @@
 # Epoch Mapper
 
-A free, open-source dungeon and world map editor built for retro gaming —
-inspired by tools like Grid Cartographer, but approachable, free, and tightly
-integrated with the [Epoch](https://github.com/northbridgetechnology/epoch)
-game library.
+A free, open-source **first-person dungeon-crawler engine and authoring tool**
+in the tradition of Eye of the Beholder, Shin Megami Tensei, and Wizardry —
+approachable, free, and tightly integrated with the
+[Epoch](https://github.com/northbridgetechnology/epoch) game library.
 
-Draw room layouts, mark shops, inns, bosses, and points of interest as you
-explore a game. Export your maps as a print-ready **PDF** or as a compact,
-self-describing **`.epochmap`** binary you can share with other players.
+Draw grid maps, build a full ruleset (classes, spells, items, enemies, NPCs,
+quests, events), and **play the result in a pseudo-3D first-person view** — with
+turn-based combat, party management, exploration hazards, and a save system.
+Export your maps as a print-ready **PDF** or as a compact, self-describing
+**`.epochmap`** binary you can share with other players.
 
 This repository is **both**:
 
 1. **A standalone web app** (Next.js) — open the editor in a browser tab, no
    login, no accounts, no server. State is file-based.
-2. **The npm package `@northbridgetechnology/epoch-mapper`** — the editor component, the PDF export
-   pipeline, and the `.epochmap` codec, consumed directly by Epoch.
+2. **The npm package `@northbridgetechnology/epoch-mapper`** — the editor
+   component, the game engine, the PDF export pipeline, and the `.epochmap`
+   codec, consumed directly by Epoch.
 
-> **Status:** Phases 1–3 complete. The standalone app, the `.epochmap` binary
-> format + codec, the reusable package, the **custom marker system** (Marker
-> Palette, custom cell/overlay types, import ID conflict resolution), and the
-> **Epoch integration** (DB-backed embed via `initialSession`/`onSessionChange`,
-> `.epochmap` import/export, server-safe `/server` entry) are all done. See
-> [`EPOCH_MAPPER_SPEC.md`](https://github.com/northbridgetechnology/epoch/blob/main/EPOCH_MAPPER_SPEC.md)
-> in the Epoch repo for the full plan.
+> **Status:** the map editor, the `.epochmap` codec, the custom-marker system,
+> and the Epoch integration are complete — and on top of that sits a full
+> **game engine**: a first-person renderer, turn-based combat, a content
+> database (classes/races/items/spells/enemies/shops/loot), events/quests/NPCs,
+> and exploration systems (light & darkness, trick tiles, wall switches,
+> inscriptions, camp/rest, save slots, traps & damage hazards, FOE patrols,
+> stairs between floors). See the **Game engine** section below,
+> [`docs/roadmap.md`](docs/roadmap.md) for deferred specs, and
+> [`docs/sprites.md`](docs/sprites.md) for the sprite system.
+
+---
+
+## Game engine
+
+Beyond the map editor, Epoch Mapper ships a playable first-person engine. Build
+content in the **Database** and **Party** workspaces, place it on the grid with
+the **Cell Inspector**, then switch to **Play** to walk your dungeon.
+
+- **First-person renderer** — a pseudo-3D painter's view (Eye of the Beholder /
+  SMT style) with per-cell water/lava/void, ceiling/floor mortar grids, code-
+  authored pixel sprites for objects and creatures, and real 3D stairs that
+  descend into a pit or climb through a lit ceiling opening.
+- **Turn-based combat** — enemies stand on a 3×3 playfield, an FF-style command
+  bar (Attack / Spell / Item / Defend / Flee), front/back ranks, elemental
+  weaknesses & resistances, seeded RNG (deterministic, so the balance simulator
+  can replay it), boss ability phases, and loot drops.
+- **Content database** — classes, races, attributes, items (with equipment
+  modifiers, light sources, cursed & unidentified gear), spells (with level-up
+  learn tables), status effects, enemies, encounter/loot tables, shops.
+- **Story systems** — cell events (sequential, `onEnter`/`onInteract`/`onFlag`
+  reactive), a global event library, quests-as-flags with a lore journal, and
+  From-Software-style NPCs (the player listens; NPCs speak).
+- **Exploration systems** — light & darkness (torches/lanterns with optional
+  burn-down), trick tiles (spinner, pit, silent teleport, anti-magic, darkness,
+  safe room), wall switches & switch-sealed doors, wall inscriptions, camp/rest
+  with ambush risk, save slots + save points, a wipe/game-over flow, functional
+  inns, visible fixed encounters, and FOE-style patrols.
+- **Hazards** — traps spring their effects when stepped on, damage edges bite
+  every crossing, and event/boundary `damage`/`status`/`cure` effects resolve
+  out of combat (respecting race resistances; lethal, so a wipe rolls
+  game-over). See [`docs/roadmap.md`](docs/roadmap.md) for deferred combat specs.
+- **Generator** — "Randomly Generate & Populate" builds a two-level demo world
+  (main floor + a dark *Depths*) wiring every system, in one of three layout
+  styles: **Rooms** (BSP), **EotB** (dense thin-wall maze), or **SMT** (arterial
+  lattice). Every generated door provably leads somewhere.
 
 ---
 
@@ -40,13 +81,12 @@ bun run dev          # standalone editor at http://localhost:3100
 | `dev`               | Run the standalone app (Next.js, port 3100)             |
 | `build`             | Production build of the standalone app                  |
 | `build:lib`         | Bundle the npm package into `dist/` (JS + `.d.ts`)      |
-| `test`              | Codec + custom-marker resolution tests                  |
-| `test:codec`        | Round-trip tests for the `.epochmap` codec              |
-| `test:markers`      | Custom-marker import conflict resolution (§5.3)         |
+| `test`              | Full suite: codec, markers, combat, switches, events, generator, sprites, exploration |
 | `lint`              | ESLint                                                  |
 
-Tests run via `tsx` (no DOM needed) — the codec and marker helpers are pure, so
-they work in the browser, Node, and edge runtimes.
+Tests run via `tsx` (no DOM needed) — the codec, combat engine, event/effect
+resolver, generator, and sprite library are all pure, so they work in the
+browser, Node, and edge runtimes.
 
 ---
 

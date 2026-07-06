@@ -25,7 +25,7 @@ import { PartyWorkspace } from './workspaces/PartyWorkspace'
 import { DatabaseWorkspace } from './workspaces/DatabaseWorkspace'
 import { PlayWorkspace } from './workspaces/PlayWorkspace'
 import { SettingsWorkspace } from './workspaces/SettingsWorkspace'
-import type { BoundaryData, Character, CellEntity, DoorDef, DoorState, Facing, Formation, ItemInstance, ResolvedEncounter, InscriptionDef, Ruleset, SaveState, SwitchDef } from '@/lib/engine-types'
+import type { BoundaryData, Character, CellEntity, DoorDef, DoorState, Effect, Facing, Formation, ItemInstance, ResolvedEncounter, InscriptionDef, Ruleset, SaveState, SwitchDef } from '@/lib/engine-types'
 import { makeDefaultRuleset, normalizeRuleset } from '@/lib/default-ruleset'
 import { savePartyTemplate, loadPartyTemplate, saveToSlot, loadFromSlot, deleteAllSlots, listSaveSlots } from '@/lib/save-state'
 import { checkCellForEncounter, resolveEncounterTable, makeFixedEncounter, visitedFlagKey } from '@/lib/encounter-engine'
@@ -36,7 +36,7 @@ import { initCombat, applyCombatOutcome, consumeCombatItems, type CombatState } 
 import { CellInspector } from './CellInspector'
 import { usePanelWidth } from './ui/ResizablePanel'
 import { ShopModal } from './ShopModal'
-import { runCellEvents, applyFlagWriteWithReactions, resolveExploreEffects, pickNpcLine, finishNpcLine, getInteractableObjects, objectUsedFlagKey, resolveLootTable, effectiveDoorState, type ExploreEffect, type EventContext } from '@/lib/event-engine'
+import { runCellEvents, applyFlagWriteWithReactions, resolveExploreEffects, applyExploreHarm, pickNpcLine, finishNpcLine, getInteractableObjects, objectUsedFlagKey, resolveLootTable, effectiveDoorState, type ExploreEffect, type EventContext } from '@/lib/event-engine'
 
 const DRAFT_KEY = 'epochmapper.draft'
 const WELCOME_KEY = 'epochmapper.welcomed'
@@ -419,14 +419,22 @@ export function DungeonMapper({
       })
     }
     if (result.itemsLost.length > 0) {
-      setInventory(prev =>
-        prev
-          .map(i => {
-            const lost = result.itemsLost.find(l => l.item === i.def)
-            return lost ? { ...i, qty: i.qty - lost.qty } : i
+      setInventory(prev => {
+        // Remove the requested quantity per item across stacks (identified
+        // stacks first), instead of subtracting from every matching stack.
+        const remaining: Record<string, number> = {}
+        for (const l of result.itemsLost) remaining[l.item] = (remaining[l.item] ?? 0) + l.qty
+        return [...prev]
+          .sort((a, b) => Number(!!a.unidentified) - Number(!!b.unidentified))
+          .map(inst => {
+            const need = remaining[inst.def]
+            if (!need) return inst
+            const take = Math.min(need, inst.qty)
+            remaining[inst.def] = need - take
+            return { ...inst, qty: inst.qty - take }
           })
-          .filter(i => i.qty > 0),
-      )
+          .filter(i => i.qty > 0)
+      })
     }
     if (result.teleportTo) {
       const { x, y } = result.teleportTo
@@ -565,24 +573,20 @@ export function DungeonMapper({
         return { revealedChunks: [...chunks] }
       })
     }
-    // Out-of-combat healing effects: fullHeal / heal / restoreMp
-    if (result.flagSets['_fullHeal']) {
-      setParty(prev => prev.map(c => c.alive ? { ...c, hp: c.maxHp, mp: c.maxMp } : c))
-    } else {
-      const healAmt  = result.flagSets['_heal']    ? Number(result.flagSets['_heal'])    : 0
-      const mpAmt    = result.flagSets['_restoreMp'] ? Number(result.flagSets['_restoreMp']) : 0
-      if (healAmt > 0 || mpAmt > 0) {
-        setParty(prev => prev.map(c => {
-          if (!c.alive) return c
-          return {
-            ...c,
-            hp: healAmt  > 0 ? Math.min(c.maxHp, c.hp + healAmt)  : c.hp,
-            mp: mpAmt    > 0 ? Math.min(c.maxMp, c.mp + mpAmt)    : c.mp,
-          }
-        }))
-      }
+    // Out-of-combat heal / harm / status / revive — applied through the pure
+    // resolver so damage tiles, traps, and hazard events actually bite.
+    const hasHarm = result.fullHeal || result.heal > 0 || result.restoreMp > 0
+      || result.partyDamage.length > 0 || result.partyStatus.length > 0
+      || result.partyCure.length > 0 || result.revive
+    if (hasHarm) {
+      setParty(prev => {
+        const { party: nextParty, messages, wiped } = applyExploreHarm(prev, ruleset, result)
+        messages.forEach(m => toast(m))
+        if (wiped) setGameOver(true)
+        return nextParty
+      })
     }
-  }, [updateActiveMap, revealAround, ruleset, setInventory, setGold, setFlags, setShopId, setActiveEncounter, setParty, setMaps])
+  }, [updateActiveMap, revealAround, ruleset, setInventory, setGold, setFlags, setShopId, setActiveEncounter, setParty, setMaps, setGameOver])
 
   const makeEventContext = useCallback((): EventContext => ({
     flags,
@@ -597,6 +601,8 @@ export function DungeonMapper({
 
       // Block movement through impassable boundaries (walls, closed/locked doors)
       const moveDir: EdgeDir | null = dx === 1 ? 'E' : dx === -1 ? 'W' : dy === 1 ? 'S' : dy === -1 ? 'N' : null
+      let crossedBk: string | null = null
+      let crossedB: BoundaryData | null = null
       if (moveDir !== null && activeMap.boundaries) {
         const bk = boundaryKey(activeMap.playerX, activeMap.playerY, moveDir)
         const b = activeMap.boundaries[bk]
@@ -608,6 +614,7 @@ export function DungeonMapper({
           const illusoryBlocked = b.wall === EDGE.ILLUSORY && !illusoryRevealed
           const doorBlocked = !isDoorEdge && b.door !== undefined && !doorOpen
           if (wallBlocked || illusoryBlocked || doorBlocked) return
+          crossedBk = bk; crossedB = b   // crossing succeeded — process damage/onPass below
         }
       }
 
@@ -635,6 +642,20 @@ export function DungeonMapper({
       const burn = tickLightBurn(party, ruleset)
       if (burn.party !== party) setParty(burn.party)
       burn.messages.forEach(m => toast(m))
+
+      // Crossing a boundary: damage edges bite every crossing; onPass effects
+      // fire (onPassOnce latches via passedFlag / a derived key)
+      if (crossedB) {
+        const passKey = crossedB.passedFlag ?? `boundary.passed.${crossedBk}`
+        const passSpent = crossedB.onPassOnce ? !!flagsRef.current[passKey] : false
+        const crossEffects: Effect[] = []
+        if (crossedB.damage) crossEffects.push({ t: 'damage', dmgType: crossedB.damage.type ?? 'physical', amount: crossedB.damage.dice })
+        if (crossedB.onPass?.length && !passSpent) crossEffects.push(...crossedB.onPass)
+        if (crossEffects.length > 0) {
+          applyExploreEffect(resolveExploreEffects(crossEffects, makeEventContext(), Math.random, ruleset))
+          if (crossedB.onPassOnce && !passSpent) setFlags(prev => ({ ...prev, [passKey]: true }))
+        }
+      }
 
       const cellKey = `${nx},${ny}`
       const cell = activeMap.cells[cellKey]
@@ -685,6 +706,18 @@ export function DungeonMapper({
       }
 
       if (cell) {
+        // Trap objects spring once when stepped on, firing their effects
+        const trapEnt = cell.entities?.find(
+          e => e.t === 'object' && e.object.kind === 'trap' && (e.object.trapEffects?.length ?? 0) > 0,
+        )
+        if (trapEnt && trapEnt.t === 'object') {
+          const usedKey = objectUsedFlagKey(trapEnt.object.id)
+          if (!flagsRef.current[usedKey]) {
+            setFlags(prev => ({ ...prev, [usedKey]: true }))
+            applyExploreEffect(resolveExploreEffects(trapEnt.object.trapEffects!, makeEventContext(), Math.random, ruleset))
+          }
+        }
+
         // Encounter check (suppressed inside safe rooms)
         const encounter = cellHasTrick(cell, 'safeRoom')
           ? null

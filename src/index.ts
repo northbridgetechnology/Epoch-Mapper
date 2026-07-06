@@ -205,12 +205,13 @@ export {
   runCellEvents,
   expandReactive,
   applyFlagWriteWithReactions,
+  applyExploreHarm,
   questStageFlagKey,
   pickNpcLine,
   finishNpcLine,
   npcLineHeardFlagKey,
 } from './lib/event-engine'
-export type { EventContext, ExploreEffect } from './lib/event-engine'
+export type { EventContext, ExploreEffect, PartyHarm } from './lib/event-engine'
 
 // Shop schema helpers (Phase E6)
 export { SHOP_SCHEMA, blankShop } from './lib/shop-schema'

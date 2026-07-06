@@ -8,7 +8,7 @@
 import type { CellData } from './types'
 import type {
   CellEvent, Condition, ObjectInstance, Effect, ItemInstance,
-  Character, Ruleset, Facing,
+  Character, Ruleset, Facing, DamageType,
 } from './engine-types'
 
 /** Save-flag key holding a quest's current stage (1-based number). */
@@ -77,10 +77,29 @@ export interface ExploreEffect {
   teachSpells: string[]
   /** Roll credits (first gameEnd effect wins). */
   gameEnd?: { text?: string }
+  /** Full HP/MP restore for the living party (fullHeal effect). */
+  fullHeal?: boolean
+  /** HP restored to each living member (heal effects, summed). */
+  heal: number
+  /** MP restored to each living member (restoreMp effects, summed). */
+  restoreMp: number
+  /** Harm dealt to the whole party — one entry per damage effect, amount
+   *  pre-rolled here so the runtime just applies it (respecting resistances). */
+  partyDamage: { dmgType: DamageType; amount: number }[]
+  /** Statuses inflicted on the party (chance already rolled in). */
+  partyStatus: string[]
+  /** Statuses cured across the party (status id or 'all'). */
+  partyCure: string[]
+  /** Revive one random fallen member at partial HP (reviveRandom effect). */
+  revive?: boolean
 }
 
 function emptyExploreEffect(): ExploreEffect {
-  return { flagSets: {}, messages: [], goldDelta: 0, itemsGained: [], itemsLost: [], questUpdates: [], npcMoves: [], teachSpells: [] }
+  return {
+    flagSets: {}, messages: [], goldDelta: 0, itemsGained: [], itemsLost: [],
+    questUpdates: [], npcMoves: [], teachSpells: [],
+    heal: 0, restoreMp: 0, partyDamage: [], partyStatus: [], partyCure: [],
+  }
 }
 
 // ── Condition evaluation ──────────────────────────────────────────────────────
@@ -179,13 +198,27 @@ function applyEffectsInto(
         result.revealRadius = Math.max(result.revealRadius ?? 0, eff.radius)
         break
       case 'fullHeal':
-        // Handled by DungeonMapper — signal via special message flag
-        result.flagSets['_fullHeal'] = true
+        result.fullHeal = true
         break
       case 'heal':
+        result.heal += rollDice(eff.amount, rng)
+        break
       case 'restoreMp':
-        // Out-of-combat healing applied by DungeonMapper
-        result.flagSets[`_${eff.t}`] = String(eff.amount)
+        result.restoreMp += rollDice(eff.amount, rng)
+        break
+      case 'damage':
+        // Harmful effects finally resolve out of combat: pre-roll the amount so
+        // the runtime applies it to the party (per-member resistances applied there).
+        result.partyDamage.push({ dmgType: eff.dmgType, amount: rollDice(eff.amount, rng) })
+        break
+      case 'status':
+        if (rng() < (eff.chance ?? 1)) result.partyStatus.push(eff.status)
+        break
+      case 'cure':
+        result.partyCure.push(eff.status)
+        break
+      case 'reviveRandom':
+        result.revive = true
         break
       case 'dialogue':
         if (!result.dialogueNode) result.dialogueNode = eff.node
@@ -232,6 +265,82 @@ function applyEffectsInto(
         break
     }
   }
+}
+
+/** The party-affecting slice of an ExploreEffect (heal, harm, status, revive). */
+export type PartyHarm = Pick<ExploreEffect,
+  'fullHeal' | 'heal' | 'restoreMp' | 'partyDamage' | 'partyStatus' | 'partyCure' | 'revive'>
+
+/**
+ * Apply exploration heal/harm/status/revive to a party. Pure: returns a new
+ * party, feedback messages, and whether the party was wiped (all members down)
+ * so the caller can trigger the game-over flow. Damage honours each member's
+ * race resistances; exploration damage CAN be lethal (classic trap behaviour).
+ */
+export function applyExploreHarm(
+  party: Character[],
+  ruleset: Ruleset,
+  eff: PartyHarm,
+  rng: () => number = Math.random,
+): { party: Character[]; messages: string[]; wiped: boolean } {
+  const messages: string[] = []
+  let next = party
+
+  if (eff.fullHeal) {
+    next = next.map(c => c.alive ? { ...c, hp: c.maxHp, mp: c.maxMp } : c)
+    messages.push('The party is fully restored.')
+  }
+  if (eff.heal > 0 || eff.restoreMp > 0) {
+    next = next.map(c => c.alive ? {
+      ...c,
+      hp: eff.heal > 0 ? Math.min(c.maxHp, c.hp + eff.heal) : c.hp,
+      mp: eff.restoreMp > 0 ? Math.min(c.maxMp, c.mp + eff.restoreMp) : c.mp,
+    } : c)
+  }
+
+  if (eff.partyCure.length > 0) {
+    const cureAll = eff.partyCure.includes('all')
+    next = next.map(c => {
+      if (!c.alive || c.statuses.length === 0) return c
+      const kept = cureAll ? [] : c.statuses.filter(s => !eff.partyCure.includes(s.def))
+      return kept.length === c.statuses.length ? c : { ...c, statuses: kept }
+    })
+  }
+
+  for (const d of eff.partyDamage) {
+    next = next.map(c => {
+      if (!c.alive) return c
+      const race = ruleset.races.find(r => r.id === c.raceId)
+      const resist = race?.resistances?.[d.dmgType] ?? 0
+      const dealt = Math.max(0, Math.round(d.amount * (1 - resist)))
+      const hp = Math.max(0, c.hp - dealt)
+      return { ...c, hp, alive: hp > 0 }
+    })
+    messages.push(`The party is struck for ${d.amount} ${d.dmgType} damage!`)
+  }
+
+  for (const sid of eff.partyStatus) {
+    const def = ruleset.statusEffects.find(s => s.id === sid)
+    if (!def) continue
+    next = next.map(c => (!c.alive || c.statuses.some(s => s.def === sid))
+      ? c
+      : { ...c, statuses: [...c.statuses, { def: sid, remaining: def.durationTurns }] })
+    messages.push(`The party is afflicted with ${def.name}.`)
+  }
+
+  if (eff.revive) {
+    const downed = next.map((c, i) => ({ c, i })).filter(x => !x.c.alive)
+    if (downed.length > 0) {
+      const pick = downed[Math.floor(rng() * downed.length)]
+      next = next.map((c, i) => i === pick.i
+        ? { ...c, alive: true, hp: Math.max(1, Math.floor(c.maxHp / 2)) }
+        : c)
+      messages.push(`${pick.c.name} is pulled back from death.`)
+    }
+  }
+
+  const wiped = next.length > 0 && next.every(c => !c.alive)
+  return { party: next, messages, wiped }
 }
 
 // ── Sequential cell-event runner + reactive onFlag expansion ──────────────────

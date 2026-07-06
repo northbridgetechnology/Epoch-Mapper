@@ -177,4 +177,84 @@ test('finishNpcLine marks the line heard and applies its effects', () => {
   assert.equal(r.goldDelta, 25)
 })
 
+// ── Exploration harm / heal / status (traps, damage tiles, hazard events) ─────
+
+import { applyExploreHarm } from '../src/lib/event-engine'
+import { makeDefaultRuleset } from '../src/lib/default-ruleset'
+import type { Character } from '../src/lib/engine-types'
+
+const rs = makeDefaultRuleset()
+function hero(over: Partial<Character> = {}): Character {
+  return {
+    id: 'h', name: 'Ana', classId: 'class.fighter', raceId: 'race.human',
+    level: 3, xp: 0, attributes: {}, hp: 20, maxHp: 20, mp: 5, maxMp: 5,
+    equipment: {}, knownSpells: [], statuses: [], alive: true, ...over,
+  }
+}
+
+test('exploration effects no longer smuggle heal signals through flags', () => {
+  const r = resolveExploreEffects(
+    [{ t: 'fullHeal' }, { t: 'heal', amount: 5 }, { t: 'restoreMp', amount: 3 }],
+    ctx(), () => 0.5, ruleset as unknown as Ruleset,
+  )
+  assert.equal(r.fullHeal, true)
+  assert.equal(r.heal, 5)
+  assert.equal(r.restoreMp, 3)
+  assert.ok(!('_fullHeal' in r.flagSets), 'no _fullHeal flag pollution')
+  assert.ok(!('_heal' in r.flagSets), 'no _heal flag pollution')
+})
+
+test('damage/status/cure/reviveRandom effects resolve out of combat', () => {
+  const r = resolveExploreEffects(
+    [{ t: 'damage', dmgType: 'fire', amount: 7 }, { t: 'status', status: 'x', chance: 1 }, { t: 'cure', status: 'all' }, { t: 'reviveRandom' }],
+    ctx(), () => 0, ruleset as unknown as Ruleset,
+  )
+  assert.deepEqual(r.partyDamage, [{ dmgType: 'fire', amount: 7 }])
+  assert.deepEqual(r.partyStatus, ['x'])
+  assert.deepEqual(r.partyCure, ['all'])
+  assert.equal(r.revive, true)
+})
+
+test('status chance gate: a 0-chance status never lands', () => {
+  const r = resolveExploreEffects([{ t: 'status', status: 'x', chance: 0 }], ctx(), () => 0.99, ruleset as unknown as Ruleset)
+  assert.equal(r.partyStatus.length, 0)
+})
+
+test('applyExploreHarm: damage bites, can wipe, honours resistances', () => {
+  const r = applyExploreHarm([hero({ hp: 5 })], rs, {
+    heal: 0, restoreMp: 0, partyDamage: [{ dmgType: 'physical', amount: 10 }], partyStatus: [], partyCure: [],
+  })
+  assert.equal(r.party[0].hp, 0)
+  assert.equal(r.party[0].alive, false)
+  assert.equal(r.wiped, true)
+
+  // A resistant race takes less (jack_frost enemies are fire-weak, but races
+  // hold resistances — use whatever the default human has, else full damage)
+  const partial = applyExploreHarm([hero({ hp: 20 })], rs, {
+    heal: 0, restoreMp: 0, partyDamage: [{ dmgType: 'physical', amount: 6 }], partyStatus: [], partyCure: [],
+  })
+  assert.ok(partial.party[0].hp <= 20 && partial.party[0].hp >= 14, 'takes up to 6 damage')
+  assert.equal(partial.wiped, false)
+})
+
+test('applyExploreHarm: heal, cure, revive, and status apply', () => {
+  const statusId = rs.statusEffects[0].id
+  const cured = applyExploreHarm([hero({ hp: 5, statuses: [{ def: statusId, remaining: 3 }] })], rs, {
+    heal: 8, restoreMp: 0, partyDamage: [], partyStatus: [], partyCure: ['all'],
+  })
+  assert.equal(cured.party[0].hp, 13)
+  assert.equal(cured.party[0].statuses.length, 0)
+
+  const afflicted = applyExploreHarm([hero()], rs, {
+    heal: 0, restoreMp: 0, partyDamage: [], partyStatus: [statusId], partyCure: [],
+  })
+  assert.equal(afflicted.party[0].statuses[0].def, statusId)
+
+  const revived = applyExploreHarm([hero({ hp: 0, alive: false })], rs, {
+    heal: 0, restoreMp: 0, partyDamage: [], partyStatus: [], partyCure: [], revive: true,
+  }, () => 0)
+  assert.equal(revived.party[0].alive, true)
+  assert.ok(revived.party[0].hp > 0)
+})
+
 console.log(`\n${passed} passed`)

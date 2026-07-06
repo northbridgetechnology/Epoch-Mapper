@@ -76,8 +76,10 @@ Statuses that tick while walking, not just in combat.
 
 - `StatusEffectDef.tickOutOfCombat?: boolean` — when true, `tickEffects`
   apply every N steps (default 4; tunable `stepTickInterval`).
-- Poison walk: lose HP per interval, floor at 1 HP out of combat (no
-  exploration deaths until the wipe flow ships; revisit after Batch B).
+- Poison walk: lose HP per interval. Exploration damage is now lethal and
+  triggers the game-over flow (see `applyExploreHarm`), so a step tick that
+  drops the last member wipes the party — decide whether poison should floor
+  at 1 HP out of combat or be allowed to kill.
 - Duration: exploration ticks also decrement `remaining` so a Blind that
   would last 3 combat turns wears off after ~12 steps.
 - Implementation point: the movement pipeline in `DungeonMapper.handleMove`
