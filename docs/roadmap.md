@@ -14,13 +14,17 @@ Current in-flight plan (implemented batch by batch):
 - **Batch F** — story & protagonist: opening story slides, Main Character
   (name/pronoun tokens, MC-death-ends-game, undismissable), player Character
   Builder (point-buy + portraits) *(shipped)*
+- **Batch G** — NPCs ↔ party: `npcToCharacter` + dialogue-driven `recruit`
+  effect + `NpcDef.startsInParty`; the Party workspace promoted to a
+  **Characters** NPC Creator (place-in-cell, add-to-party), NPCs removed from
+  the Database *(shipped)*
 
 Everything below is deferred beyond those batches.
 
-> **Follow-up to Batch F — recruitment.** The player starts solo; converting an
-> authored `NpcDef` into a playable party member (a `recruit` effect, respecting
-> `partySize`) is the next batch. See §2 (negotiation & recruitment) for the
-> broader talk/recruit design this slots into.
+> **Follow-up to Batch G — FFT roster & bench.** Recruitment is flat (capped at
+> `partySize`). A full roster with an active-party selection + swap/formation UI
+> at camp/inn/save (SaveState.roster), plus battle-negotiation recruitment
+> (§2), is the deferred next step.
 
 ---
 

@@ -140,6 +140,8 @@ export { EffectBuilder } from './components/forms/EffectBuilder'
 
 // Workspaces
 export { PartyWorkspace } from './components/workspaces/PartyWorkspace'
+export { CharactersWorkspace } from './components/workspaces/CharactersWorkspace'
+export { NpcEditor } from './components/forms/NpcEditor'
 export { DatabaseWorkspace } from './components/workspaces/DatabaseWorkspace'
 export { PlayWorkspace } from './components/workspaces/PlayWorkspace'
 

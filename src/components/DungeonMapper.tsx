@@ -21,7 +21,7 @@ import { NewMapModal } from './NewMapModal'
 import { buildBaseMap, buildGeneratedWorld, type NewMapConfig } from '@/lib/map-generator'
 import { CellTooltip } from './CellTooltip'
 import { MarkerPalette } from './MarkerPalette'
-import { PartyWorkspace } from './workspaces/PartyWorkspace'
+import { CharactersWorkspace } from './workspaces/CharactersWorkspace'
 import { DatabaseWorkspace } from './workspaces/DatabaseWorkspace'
 import { PlayWorkspace } from './workspaces/PlayWorkspace'
 import { SettingsWorkspace } from './workspaces/SettingsWorkspace'
@@ -219,7 +219,7 @@ export function DungeonMapper({
   const [viewportRef, viewportSize] = useElementSize<HTMLElement>()
 
   // Activity-bar workspace
-  type Workspace = 'map' | 'database' | 'party' | 'play' | 'settings'
+  type Workspace = 'map' | 'database' | 'characters' | 'play' | 'settings'
   const [workspace, setWorkspace] = useState<Workspace>('map')
   const workspaceRef = useRef<Workspace>('map')
   workspaceRef.current = workspace
@@ -1208,6 +1208,36 @@ export function DungeonMapper({
     toast('The party stirs awake at the entrance, purses lighter…')
   }, [ruleset.meta.wipeGoldPenalty, maps, setMaps, setActiveIdx, moveReveal])
 
+  // Characters workspace: drop an NPC into the live party (testing), or place
+  // it as an object entity on the active map's marker cell.
+  const handleAddNpcToParty = useCallback((npcId: string) => {
+    const def = (ruleset.npcs ?? []).find(n => n.id === npcId)
+    if (!def) return
+    const cap = ruleset.meta.partySize ?? 6
+    setParty(prev => {
+      if (prev.length >= cap) { toast('Your party is full.'); return prev }
+      const ch = npcToCharacter(def, ruleset)
+      toast.success(`${ch.name} added to the party.`)
+      return [...prev, ch]
+    })
+  }, [ruleset])
+
+  const handlePlaceNpc = useCallback((npcId: string) => {
+    if (!activeMap) return
+    const def = (ruleset.npcs ?? []).find(n => n.id === npcId)
+    const key = `${activeMap.playerX},${activeMap.playerY}`
+    updateActiveMap((m) => {
+      const cell = m.cells[key] ?? { base: BASE.FLOOR, overlays: [] }
+      const already = (cell.entities ?? []).some(
+        e => e.t === 'object' && e.object.kind === 'npc' && e.object.npc === npcId,
+      )
+      if (already) return {}
+      const entity: CellEntity = { t: 'object', object: { kind: 'npc', id: `npcobj_${npcId}_${Date.now()}`, npc: npcId } }
+      return { cells: { ...m.cells, [key]: { ...cell, entities: [...(cell.entities ?? []), entity] } } }
+    })
+    toast.success(`${def?.name ?? 'NPC'} placed at (${activeMap.playerX}, ${activeMap.playerY}).`)
+  }, [activeMap, ruleset, updateActiveMap])
+
   const handleAbandonRun = useCallback(() => {
     deleteAllSlots()
     setParty([])
@@ -1216,7 +1246,9 @@ export function DungeonMapper({
     setFlags({})
     setGold(ruleset.meta.startingGold)
     setGameOver(false)
-    setWorkspace('party')
+    setShowTitle(true)
+    setIntroPhase(null)
+    setWorkspace('play')
     toast('The party is lost. Their story ends here.')
   }, [ruleset.meta.startingGold])
 
@@ -1831,7 +1863,7 @@ export function DungeonMapper({
   const WORKSPACES: { id: Workspace; icon: React.ReactNode; label: string }[] = [
     { id: 'map', icon: <Map className="w-5 h-5" />, label: 'Map' },
     { id: 'database', icon: <Database className="w-5 h-5" />, label: 'Database' },
-    { id: 'party', icon: <Users className="w-5 h-5" />, label: 'Party' },
+    { id: 'characters', icon: <Users className="w-5 h-5" />, label: 'Characters' },
     { id: 'play', icon: <Play className="w-5 h-5" />, label: 'Play' },
     { id: 'settings', icon: <Settings className="w-5 h-5" />, label: 'Settings' },
   ]
@@ -1866,25 +1898,16 @@ export function DungeonMapper({
       </nav>
 
       {/* Party workspace */}
-      {workspace === 'party' && (
+      {workspace === 'characters' && (
         <div className="flex-1 flex flex-col min-h-0">
-          <div className="px-4 py-2.5 border-b border-white/10 text-sm font-semibold text-white/70">Party Builder</div>
+          <div className="px-4 py-2.5 border-b border-white/10 text-sm font-semibold text-white/70">Characters</div>
           <div className="flex-1 min-h-0">
-            <PartyWorkspace
+            <CharactersWorkspace
               ruleset={ruleset}
-              party={party}
-              formation={formation}
-              inventory={inventory}
-              gold={gold}
-              onPartyChange={(p, f) => {
-                setParty(p)
-                setFormation(f)
-                savePartyTemplate(p, f)
-              }}
-              onInventoryChange={(inv, g) => {
-                setInventory(inv)
-                setGold(g)
-              }}
+              onRulesetChange={setRuleset}
+              marker={activeMap ? { mapName: activeMap.name, x: activeMap.playerX, y: activeMap.playerY } : null}
+              onPlaceNpc={handlePlaceNpc}
+              onAddToParty={handleAddNpcToParty}
             />
           </div>
         </div>
