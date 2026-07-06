@@ -153,7 +153,7 @@ function ReserveCard({ char, ruleset, canField, onField, onDismiss }: {
 
 // ── Formation widget ───────────────────────────────────────────────────────────
 
-function FormationWidget({ party, formation, onFormationChange }: {
+export function FormationWidget({ party, formation, onFormationChange }: {
   party: Character[]; formation: Formation; onFormationChange: (f: Formation) => void
 }) {
   function toggleRow(idx: number, row: 'front' | 'back') {
@@ -202,7 +202,7 @@ function FormationWidget({ party, formation, onFormationChange }: {
 
 // ── Equipment panel ────────────────────────────────────────────────────────────
 
-function EquipmentPanel({
+export function EquipmentPanel({
   char, ruleset, inventory, onChange, onInventoryChange,
 }: {
   char: Character; ruleset: Ruleset; inventory: ItemInstance[]
@@ -321,7 +321,7 @@ function EquipmentPanel({
 
 // ── Character sheet ────────────────────────────────────────────────────────────
 
-function CharacterSheet({
+export function CharacterSheet({
   char, ruleset, inventory, onChange, onInventoryChange,
 }: {
   char: Character; ruleset: Ruleset; inventory: ItemInstance[]

@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ArrowUp, ArrowDown, ArrowLeft, ArrowRight, ZoomIn, ZoomOut, Coins, Map, Eye, ScrollText, Flame, Save } from 'lucide-react'
+import { ArrowUp, ArrowDown, ArrowLeft, ArrowRight, ZoomIn, ZoomOut, Coins, Map, Eye, Menu } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { baseDef, overlayDef, edgeDef, boundaryKey, DEFAULT_CELL, MIN_CELL, MAX_CELL, BASE, EDGE } from '@/lib/constants'
 import type { CellData, MapData, MarkerDef, EdgeDir } from '@/lib/types'
@@ -9,13 +9,12 @@ import { getTheme, type MapThemeDef } from '@/lib/themes'
 import { getSubcubeDef } from '@/lib/subcube-defs'
 import { pixelSprite, pixelSpriteRect, spriteAspect, creatureSprite } from '@/lib/pixel-sprites'
 import { computeLightRadius, cellHasTrick, listFoes } from '@/lib/exploration'
-import { listSaveSlots } from '@/lib/save-state'
-import type { BoundaryData, CellEntity, Character, Facing, ItemInstance, Ruleset } from '@/lib/engine-types'
+import type { BoundaryData, CellEntity, Character, Facing, Formation, ItemInstance, Ruleset } from '@/lib/engine-types'
 import { objectUsedFlagKey, effectiveDoorState, npcRecruitedFlagKey } from '@/lib/event-engine'
 import type { BattleViewState } from '@/lib/battle-scene'
 import type { CombatState } from '@/lib/combat-engine'
 import { useBattleController, BattleHud, BattleOutcomeOverlay } from '@/components/BattleHud'
-import { JournalOverlay } from '@/components/JournalOverlay'
+import { GameMenu } from '@/components/GameMenu'
 import { Minimap } from '@/components/Minimap'
 
 // ── Props ─────────────────────────────────────────────────────────────────────
@@ -34,6 +33,14 @@ interface PlayWorkspaceProps {
   combat?: CombatState | null
   ruleset: Ruleset
   inventory: ItemInstance[]
+  /** Benched members (roster/bench) — for the in-play menu's Party screen. */
+  reserve?: Character[]
+  /** Roster edits from the in-play menu (equip, party order, bench/field). */
+  onRosterChange?: (party: Character[], formation: Formation, reserve: Character[]) => void
+  /** Formation for the menu's Party screen. */
+  formation?: Formation
+  /** Inventory/gold edits from the menu (item use). */
+  onInventoryChange?: (inventory: ItemInstance[], gold: number) => void
   onCombatAction: (next: CombatState) => void
   onCombatEnd: () => void
   onMoveForward: () => void
@@ -47,6 +54,8 @@ interface PlayWorkspaceProps {
   canSaveHere?: boolean
   onSaveSlot?: (slot: number) => void
   onLoadSlot?: (slot: number) => void
+  /** Notify the host when the in-play menu opens/closes (to gate movement). */
+  onMenuOpenChange?: (open: boolean) => void
 }
 
 // ── Small helpers ─────────────────────────────────────────────────────────────
@@ -1246,11 +1255,11 @@ export function PlayWorkspace({
   activeMap, party, gold, facing,
   customBase, customOverlay, isCellRevealed, revealedBoundaries, bumpTrigger,
   flags,
-  combat, ruleset, inventory, onCombatAction, onCombatEnd,
+  combat, ruleset, inventory, reserve = [], formation = { front: [], back: [] },
+  onRosterChange, onInventoryChange, onCombatAction, onCombatEnd,
   onMoveForward, onMoveBack, onTurnLeft, onTurnRight, onInteract,
-  onRest, canSaveHere, onSaveSlot, onLoadSlot,
+  onRest, canSaveHere, onSaveSlot, onLoadSlot, onMenuOpenChange,
 }: PlayWorkspaceProps) {
-  const [showSaveMenu, setShowSaveMenu] = useState(false)
   const [cellSize, setCellSize] = useState(DEFAULT_CELL + 6)
   const [view, setView] = useState<'3d' | 'map'>('3d')
   const zoom = useCallback((delta: number) => {
@@ -1268,19 +1277,23 @@ export function PlayWorkspace({
   // Battles play out in first person — snap to the 3D view when one starts
   useEffect(() => { if (combat) setView('3d') }, [combat])
 
-  // Journal (J) — quests + lore; M toggles the full map view on/off
-  const [showJournal, setShowJournal] = useState(false)
+  // Tab opens the main menu (the hub for items/magic/equip/party/journal/camp/
+  // save/config); M toggles the full map view on/off.
+  const [showMenu, setShowMenu] = useState(false)
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.metaKey || e.ctrlKey || e.altKey) return
       const tag = (e.target as HTMLElement)?.tagName
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
-      if (e.key === 'j' || e.key === 'J') setShowJournal(v => !v)
+      if (e.key === 'Tab' && !combat) { e.preventDefault(); setShowMenu(true) }
       else if (e.key === 'm' || e.key === 'M') setView(v => v === '3d' ? 'map' : '3d')
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [])
+  }, [combat])
+  useEffect(() => { onMenuOpenChange?.(showMenu) }, [showMenu, onMenuOpenChange])
+  // A battle takes over — never leave the menu open into combat.
+  useEffect(() => { if (combat) setShowMenu(false) }, [combat])
 
   const viewRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
@@ -1321,62 +1334,15 @@ export function PlayWorkspace({
           <span className="text-amber-400/70 font-mono">{facing}</span>
         </div>
         <div className="flex items-center gap-1">
-          {onRest && !combat && (
+          {!combat && (
             <button
-              onClick={onRest}
-              title="Camp — rest and recover (may be ambushed)"
-              className="flex items-center gap-1 px-2 h-6 rounded text-xs text-white/40 hover:text-white hover:bg-white/10 transition-colors"
+              onClick={() => setShowMenu(true)}
+              title="Menu — items, magic, equip, party, journal, camp, save (Tab)"
+              className="flex items-center gap-1 px-2 h-6 rounded text-xs text-white/50 hover:text-white hover:bg-white/10 transition-colors"
             >
-              <Flame className="w-3.5 h-3.5" /> Camp
+              <Menu className="w-3.5 h-3.5" /> Menu
             </button>
           )}
-          {onSaveSlot && onLoadSlot && !combat && (
-            <div className="relative">
-              <button
-                onClick={() => setShowSaveMenu(v => !v)}
-                title={canSaveHere ? 'Save / Load' : 'Saving requires a save point'}
-                className="flex items-center gap-1 px-2 h-6 rounded text-xs text-white/40 hover:text-white hover:bg-white/10 transition-colors"
-              >
-                <Save className="w-3.5 h-3.5" /> Save
-              </button>
-              {showSaveMenu && (
-                <div className="absolute right-0 top-7 z-40 w-64 rounded-lg border border-white/10 bg-zinc-900 shadow-xl p-2 space-y-1">
-                  {listSaveSlots().map((info, slot) => (
-                    <div key={slot} className="flex items-center gap-2 px-2 py-1.5 rounded bg-zinc-800/60 border border-white/5">
-                      <div className="flex-1 min-w-0">
-                        <div className="text-[11px] font-medium text-white/70">Slot {slot + 1}</div>
-                        <div className="text-[10px] text-white/35 truncate">
-                          {info ? `${info.partySummary} · ${info.gold}g · ${new Date(info.at).toLocaleString()}` : 'Empty'}
-                        </div>
-                      </div>
-                      <button
-                        onClick={() => { onSaveSlot(slot); setShowSaveMenu(false) }}
-                        disabled={!canSaveHere}
-                        title={canSaveHere ? undefined : 'Saving requires a save point'}
-                        className="px-1.5 py-0.5 rounded text-[10px] text-amber-300/80 hover:text-amber-200 hover:bg-amber-500/10 disabled:opacity-30 disabled:cursor-not-allowed"
-                      >
-                        Save
-                      </button>
-                      <button
-                        onClick={() => { onLoadSlot(slot); setShowSaveMenu(false) }}
-                        disabled={!info}
-                        className="px-1.5 py-0.5 rounded text-[10px] text-sky-300/80 hover:text-sky-200 hover:bg-sky-500/10 disabled:opacity-30 disabled:cursor-not-allowed"
-                      >
-                        Load
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-          <button
-            onClick={() => setShowJournal(v => !v)}
-            title="Journal (J)"
-            className="flex items-center gap-1 px-2 h-6 rounded text-xs text-white/40 hover:text-white hover:bg-white/10 transition-colors"
-          >
-            <ScrollText className="w-3.5 h-3.5" />
-          </button>
           <button
             onClick={() => setView(v => v === '3d' ? 'map' : '3d')}
             title={view === '3d' ? 'Switch to map view' : 'Switch to 3D view'}
@@ -1416,7 +1382,6 @@ export function PlayWorkspace({
             <Minimap map={activeMap} facing={facing} flags={flags} ruleset={ruleset} sightRadius={lightRadius} />
           )}
           {combat && <BattleOutcomeOverlay state={combat} ruleset={ruleset} onContinue={onCombatEnd} />}
-          {showJournal && <JournalOverlay ruleset={ruleset} flags={flags} mc={party.find(c => c.isMc) ?? null} onClose={() => setShowJournal(false)} />}
         </div>
       ) : (
         <DungeonViewport
@@ -1449,6 +1414,25 @@ export function PlayWorkspace({
         )}
       </div>
 
+      {showMenu && !combat && onRosterChange && onInventoryChange && (
+        <GameMenu
+          ruleset={ruleset}
+          party={party}
+          reserve={reserve}
+          formation={formation}
+          inventory={inventory}
+          gold={gold}
+          flags={flags}
+          mapName={activeMap.name}
+          canSaveHere={!!canSaveHere}
+          onRosterChange={onRosterChange}
+          onInventoryChange={onInventoryChange}
+          onRest={onRest}
+          onSaveSlot={onSaveSlot}
+          onLoadSlot={onLoadSlot}
+          onClose={() => setShowMenu(false)}
+        />
+      )}
     </div>
   )
 }

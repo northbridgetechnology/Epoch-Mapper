@@ -254,6 +254,7 @@ export function DungeonMapper({
   partyRef.current = party
   const reserveRef = useRef<Character[]>([])
   reserveRef.current = reserve
+  const menuOpenRef = useRef(false)   // in-play main menu (blocks movement)
   const [dialogue, setDialogue] = useState<{ npcId: string; lineId: string } | null>(null)
   const dialogueRef = useRef<typeof dialogue>(null)
   dialogueRef.current = dialogue
@@ -1800,7 +1801,7 @@ export function DungeonMapper({
 
       if (workspaceRef.current === 'play') {
         // Block movement while any overlay (combat/shop/encounter) is active — those handle keys themselves
-        if (introActiveRef.current || combatStateRef.current || shopIdRef.current || activeEncounterRef.current || dialogueRef.current || inscriptionRef.current || gameOverRef.current || gameEndingRef.current) return
+        if (menuOpenRef.current || introActiveRef.current || combatStateRef.current || shopIdRef.current || activeEncounterRef.current || dialogueRef.current || inscriptionRef.current || gameOverRef.current || gameEndingRef.current) return
         // Blobber controls: W=forward, S=back, A=turn-left, D=turn-right
         if (e.key === 'w' || e.key === 'W' || e.key === 'ArrowUp') { e.preventDefault(); stepForward(); return }
         if (e.key === 's' || e.key === 'S' || e.key === 'ArrowDown') { e.preventDefault(); stepBack(); return }
@@ -1957,6 +1958,11 @@ export function DungeonMapper({
             combat={combatState}
             ruleset={ruleset}
             inventory={inventory}
+            reserve={reserve}
+            formation={formation}
+            onRosterChange={handleRosterChange}
+            onInventoryChange={(inv, g) => { setInventory(inv); setGold(g) }}
+            onMenuOpenChange={(open) => { menuOpenRef.current = open }}
             onCombatAction={handleCombatAction}
             onCombatEnd={() => {
               if (!combatState) return
