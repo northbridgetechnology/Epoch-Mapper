@@ -1102,9 +1102,12 @@ export function DungeonMapper({
 
   // New Game intro flow: after the title, run the opening story (if authored)
   // then the character builder (unless the author ships a fixed party).
+  // A New Game is a fresh start: for a customMc game always run the builder so
+  // the hero is (re)built and startNewGame merges [hero, ...startsInParty] —
+  // never let a stale/seeded party silently replace the protagonist.
   const needsBuilder = useCallback(
-    () => (ruleset.meta.partyCreation ?? 'customMc') !== 'fixed' && !party.some(c => c.isMc),
-    [ruleset.meta.partyCreation, party],
+    () => (ruleset.meta.partyCreation ?? 'customMc') !== 'fixed',
+    [ruleset.meta.partyCreation],
   )
   // Assemble the starting party: the player's hero (if built) plus every NpcDef
   // flagged `startsInParty`, capped at partySize. Legacy games with neither keep

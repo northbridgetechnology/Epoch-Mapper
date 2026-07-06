@@ -124,6 +124,10 @@ export function CharactersWorkspace({
 }) {
   const [tab, setTab] = useState<'party' | 'cast'>('party')
 
+  // Cast excludes NPCs already living in the party (they show under Party).
+  const recruited = new Set(party.map(c => c.sourceNpc).filter(Boolean) as string[])
+  const castCount = (ruleset.npcs ?? []).filter(n => !recruited.has(n.id)).length
+
   return (
     <div className="flex flex-col h-full min-h-0">
       <div className="flex items-center gap-1 px-3 py-1.5 border-b border-white/10 flex-shrink-0">
@@ -131,7 +135,7 @@ export function CharactersWorkspace({
           Party ({party.length})
         </TabButton>
         <TabButton active={tab === 'cast'} onClick={() => setTab('cast')} icon={<Users className="w-3.5 h-3.5" />}>
-          Cast ({(ruleset.npcs ?? []).length})
+          Cast ({castCount})
         </TabButton>
       </div>
       <div className="flex-1 min-h-0">
