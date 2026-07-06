@@ -472,6 +472,8 @@ export interface SaveState {
   sharedInventory: ItemInstance[]
   flags: Record<string, boolean | number | string>
   revealed: Record<string, string[]>
+  /** Per-map exploration reveal for the minimap (`mapId → "x,y"[]`). */
+  seen?: Record<string, string[]>
   /** Revealed boundary keys (illusory walls etc). */
   revealedBoundaries?: string[]
   rngSeed: number

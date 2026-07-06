@@ -68,6 +68,13 @@ export interface MapData {
    */
   revealedChunks?: string[]
   /**
+   * Per-cell fog reveal for the Play-mode minimap (`"x,y"` keys). Unlike the
+   * chunk-based editor fog (`revealedChunks`), these are revealed strictly by
+   * exploration — a cell only appears once the party has actually seen it via
+   * cardinal line-of-sight from a walked cell (see `seenCellsFrom`).
+   */
+  seenCells?: string[]
+  /**
    * Boundary data keyed by canonical key from `boundaryKey()`.
    * Keys are of the form `"x,y:S"` or `"x,y:E"` — only south and east faces are
    * stored; north/west lookups are redirected by `boundaryKey()` automatically.

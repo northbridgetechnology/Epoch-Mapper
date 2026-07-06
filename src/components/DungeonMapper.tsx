@@ -31,7 +31,7 @@ import { savePartyTemplate, loadPartyTemplate, saveToSlot, loadFromSlot, deleteA
 import { checkCellForEncounter, resolveEncounterTable, makeFixedEncounter, visitedFlagKey } from '@/lib/encounter-engine'
 import { EncounterModal } from './EncounterModal'
 import { DialogueOverlay } from './DialogueOverlay'
-import { applyMoveTricks, cellHasTrick, tickLightBurn, restParty, advanceFoes, listFoes, foeFlagKey } from '@/lib/exploration'
+import { applyMoveTricks, cellHasTrick, tickLightBurn, restParty, advanceFoes, listFoes, foeFlagKey, seenCellsFrom } from '@/lib/exploration'
 import { initCombat, applyCombatOutcome, consumeCombatItems, type CombatState } from '@/lib/combat-engine'
 import { CellInspector } from './CellInspector'
 import { usePanelWidth } from './ui/ResizablePanel'
@@ -397,6 +397,25 @@ export function DungeonMapper({
     return changed ? [...set] : (map.revealedChunks ?? [])
   }, [])
 
+  // Per-cell exploration reveal for the Play-mode minimap: merge whatever the
+  // party sees standing on (x,y) (cardinal line of sight, stops at walls/doors)
+  // into the map's persisted `seenCells`. Chunk fog above stays independent.
+  const revealSeen = useCallback((map: MapData, x: number, y: number): string[] => {
+    const set = new Set(map.seenCells ?? [])
+    let changed = false
+    for (const k of seenCellsFrom(map, x, y, flagsRef.current)) {
+      if (!set.has(k)) { set.add(k); changed = true }
+    }
+    return changed ? [...set] : (map.seenCells ?? [])
+  }, [])
+
+  // Convenience: the full position patch applied on every party move.
+  const moveReveal = useCallback((m: MapData, x: number, y: number) => ({
+    playerX: x, playerY: y,
+    revealedChunks: revealAround(m, x, y),
+    seenCells: revealSeen(m, x, y),
+  }), [revealAround, revealSeen])
+
   const applyExploreEffect = useCallback((result: ExploreEffect) => {
     if (Object.keys(result.flagSets).length > 0) {
       setFlags(prev => ({ ...prev, ...result.flagSets }))
@@ -438,7 +457,7 @@ export function DungeonMapper({
     }
     if (result.teleportTo) {
       const { x, y } = result.teleportTo
-      updateActiveMap((m) => ({ playerX: x, playerY: y, revealedChunks: revealAround(m, x, y) }))
+      updateActiveMap((m) => moveReveal(m, x, y))
       setCameraOffset({ x: 0, y: 0 })
     }
     if (result.openShop) {
@@ -586,7 +605,7 @@ export function DungeonMapper({
         return nextParty
       })
     }
-  }, [updateActiveMap, revealAround, ruleset, setInventory, setGold, setFlags, setShopId, setActiveEncounter, setParty, setMaps, setGameOver])
+  }, [updateActiveMap, moveReveal, ruleset, setInventory, setGold, setFlags, setShopId, setActiveEncounter, setParty, setMaps, setGameOver])
 
   const makeEventContext = useCallback((): EventContext => ({
     flags,
@@ -635,7 +654,7 @@ export function DungeonMapper({
         return
       }
 
-      updateActiveMap((m) => ({ playerX: nx, playerY: ny, revealedChunks: revealAround(m, nx, ny) }))
+      updateActiveMap((m) => moveReveal(m, nx, ny))
       setCameraOffset({ x: 0, y: 0 })
 
       // Burn-down light sources tick once per step (torches with burnSteps)
@@ -677,7 +696,7 @@ export function DungeonMapper({
           setActiveIdx(targetIdx)
           setMaps(prev => prev.map((m, i) => {
             if (i !== targetIdx) return m
-            return { ...m, playerX: dest.x, playerY: dest.y, revealedChunks: revealAround(m, dest.x, dest.y) }
+            return { ...m, ...moveReveal(m, dest.x, dest.y) }
           }))
           setCameraOffset({ x: 0, y: 0 })
           return
@@ -736,7 +755,7 @@ export function DungeonMapper({
             setActiveIdx(targetIdx)
             setMaps(prev => prev.map((m, i) => {
               if (i !== targetIdx) return m
-              return { ...m, playerX: mapLink.x, playerY: mapLink.y, revealedChunks: revealAround(m, mapLink.x, mapLink.y) }
+              return { ...m, ...moveReveal(m, mapLink.x, mapLink.y) }
             }))
             if (mapLink.facing) setFacing(mapLink.facing)
             setCameraOffset({ x: 0, y: 0 })
@@ -749,7 +768,7 @@ export function DungeonMapper({
         applyExploreEffect(runCellEvents(cell, 'onEnter', ctx, ruleset))
       }
     },
-    [activeMap, maps, updateActiveMap, revealAround, ruleset, flags, makeEventContext, applyExploreEffect, setActiveIdx, setFacing],
+    [activeMap, maps, updateActiveMap, moveReveal, ruleset, flags, makeEventContext, applyExploreEffect, setActiveIdx, setFacing],
   )
 
   // ── Blobber movement ──────────────────────────────────────────────────────────
@@ -1007,6 +1026,7 @@ export function DungeonMapper({
     sharedInventory: inventory,
     flags,
     revealed: Object.fromEntries(maps.map(m => [m.id, m.revealedChunks ?? []])),
+    seen: Object.fromEntries(maps.map(m => [m.id, m.seenCells ?? []])),
     revealedBoundaries: Array.from(revealedBoundaries),
     rngSeed: 0,
     playtimeMs: 0,
@@ -1024,6 +1044,7 @@ export function DungeonMapper({
     setMaps(prev => prev.map((m, i) => ({
       ...m,
       ...(s.revealed[m.id] ? { revealedChunks: s.revealed[m.id] } : {}),
+      ...(s.seen?.[m.id] ? { seenCells: s.seen[m.id] } : {}),
       ...(i === idx ? { playerX: s.position.x, playerY: s.position.y } : {}),
     })))
     if (idx >= 0) setActiveIdx(idx)
@@ -1095,13 +1116,13 @@ export function DungeonMapper({
       if (idx >= 0) {
         setActiveIdx(idx)
         setMaps(prev => prev.map((m, i) => i === idx
-          ? { ...m, playerX: target.x, playerY: target.y, revealedChunks: revealAround(m, target.x, target.y) }
+          ? { ...m, ...moveReveal(m, target.x, target.y) }
           : m))
       }
     }
     setGameOver(false)
     toast('The party stirs awake at the entrance, purses lighter…')
-  }, [ruleset.meta.wipeGoldPenalty, maps, setMaps, setActiveIdx, revealAround])
+  }, [ruleset.meta.wipeGoldPenalty, maps, setMaps, setActiveIdx, moveReveal])
 
   const handleAbandonRun = useCallback(() => {
     deleteAllSlots()
@@ -1284,7 +1305,7 @@ export function DungeonMapper({
     const cur = activeMap.cells[key] ?? EMPTY_CELL
 
     if (activeTool.kind === 'player') {
-      updateActiveMap((m) => ({ playerX: x, playerY: y, revealedChunks: revealAround(m, x, y) }))
+      updateActiveMap((m) => moveReveal(m, x, y))
       setCameraOffset({ x: 0, y: 0 })
       return
     }

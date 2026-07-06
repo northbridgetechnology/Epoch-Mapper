@@ -4,7 +4,8 @@
  */
 
 import assert from 'node:assert/strict'
-import { applyMoveTricks, cellHasTrick, computeLightRadius, tickLightBurn, restParty, listFoes, advanceFoes, foeFlagKey, DARK_BASE_RADIUS } from '../src/lib/exploration'
+import { applyMoveTricks, cellHasTrick, computeLightRadius, tickLightBurn, restParty, listFoes, advanceFoes, foeFlagKey, seenCellsFrom, DARK_BASE_RADIUS } from '../src/lib/exploration'
+import { EDGE } from '../src/lib/constants'
 import { makeDefaultRuleset } from '../src/lib/default-ruleset'
 import type { CellData, MapData } from '../src/lib/types'
 import type { CellEntity, Character } from '../src/lib/engine-types'
@@ -173,6 +174,44 @@ test('FOE patrols: pingpong reverses at the ends', () => {
   assert.deepEqual(listFoes(m, flags)[0].pos, { x: 1, y: 0 })
   flags = { ...flags, ...advanceFoes(m, flags) }
   assert.deepEqual(listFoes(m, flags)[0].pos, { x: 0, y: 0 }, 'bounces back')
+})
+
+// ── Minimap fog: per-cell exploration reveal (line of sight) ──────────────────
+
+function floorMap(over: Partial<MapData> = {}): MapData {
+  const cells: MapData['cells'] = {}
+  for (let y = -3; y <= 3; y++) for (let x = -3; x <= 3; x++) cells[`${x},${y}`] = { base: 1, overlays: [] }
+  return { id: 'm', name: 'm', playerX: 0, playerY: 0, cells, ...over }
+}
+
+test('seenCellsFrom: open floor reveals cardinal LOS out to maxDist, plus self', () => {
+  const seen = new Set(seenCellsFrom(floorMap(), 0, 0, {}, 2))
+  assert.ok(seen.has('0,0'), 'self always seen')
+  assert.ok(seen.has('2,0') && seen.has('-2,0') && seen.has('0,2') && seen.has('0,-2'), 'cardinal rays reach maxDist')
+  assert.ok(!seen.has('3,0'), 'stops at maxDist')
+  assert.ok(!seen.has('1,1'), 'no diagonal reveal')
+})
+
+test('seenCellsFrom: a wall boundary halts the ray (cell behind stays fogged)', () => {
+  const m = floorMap({ boundaries: { '1,0:E': { wall: EDGE.WALL } } })
+  const seen = new Set(seenCellsFrom(m, 0, 0, {}, 6))
+  assert.ok(seen.has('1,0'), 'sees up to the wall')
+  assert.ok(!seen.has('2,0'), 'cannot see past the wall')
+})
+
+test('seenCellsFrom: a wall-base cell is revealed but blocks further sight', () => {
+  const m = floorMap()
+  m.cells['0,2'] = { base: 2 /* WALL */, overlays: [] }
+  const seen = new Set(seenCellsFrom(m, 0, 0, {}, 6))
+  assert.ok(seen.has('0,1') && seen.has('0,2'), 'wall face is visible')
+  assert.ok(!seen.has('0,3'), 'nothing seen beyond a wall cell')
+})
+
+test('seenCellsFrom: closed doors block, open doors let sight through', () => {
+  const closed = floorMap({ boundaries: { '0,-1:S': { door: { state: 'closed' } } } })
+  assert.ok(!new Set(seenCellsFrom(closed, 0, 0, {}, 6)).has('0,-1'), 'closed door blocks')
+  const open = floorMap({ boundaries: { '0,-1:S': { door: { state: 'open' } } } })
+  assert.ok(new Set(seenCellsFrom(open, 0, 0, {}, 6)).has('0,-1'), 'open door reveals through')
 })
 
 // ── Batch D: loot ritual + spell learning ─────────────────────────────────────

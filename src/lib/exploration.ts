@@ -3,8 +3,10 @@
  * Pure functions — no DOM, no React.
  */
 
-import type { CellData, MapData } from './types'
+import type { CellData, EdgeDir, MapData } from './types'
 import type { CellEntity, Character, Dice, Facing, GameMeta, ItemDef, Ruleset, TrickKind } from './engine-types'
+import { BASE, EDGE, boundaryKey } from './constants'
+import { effectiveDoorState } from './event-engine'
 
 type TrickEntity = Extract<CellEntity, { t: 'trick' }>
 
@@ -177,6 +179,66 @@ export function tickLightBurn(
     return { ...ch, equipment }
   })
   return changed ? { party: next, messages } : { party, messages }
+}
+
+// ── Fog of war: per-cell exploration reveal ─────────────────────────────────────
+
+const RAYS: { dir: EdgeDir; dx: number; dy: number }[] = [
+  { dir: 'N', dx: 0, dy: -1 },
+  { dir: 'S', dx: 0, dy: 1 },
+  { dir: 'E', dx: 1, dy: 0 },
+  { dir: 'W', dx: -1, dy: 0 },
+]
+
+/** True when the boundary on `key` stops line of sight (a solid wall or a shut
+ *  door). Passable hazard edges and revealed secrets do not block. */
+function boundaryBlocksSight(
+  map: MapData,
+  key: string,
+  flags: Record<string, boolean | number | string>,
+): boolean {
+  const b = map.boundaries?.[key]
+  if (!b) return false
+  if (b.door) return effectiveDoorState(b.door, flags) !== 'open'
+  if (b.wall === undefined) return false
+  if (b.wall === EDGE.DAMAGE) return false                 // hazard edge — you see through it
+  if (b.secret && b.revealFlag && flags[b.revealFlag]) return false
+  return true                                              // any solid wall (incl. hidden secret/illusory)
+}
+
+function blocksBase(base: number): boolean {
+  return base === BASE.EMPTY || base === BASE.WALL || base === BASE.VOID
+}
+
+/**
+ * Cells the party sees standing on `(x,y)`: the cell itself plus cardinal
+ * line-of-sight out to `maxDist`, stopping at walls and shut doors. A blocking
+ * wall cell is itself revealed (you see its near face) before the ray halts.
+ * This is the exploration-reveal source for the Play-mode minimap — cells are
+ * only ever revealed by having actually been seen, never pre-lit in bulk.
+ */
+export function seenCellsFrom(
+  map: MapData,
+  x: number,
+  y: number,
+  flags: Record<string, boolean | number | string> = {},
+  maxDist = 6,
+): string[] {
+  const seen = new Set<string>([`${x},${y}`])
+  for (const { dir, dx, dy } of RAYS) {
+    let cx = x
+    let cy = y
+    for (let step = 0; step < maxDist; step++) {
+      if (boundaryBlocksSight(map, boundaryKey(cx, cy, dir), flags)) break
+      const nx = cx + dx
+      const ny = cy + dy
+      seen.add(`${nx},${ny}`)
+      if (blocksBase(map.cells[`${nx},${ny}`]?.base ?? 0)) break
+      cx = nx
+      cy = ny
+    }
+  }
+  return [...seen]
 }
 
 // ── Camp / rest ────────────────────────────────────────────────────────────────

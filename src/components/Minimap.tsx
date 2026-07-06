@@ -3,18 +3,20 @@
 import type { MapData, EdgeDir } from '@/lib/types'
 import type { Facing, Ruleset } from '@/lib/engine-types'
 import { BASE, EDGE, OVERLAY, boundaryKey } from '@/lib/constants'
+import { seenCellsFrom } from '@/lib/exploration'
 import { getTheme } from '@/lib/themes'
 
 /**
  * Round, north-up minimap for Play mode. Shows a 9×9 window centred on the
- * party, honouring the existing fog of war (isCellRevealed) — unrevealed cells
- * stay dark, and revealed geography persists even on dark maps (you remember
- * where you've walked). The player is an arrow that rotates with facing.
+ * party. Fog is strictly exploration-based: a cell only appears once the party
+ * has actually seen it (persisted `map.seenCells`) plus whatever is in current
+ * line of sight this step. Revealed geography persists even on dark maps (you
+ * remember where you've walked). The player is an arrow that rotates with facing.
  */
 
 const R = 4                       // radius → 9×9 window
 const N = R * 2 + 1
-const SIZE = 150
+const SIZE = 300
 const CELL = SIZE / N
 const CX = SIZE / 2
 
@@ -42,11 +44,11 @@ const FILL_COLOR: Record<Fill, string> = {
 }
 
 export function Minimap({
-  map, facing, isCellRevealed, ruleset,
+  map, facing, flags, ruleset,
 }: {
   map: MapData
   facing: Facing
-  isCellRevealed: (x: number, y: number) => boolean
+  flags: Record<string, boolean | number | string>
   ruleset?: Ruleset
 }) {
   const px = map.playerX
@@ -54,6 +56,11 @@ export function Minimap({
   const theme = getTheme(map.theme)
   const x0 = px - R
   const y0 = py - R
+
+  // Exploration reveal: everything ever seen, plus the current line of sight.
+  const revealedSet = new Set(map.seenCells ?? [])
+  for (const k of seenCellsFrom(map, px, py, flags)) revealedSet.add(k)
+  const isRevealed = (gx: number, gy: number) => revealedSet.has(`${gx},${gy}`)
 
   const sx = (gx: number) => (gx - x0) * CELL
   const sy = (gy: number) => (gy - y0) * CELL
@@ -65,12 +72,12 @@ export function Minimap({
   // Small POI dot with a dark ring for legibility
   const dot = (gx: number, gy: number, color: string, key: string) => (
     <circle key={key} cx={sx(gx) + CELL / 2} cy={sy(gy) + CELL / 2}
-      r={CELL * 0.22} fill={color} stroke="rgba(0,0,0,0.6)" strokeWidth={0.6} />
+      r={CELL * 0.22} fill={color} stroke="rgba(0,0,0,0.6)" strokeWidth={1.2} />
   )
 
   for (let gy = y0 - 1; gy <= py + R; gy++) {
     for (let gx = x0 - 1; gx <= px + R; gx++) {
-      const revealed = isCellRevealed(gx, gy)
+      const revealed = isRevealed(gx, gy)
       const inWindow = gx >= x0 && gx <= px + R && gy >= y0 && gy <= py + R
       const kind = classify(map, gx, gy, revealed)
 
@@ -80,8 +87,8 @@ export function Minimap({
 
       // Boundary walls between this cell's S / E faces (canonical keys). Draw
       // when either side is revealed so the layout appears as you explore.
-      const nb = isCellRevealed(gx, gy + 1)
-      const eb = isCellRevealed(gx + 1, gy)
+      const nb = isRevealed(gx, gy + 1)
+      const eb = isRevealed(gx + 1, gy)
       if (revealed || nb || eb) {
         const b = map.boundaries
         const sK = boundaryKey(gx, gy, 'S' as EdgeDir)
@@ -97,8 +104,8 @@ export function Minimap({
         }
         const sColor = (revealed || nb) ? lineFor(sBound) : null
         const eColor = (revealed || eb) ? lineFor(eBound) : null
-        if (sColor) walls.push(<line key={`ws_${gx}_${gy}`} x1={sx(gx)} y1={sy(gy) + CELL} x2={sx(gx) + CELL} y2={sy(gy) + CELL} stroke={sColor} strokeWidth={1.4} />)
-        if (eColor) walls.push(<line key={`we_${gx}_${gy}`} x1={sx(gx) + CELL} y1={sy(gy)} x2={sx(gx) + CELL} y2={sy(gy) + CELL} stroke={eColor} strokeWidth={1.4} />)
+        if (sColor) walls.push(<line key={`ws_${gx}_${gy}`} x1={sx(gx)} y1={sy(gy) + CELL} x2={sx(gx) + CELL} y2={sy(gy) + CELL} stroke={sColor} strokeWidth={2.6} />)
+        if (eColor) walls.push(<line key={`we_${gx}_${gy}`} x1={sx(gx) + CELL} y1={sy(gy)} x2={sx(gx) + CELL} y2={sy(gy) + CELL} stroke={eColor} strokeWidth={2.6} />)
       }
 
       // Points of interest (only on revealed, in-window cells)
@@ -146,13 +153,13 @@ export function Minimap({
           <g transform={`rotate(${ARROW_ROT[facing]} ${arrowCx} ${arrowCy})`}>
             <polygon
               points={`${arrowCx},${arrowCy - CELL * 0.42} ${arrowCx - CELL * 0.30},${arrowCy + CELL * 0.32} ${arrowCx},${arrowCy + CELL * 0.14} ${arrowCx + CELL * 0.30},${arrowCy + CELL * 0.32}`}
-              fill="#fbbf24" stroke="rgba(0,0,0,0.65)" strokeWidth={0.7} />
+              fill="#fbbf24" stroke="rgba(0,0,0,0.65)" strokeWidth={1.4} />
           </g>
         </g>
         {/* Bezel + fixed north tick */}
-        <circle cx={CX} cy={CX} r={CX - 1} fill="none" stroke="rgba(255,255,255,0.22)" strokeWidth={1.5} />
-        <circle cx={CX} cy={CX} r={CX - 1} fill="none" stroke="rgba(0,0,0,0.5)" strokeWidth={0.6} />
-        <text x={CX} y={9} textAnchor="middle" fontSize={9} fontWeight={700}
+        <circle cx={CX} cy={CX} r={CX - 1} fill="none" stroke="rgba(255,255,255,0.22)" strokeWidth={2.5} />
+        <circle cx={CX} cy={CX} r={CX - 1} fill="none" stroke="rgba(0,0,0,0.5)" strokeWidth={1} />
+        <text x={CX} y={16} textAnchor="middle" fontSize={15} fontWeight={700}
           fill="rgba(255,255,255,0.6)" style={{ userSelect: 'none' }}>N</text>
       </svg>
     </div>
