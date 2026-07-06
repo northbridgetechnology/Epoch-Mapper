@@ -1211,6 +1211,26 @@ export function DungeonMapper({
     toast('The party stirs awake at the entrance, purses lighter…')
   }, [ruleset.meta.wipeGoldPenalty, maps, setMaps, setActiveIdx, moveReveal])
 
+  // Party edits from the Characters workspace. When a recruited member leaves
+  // the party, clear their `npc.recruited.<id>` flag so their world placement
+  // reappears and they can be recruited again (otherwise the flag hides every
+  // placement of that NPC forever).
+  const handlePartyChange = useCallback((p: Character[], f: Formation) => {
+    const freed = partyRef.current
+      .filter(c => c.sourceNpc && !p.some(n => n.id === c.id))
+      .map(c => c.sourceNpc as string)
+    if (freed.length > 0) {
+      setFlags(fl => {
+        const next = { ...fl }
+        for (const src of freed) delete next[npcRecruitedFlagKey(src)]
+        return next
+      })
+    }
+    setParty(p)
+    setFormation(f)
+    savePartyTemplate(p, f)
+  }, [setFlags, setParty, setFormation])
+
   const handleAbandonRun = useCallback(() => {
     deleteAllSlots()
     setParty([])
@@ -1892,7 +1912,7 @@ export function DungeonMapper({
               formation={formation}
               inventory={inventory}
               gold={gold}
-              onPartyChange={(p, f) => { setParty(p); setFormation(f); savePartyTemplate(p, f) }}
+              onPartyChange={handlePartyChange}
               onInventoryChange={(inv, g) => { setInventory(inv); setGold(g) }}
             />
           </div>
