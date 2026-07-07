@@ -11,6 +11,7 @@ import {
   EPOCHMAP_MAGIC,
 } from '../src/lib/epochmap-codec'
 import type { EpochmapFile } from '../src/lib/types'
+import { makeDefaultRuleset } from '../src/lib/default-ruleset'
 
 let passed = 0
 function test(name: string, fn: () => void) {
@@ -173,6 +174,46 @@ test('compressed body is reasonably compact', () => {
   const bytes = serializeDotEpochmap(sample)
   // small sample — sanity bound, not a hard spec requirement
   assert.ok(bytes.length < 2048, `expected < 2KB, got ${bytes.length}`)
+})
+
+test('Settings bake in: opening story (text + image) and game meta round-trip', () => {
+  const rs = makeDefaultRuleset()
+  const img = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCA'
+  rs.meta = {
+    ...rs.meta,
+    title: 'The Sunken Keep', author: 'Zed',
+    opening: { slides: [{ text: 'Long ago, {mc} awoke…', image: img }, { text: 'Descend.' }], skippable: true },
+    partyCreation: 'customMc', attrMethod: 'pointBuy', pointBuyPool: 12, mcDeathEndsGame: true,
+    savePolicy: 'savePoints', wipeGoldPenalty: 0.3, restAmbushChance: 0.4, permadeath: true,
+  }
+  const file: EpochmapFile = {
+    version: 2, gameTitle: 'The Sunken Keep', romHash: '', customMarkers: [], ruleset: rs,
+    maps: [{ id: 'm1', name: 'Floor 1', playerX: 0, playerY: 0, cells: { '0,0': { base: 1, overlays: [] } }, theme: 'crypt', dark: true }],
+  }
+  const back = parseDotEpochmap(serializeDotEpochmap(file))
+  const m = back.ruleset!.meta
+
+  // Opening story — text and the embedded image data-URI both survive
+  assert.equal(m.opening?.slides.length, 2)
+  assert.equal(m.opening?.slides[0].text, 'Long ago, {mc} awoke…')
+  assert.equal(m.opening?.slides[0].image, img)
+  assert.equal(m.opening?.slides[1].text, 'Descend.')
+
+  // Every Settings meta field is baked in
+  assert.equal(m.title, 'The Sunken Keep')
+  assert.equal(m.author, 'Zed')
+  assert.equal(m.partyCreation, 'customMc')
+  assert.equal(m.attrMethod, 'pointBuy')
+  assert.equal(m.pointBuyPool, 12)
+  assert.equal(m.mcDeathEndsGame, true)
+  assert.equal(m.savePolicy, 'savePoints')
+  assert.equal(m.wipeGoldPenalty, 0.3)
+  assert.equal(m.restAmbushChance, 0.4)
+  assert.equal(m.permadeath, true)
+
+  // Per-map visual settings (theme / dark) travel too
+  assert.equal(back.maps[0].theme, 'crypt')
+  assert.equal(back.maps[0].dark, true)
 })
 
 console.log(`\n${passed} passed`)
