@@ -13,7 +13,7 @@ import { toast } from 'sonner'
 import {
   Backpack, Sparkles, Shield, User, Users, ScrollText, Tent, Save as SaveIcon, Settings2, X,
 } from 'lucide-react'
-import type { Character, Effect, Formation, ItemInstance, Ruleset, SpellDef } from '@/lib/engine-types'
+import type { Character, Effect, Formation, ItemDef, ItemInstance, Ruleset, SpellDef } from '@/lib/engine-types'
 import { Portrait } from '@/lib/portraits'
 import { applyConsumable, applyEffectToChar } from '@/lib/apply-effects'
 import { itemDisplayName } from '@/lib/item-schema'
@@ -105,8 +105,10 @@ export function GameMenu({
 }) {
   const [cmd, setCmd] = useState<Command | null>(null)
   const [cursor, setCursor] = useState(0)
+  const [desc, setDesc] = useState<React.ReactNode>(null)   // description bar content
   const mc = useMemo(() => party.find(c => c.isMc) ?? null, [party])
   const exit = () => setCmd(null)
+  useEffect(() => { setDesc(null) }, [cmd])   // clear the description bar on screen change
 
   // Tab closes from anywhere; the command list drives itself when no screen is open.
   useKeydown((e) => {
@@ -148,9 +150,9 @@ export function GameMenu({
         {/* Content */}
         <div className="flex-1 min-w-0 p-4 overflow-y-auto" style={ffWindow}>
           {cmd === null && <PartySummary party={party} ruleset={ruleset} />}
-          {cmd === 'item' && <ItemScreen ruleset={ruleset} party={party} inventory={inventory} onExit={exit}
+          {cmd === 'item' && <ItemScreen ruleset={ruleset} party={party} inventory={inventory} onExit={exit} onDesc={setDesc}
             onApply={(p, inv) => { onRosterChange(p, formation, reserve); onInventoryChange(inv, gold) }} />}
-          {cmd === 'magic' && <MagicScreen ruleset={ruleset} party={party} onExit={exit}
+          {cmd === 'magic' && <MagicScreen ruleset={ruleset} party={party} onExit={exit} onDesc={setDesc}
             onApply={p => onRosterChange(p, formation, reserve)} />}
           {cmd === 'equip' && <MemberScreen party={party} onExit={exit} render={(char, idx) => (
             <EquipmentPanel char={char} ruleset={ruleset} inventory={inventory}
@@ -174,6 +176,13 @@ export function GameMenu({
           {party.length === 0 && <div className="text-xs text-white/30 italic p-2">No party.</div>}
         </div>
       </div>
+
+      {/* Description bar — reflects the focused row (keyboard cursor or mouse hover) */}
+      {desc && (
+        <div className="mt-3 px-3 py-2 text-sm text-white/85 min-h-[2.5rem] flex items-center" style={ffWindow}>
+          {desc}
+        </div>
+      )}
 
       <div className="mt-3 flex items-center justify-between text-xs text-white/60 px-1">
         <span className="tracking-wide">{mapName}</span>
@@ -230,12 +239,13 @@ function Heading({ children }: { children: React.ReactNode }) {
   return <div className="text-[11px] uppercase tracking-[0.2em] text-sky-200/70 mb-1.5" style={{ textShadow: '0 0 8px rgba(120,160,255,0.4)' }}>{children}</div>
 }
 
-/** A keyboard-navigable row; shows the blinking cursor when selected. */
-function Row({ sel, onClick, disabled, children }: {
-  sel: boolean; onClick?: () => void; disabled?: boolean; children: React.ReactNode
+/** A keyboard-navigable row; shows the blinking cursor when selected. Hovering
+ *  moves the focus (so the mouse and keyboard share one cursor). */
+function Row({ sel, onClick, onHover, disabled, children }: {
+  sel: boolean; onClick?: () => void; onHover?: () => void; disabled?: boolean; children: React.ReactNode
 }) {
   return (
-    <button disabled={disabled} onClick={onClick}
+    <button disabled={disabled} onClick={onClick} onMouseEnter={onHover}
       className={cn('w-full flex items-center gap-2 px-2.5 py-1.5 rounded text-left text-sm transition-colors',
         disabled ? 'opacity-35' : sel ? cn(ROW_SEL, 'text-white') : 'text-white/75 hover:bg-white/5')}>
       <Cursor on={sel} />{children}
@@ -243,88 +253,245 @@ function Row({ sel, onClick, disabled, children }: {
   )
 }
 
+// ── Inventory / description helpers ──────────────────────────────────────────────
+
+function addOne(inv: ItemInstance[], id: string): ItemInstance[] {
+  const idx = inv.findIndex(i => i.def === id && !i.unidentified)
+  if (idx >= 0) return inv.map((x, i) => (i === idx ? { ...x, qty: x.qty + 1 } : x))
+  return [...inv, { def: id, qty: 1 }]
+}
+function removeN(inv: ItemInstance[], id: string, n: number): ItemInstance[] {
+  let left = n
+  return inv.map(x => {
+    if (x.def !== id || left <= 0) return x
+    const take = Math.min(left, x.qty); left -= take
+    return { ...x, qty: x.qty - take }
+  }).filter(x => x.qty > 0)
+}
+
+const KIND_ORDER: Record<string, number> = { weapon: 0, armor: 1, consumable: 2, misc: 3, key: 4, quest: 5 }
+function sortInv(inv: ItemInstance[], ruleset: Ruleset): ItemInstance[] {
+  return [...inv].sort((a, b) => {
+    const da = ruleset.items.find(i => i.id === a.def), db = ruleset.items.find(i => i.id === b.def)
+    const ka = KIND_ORDER[da?.kind ?? 'misc'] ?? 3, kb = KIND_ORDER[db?.kind ?? 'misc'] ?? 3
+    return ka !== kb ? ka - kb : (da?.name ?? a.def).localeCompare(db?.name ?? b.def)
+  })
+}
+
+/** Equip an inventory item onto a member; returns changed=false (with a reason)
+ *  when the slot is disallowed or the current item is cursed. */
+function equipFrom(char: Character, itemId: string, ruleset: Ruleset, inventory: ItemInstance[]): { char: Character; inventory: ItemInstance[]; message: string; changed: boolean } {
+  const def = ruleset.items.find(i => i.id === itemId)
+  if (!def?.slot) return { char, inventory, message: 'That cannot be equipped.', changed: false }
+  const cls = ruleset.classes.find(c => c.id === char.classId)
+  if (cls?.allowedEquip && !cls.allowedEquip.includes(def.slot)) return { char, inventory, message: `${char.name} can't equip that.`, changed: false }
+  let inv = inventory
+  const current = char.equipment[def.slot]
+  if (current) {
+    if (ruleset.items.find(i => i.id === current.def)?.cursed) return { char, inventory, message: 'The equipped item is cursed — it will not come off.', changed: false }
+    inv = addOne(inv, current.def)
+  }
+  inv = removeN(inv, itemId, 1)
+  const message = def.cursed ? `${char.name} equips ${def.name} — it seizes hold! Cursed!` : `${char.name} equips ${def.name}.`
+  return { char: { ...char, equipment: { ...char.equipment, [def.slot]: { def: itemId, qty: 1 } } }, inventory: inv, message, changed: true }
+}
+
+function summarizeEffects(effects: Effect[], ruleset: Ruleset): string {
+  const bits: string[] = []
+  for (const e of effects) {
+    if (e.t === 'heal') bits.push(`restores ${e.amount} HP`)
+    else if (e.t === 'restoreMp') bits.push(`restores ${e.amount} MP`)
+    else if (e.t === 'fullHeal') bits.push('fully restores')
+    else if (e.t === 'reviveRandom') bits.push('revives an ally')
+    else if (e.t === 'cure') bits.push(`cures ${e.status === 'all' ? 'all ailments' : ruleset.statusEffects.find(s => s.id === e.status)?.name ?? e.status}`)
+    else if (e.t === 'damage') bits.push(`${e.amount} ${e.dmgType} damage`)
+    else if (e.t === 'status') bits.push(`inflicts ${ruleset.statusEffects.find(s => s.id === e.status)?.name ?? e.status}`)
+  }
+  return bits.join('; ')
+}
+
+function describeItem(def: ItemDef | undefined, ruleset: Ruleset): React.ReactNode {
+  if (!def) return null
+  const bits: string[] = []
+  if (def.kind === 'consumable') bits.push(summarizeEffects(def.onUse ?? [], ruleset))
+  else if (def.kind === 'weapon') bits.push('Weapon')
+  else if (def.kind === 'armor') bits.push('Armor')
+  else if (def.kind === 'key') bits.push('Key item')
+  else if (def.kind === 'quest') bits.push('Quest item')
+  const mods = (def.modifiers ?? []).map(m => `${m.op === 'mul' ? '×' : '+'}${m.amount} ${m.key}`).join(', ')
+  if (mods) bits.push(mods)
+  const extra = bits.filter(Boolean).join(' · ')
+  return <span><span className="text-amber-200">{def.name}</span>{def.description ? <span className="text-white/75"> — {def.description}</span> : null}{extra ? <span className="text-white/45"> ({extra})</span> : null}</span>
+}
+
+function describeSpell(def: SpellDef | undefined, ruleset: Ruleset): React.ReactNode {
+  if (!def) return null
+  const eff = summarizeEffects(def.effects, ruleset)
+  return <span><span className="text-amber-200">{def.name}</span> <span className="text-sky-300 font-mono">MP {def.mpCost}</span>{def.description ? <span className="text-white/75"> — {def.description}</span> : null}{eff ? <span className="text-white/45"> ({eff})</span> : null}</span>
+}
+
 // ── Item ──────────────────────────────────────────────────────────────────────
 
-function ItemScreen({ ruleset, party, inventory, onExit, onApply }: {
+type ItemAction = 'use' | 'equip' | 'drop'
+function itemActions(def: ItemDef | undefined): { id: ItemAction; label: string }[] {
+  if (!def) return []
+  const out: { id: ItemAction; label: string }[] = []
+  if (def.kind === 'consumable' && (def.onUse?.length ?? 0) > 0) out.push({ id: 'use', label: 'Use' })
+  if ((def.kind === 'weapon' || def.kind === 'armor') && def.slot) out.push({ id: 'equip', label: 'Equip' })
+  if (def.kind !== 'key' && def.kind !== 'quest') out.push({ id: 'drop', label: 'Drop' })   // story items protected
+  return out
+}
+
+function ItemScreen({ ruleset, party, inventory, onExit, onApply, onDesc }: {
   ruleset: Ruleset; party: Character[]; inventory: ItemInstance[]; onExit: () => void
   onApply: (party: Character[], inventory: ItemInstance[]) => void
+  onDesc: (node: React.ReactNode) => void
 }) {
-  const usable = inventory.filter(inst => {
-    const def = ruleset.items.find(d => d.id === inst.def)
-    return def?.kind === 'consumable' && (def.onUse?.length ?? 0) > 0
-  })
-  const [mode, setMode] = useState<'list' | 'target'>('list')
-  const [iCur, , iStep] = useCursor(usable.length)
+  const [mode, setMode] = useState<'list' | 'action' | 'target' | 'member' | 'drop'>('list')
+  const [iCur, setICur, iStep] = useCursor(inventory.length)
   const [tCur, , tStep] = useCursor(party.length)
+  const [dropQty, setDropQty] = useState(1)
+  const sel = inventory[iCur]
+  const selDef = sel ? ruleset.items.find(d => d.id === sel.def) : undefined
+  const actions = itemActions(selDef)
+  const [aCur, , aStep] = useCursor(actions.length)
 
-  const use = (targetIdx: number) => {
-    const inst = usable[iCur]; if (!inst) return
-    const res = applyConsumable(inst.def, targetIdx, party, inventory, ruleset)
-    if (res) { res.messages.forEach(m => toast(m)); onApply(res.party, res.inventory) }
+  // Description bar follows the focused item.
+  useEffect(() => { onDesc(describeItem(selDef, ruleset)) }, [iCur, mode, inventory, selDef, ruleset, onDesc])
+
+  const doUse = (t: number) => { if (!sel) return; const r = applyConsumable(sel.def, t, party, inventory, ruleset); if (r) { r.messages.forEach(m => toast(m)); onApply(r.party, r.inventory) } setMode('list') }
+  const doEquip = (m: number) => {
+    if (!sel) return
+    const r = equipFrom(party[m], sel.def, ruleset, inventory)
+    if (r.changed) { toast.success(r.message); onApply(party.map((c, i) => (i === m ? r.char : c)), r.inventory) }
+    else toast(r.message)
     setMode('list')
   }
+  const doDrop = () => { if (!sel) return; onApply(party, removeN(inventory, sel.def, Math.min(dropQty, sel.qty))); setMode('list') }
+  const openActions = () => { if (actions.length) setMode('action') }
 
   useKeydown((e) => {
     if (isFormField(e)) return false
     if (mode === 'list') {
       if (iStep(e)) return true
-      if (e.key === 'Enter' || e.key === ' ') { if (usable[iCur]) setMode('target'); return true }
+      if ((e.key === 's' || e.key === 'S')) { onApply(party, sortInv(inventory, ruleset)); return true }
+      if (e.key === 'Enter' || e.key === ' ') { openActions(); return true }
       if (e.key === 'Escape') { onExit(); return true }
-    } else {
-      if (tStep(e)) return true
-      if (e.key === 'Enter' || e.key === ' ') { if (party[tCur]?.alive) use(tCur); return true }
+    } else if (mode === 'action') {
+      if (aStep(e)) return true
+      if (e.key === 'Enter' || e.key === ' ') {
+        const a = actions[aCur]?.id
+        if (a === 'use') setMode('target'); else if (a === 'equip') setMode('member'); else if (a === 'drop') { setDropQty(1); setMode('drop') }
+        return true
+      }
       if (e.key === 'Escape') { setMode('list'); return true }
+    } else if (mode === 'target') {
+      if (tStep(e)) return true
+      if (e.key === 'Enter' || e.key === ' ') { if (party[tCur]?.alive) doUse(tCur); return true }
+      if (e.key === 'Escape') { setMode('action'); return true }
+    } else if (mode === 'member') {
+      if (tStep(e)) return true
+      if (e.key === 'Enter' || e.key === ' ') { doEquip(tCur); return true }
+      if (e.key === 'Escape') { setMode('action'); return true }
+    } else { // drop
+      if (e.key === 'ArrowUp' || e.key === 'ArrowRight') { setDropQty(q => Math.min(sel?.qty ?? 1, q + 1)); return true }
+      if (e.key === 'ArrowDown' || e.key === 'ArrowLeft') { setDropQty(q => Math.max(1, q - 1)); return true }
+      if (e.key === 'Enter' || e.key === ' ') { doDrop(); return true }
+      if (e.key === 'Escape') { setMode('action'); return true }
     }
     return false
   })
 
-  if (usable.length === 0) return <ScreenEmpty onExit={onExit}>Nothing usable right now.</ScreenEmpty>
+  if (inventory.length === 0) return <ScreenEmpty onExit={onExit}>Your pack is empty.</ScreenEmpty>
 
   return (
-    <div className="space-y-3">
-      <Heading>{mode === 'list' ? 'Items' : `Use ${ruleset.items.find(d => d.id === usable[iCur]?.def)?.name} on…`}</Heading>
-      {mode === 'list' ? (
-        <div className="space-y-0.5 max-w-lg">
-          {usable.map((inst, i) => {
-            const def = ruleset.items.find(d => d.id === inst.def)!
-            return (
-              <Row key={inst.def} sel={i === iCur} onClick={() => { setMode('target') }}>
-                <span>{def.icon ?? '🧪'}</span><span className="flex-1">{itemDisplayName(def, inst)}</span>
-                <span className="text-xs text-white/45 font-mono">×{inst.qty}</span>
-              </Row>
-            )
-          })}
+    <div className="flex gap-3">
+      {/* Item list (always visible) */}
+      <div className="flex-1 min-w-0 space-y-0.5">
+        <div className="flex items-center justify-between mb-1">
+          <Heading>Items</Heading>
+          <button onClick={() => onApply(party, sortInv(inventory, ruleset))}
+            className="text-[10px] px-2 py-0.5 rounded border border-white/15 text-white/50 hover:text-white">Sort (S)</button>
         </div>
-      ) : (
-        <div className="grid sm:grid-cols-2 gap-1.5 max-w-lg">
-          {party.map((c, i) => (
-            <Row key={c.id} sel={i === tCur} disabled={!c.alive} onClick={() => use(i)}>
-              <Avatar char={c} size={20} /><span className="flex-1 truncate">{c.name}</span><HpMp char={c} />
+        {inventory.map((inst, i) => {
+          const def = ruleset.items.find(d => d.id === inst.def)
+          return (
+            <Row key={`${inst.def}_${i}`} sel={i === iCur && mode !== 'target' && mode !== 'member'}
+              onHover={() => { if (mode === 'list' || mode === 'action') setICur(i) }}
+              onClick={() => { setICur(i); if (mode === 'list') openActions() }}>
+              <span>{def?.icon ?? '📦'}</span>
+              <span className="flex-1 truncate">{itemDisplayName(def ?? { name: inst.def }, inst)}</span>
+              <span className="text-xs text-white/45 font-mono">×{inst.qty}</span>
             </Row>
-          ))}
-        </div>
-      )}
-      <Hint>{mode === 'list' ? '↑/↓ · Enter use · Esc back' : '↑/↓ target · Enter · Esc cancel'}</Hint>
+          )
+        })}
+      </div>
+
+      {/* Contextual sub-panel */}
+      <div className="w-52 flex-shrink-0">
+        {mode === 'action' && (
+          <div className="space-y-0.5">
+            <Heading>{selDef?.name}</Heading>
+            {actions.map((a, i) => (
+              <Row key={a.id} sel={i === aCur} onClick={() => {
+                if (a.id === 'use') setMode('target'); else if (a.id === 'equip') setMode('member'); else { setDropQty(1); setMode('drop') }
+              }}><span className="flex-1">{a.label}</span></Row>
+            ))}
+            {actions.length === 0 && <div className="text-xs text-white/30 italic">Nothing to do.</div>}
+            <Hint>↑/↓ · Enter · Esc</Hint>
+          </div>
+        )}
+        {(mode === 'target' || mode === 'member') && (
+          <div className="space-y-0.5">
+            <Heading>{mode === 'target' ? 'Use on…' : 'Equip to…'}</Heading>
+            {party.map((c, i) => (
+              <Row key={c.id} sel={i === tCur} disabled={mode === 'target' && !c.alive}
+                onClick={() => (mode === 'target' ? doUse(i) : doEquip(i))}>
+                <Avatar char={c} size={18} /><span className="flex-1 truncate">{c.name}</span><HpMp char={c} />
+              </Row>
+            ))}
+            <Hint>↑/↓ · Enter · Esc</Hint>
+          </div>
+        )}
+        {mode === 'drop' && sel && (
+          <div className="space-y-2">
+            <Heading>Drop how many?</Heading>
+            <div className="flex items-center gap-3 text-lg font-mono">
+              <span className="text-white/40">◀</span>
+              <span className="text-amber-200">{dropQty}</span>
+              <span className="text-white/40">▶</span>
+              <span className="text-xs text-white/40">/ {sel.qty}</span>
+            </div>
+            <Hint>←/→ qty · Enter drop · Esc</Hint>
+          </div>
+        )}
+        {mode === 'list' && <div className="text-[11px] text-white/35 pt-6">↑/↓ select · Enter · S sort · Esc back</div>}
+      </div>
     </div>
   )
 }
 
 // ── Magic ─────────────────────────────────────────────────────────────────────
 
-function MagicScreen({ ruleset, party, onExit, onApply }: {
-  ruleset: Ruleset; party: Character[]; onExit: () => void; onApply: (party: Character[]) => void
+function MagicScreen({ ruleset, party, onExit, onApply, onDesc }: {
+  ruleset: Ruleset; party: Character[]; onExit: () => void
+  onApply: (party: Character[]) => void; onDesc: (node: React.ReactNode) => void
 }) {
   const casterIdxs = party.map((c, i) => ({ c, i }))
     .filter(({ c }) => c.alive && c.knownSpells.some(id => ruleset.spells.find(s => s.id === id)?.outOfCombat))
-  const [mode, setMode] = useState<'caster' | 'spell' | 'target'>('caster')
-  const [cCur, , cStep] = useCursor(casterIdxs.length)
+  const [mode, setMode] = useState<'caster' | 'spell' | 'action' | 'target'>('caster')
+  const [cCur, setCCur, cStep] = useCursor(casterIdxs.length)
   const caster = casterIdxs[cCur]?.c
   const casterIdx = casterIdxs[cCur]?.i ?? -1
   const spells = (caster?.knownSpells ?? []).map(id => ruleset.spells.find(s => s.id === id))
     .filter((s): s is SpellDef => !!s && s.outOfCombat)
-  const [sCur, , sStep] = useCursor(spells.length)
+  const [sCur, setSCur, sStep] = useCursor(spells.length)
   const [tCur, , tStep] = useCursor(party.length)
+  const [aCur, , aStep] = useCursor(1)   // just "Cast" for now (room for Skills later)
   const spell = spells[sCur]
+
+  // Description bar follows the focused spell (once past caster select).
+  useEffect(() => { onDesc(mode === 'caster' ? null : describeSpell(spell, ruleset)) }, [mode, spell, ruleset, onDesc])
 
   const cast = (targetIdx: number) => {
     if (!spell || !caster) return
@@ -343,12 +510,16 @@ function MagicScreen({ ruleset, party, onExit, onApply }: {
       if (e.key === 'Escape') { onExit(); return true }
     } else if (mode === 'spell') {
       if (sStep(e)) return true
-      if (e.key === 'Enter' || e.key === ' ') { if (spell && caster && caster.mp >= spell.mpCost) setMode('target'); return true }
+      if (e.key === 'Enter' || e.key === ' ') { if (spell) setMode('action'); return true }
       if (e.key === 'Escape') { setMode('caster'); return true }
+    } else if (mode === 'action') {
+      if (aStep(e)) return true
+      if (e.key === 'Enter' || e.key === ' ') { if (spell && caster && caster.mp >= spell.mpCost) setMode('target'); else toast('Not enough MP.'); return true }
+      if (e.key === 'Escape') { setMode('spell'); return true }
     } else {
       if (tStep(e)) return true
       if (e.key === 'Enter' || e.key === ' ') { if (party[tCur]?.alive) cast(tCur); return true }
-      if (e.key === 'Escape') { setMode('spell'); return true }
+      if (e.key === 'Escape') { setMode('action'); return true }
     }
     return false
   })
@@ -356,39 +527,52 @@ function MagicScreen({ ruleset, party, onExit, onApply }: {
   if (casterIdxs.length === 0) return <ScreenEmpty onExit={onExit}>No one knows a field spell.</ScreenEmpty>
 
   return (
-    <div className="space-y-3 max-w-lg">
-      <Heading>Magic — {caster?.name}</Heading>
-      {mode === 'caster' && (
-        <div className="space-y-0.5">
-          {casterIdxs.map(({ c }, i) => (
-            <Row key={c.id} sel={i === cCur} onClick={() => setMode('spell')}>
+    <div className="flex gap-3">
+      <div className="flex-1 min-w-0 space-y-0.5">
+        <Heading>{mode === 'caster' ? 'Choose caster' : `${caster?.name} — Magic`}</Heading>
+        {mode === 'caster' ? (
+          casterIdxs.map(({ c }, i) => (
+            <Row key={c.id} sel={i === cCur} onHover={() => setCCur(i)} onClick={() => { setCCur(i); setMode('spell') }}>
               <Avatar char={c} size={20} /><span className="flex-1 truncate">{c.name}</span>
               <span className="text-sky-300 font-mono text-xs">{c.mp}/{c.maxMp} MP</span>
             </Row>
-          ))}
-        </div>
-      )}
-      {mode === 'spell' && (
-        <div className="space-y-0.5">
-          {spells.length === 0 && <div className="text-sm text-white/30 italic">No field spells.</div>}
-          {spells.map((s, i) => (
-            <Row key={s.id} sel={i === sCur} disabled={(caster?.mp ?? 0) < s.mpCost} onClick={() => setMode('target')}>
-              <span>{s.icon ?? '✨'}</span><span className="flex-1">{s.name}</span>
-              <span className="text-xs text-sky-300 font-mono">{s.mpCost} MP</span>
-            </Row>
-          ))}
-        </div>
-      )}
-      {mode === 'target' && (
-        <div className="grid sm:grid-cols-2 gap-1.5">
-          {party.map((c, i) => (
-            <Row key={c.id} sel={i === tCur} disabled={!c.alive} onClick={() => cast(i)}>
-              <Avatar char={c} size={20} /><span className="flex-1 truncate">{c.name}</span><HpMp char={c} />
-            </Row>
-          ))}
-        </div>
-      )}
-      <Hint>↑/↓ · Enter · Esc back</Hint>
+          ))
+        ) : (
+          <>
+            {spells.length === 0 && <div className="text-sm text-white/30 italic">No field spells.</div>}
+            {spells.map((s, i) => (
+              <Row key={s.id} sel={i === sCur} disabled={(caster?.mp ?? 0) < s.mpCost}
+                onHover={() => mode === 'spell' && setSCur(i)}
+                onClick={() => { setSCur(i); setMode('action') }}>
+                <span>{s.icon ?? '✨'}</span><span className="flex-1">{s.name}</span>
+                <span className="text-xs text-sky-300 font-mono">{s.mpCost} MP</span>
+              </Row>
+            ))}
+          </>
+        )}
+      </div>
+
+      <div className="w-52 flex-shrink-0">
+        {mode === 'action' && (
+          <div className="space-y-0.5">
+            <Heading>{spell?.name}</Heading>
+            <Row sel={aCur === 0} onClick={() => setMode('target')}><span className="flex-1">Cast</span></Row>
+            <Hint>↑/↓ · Enter · Esc</Hint>
+          </div>
+        )}
+        {mode === 'target' && (
+          <div className="space-y-0.5">
+            <Heading>Cast on…</Heading>
+            {party.map((c, i) => (
+              <Row key={c.id} sel={i === tCur} disabled={!c.alive} onClick={() => cast(i)}>
+                <Avatar char={c} size={18} /><span className="flex-1 truncate">{c.name}</span><HpMp char={c} />
+              </Row>
+            ))}
+            <Hint>↑/↓ · Enter · Esc</Hint>
+          </div>
+        )}
+        {(mode === 'caster' || mode === 'spell') && <div className="text-[11px] text-white/35 pt-6">↑/↓ select · Enter · Esc back</div>}
+      </div>
     </div>
   )
 }
