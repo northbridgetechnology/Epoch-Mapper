@@ -150,6 +150,9 @@ export { GameMenu } from './components/GameMenu'
 // Item schema helpers
 export { ITEM_SCHEMA, LOOT_TABLE_SCHEMA, blankItem, blankLootTable, itemDisplayName } from './lib/item-schema'
 
+// Class schema helpers
+export { CLASS_SCHEMA, blankClass } from './lib/class-schema'
+
 // Enemy + encounter-table schema helpers (Phase E3)
 export { ENEMY_SCHEMA, ENCOUNTER_TABLE_SCHEMA, blankEnemy, blankEncounterTable } from './lib/enemy-schema'
 

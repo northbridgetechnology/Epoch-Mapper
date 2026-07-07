@@ -1,9 +1,10 @@
 'use client'
 
-import { useState } from 'react'
-import { Plus, Trash2, Package, List, Skull, Swords, Sparkles, Zap, Store, Puzzle, ScrollText } from 'lucide-react'
+import { Fragment, useState } from 'react'
+import { Plus, Trash2, Package, List, Skull, Swords, Sparkles, Zap, Store, Puzzle, ScrollText, Shield } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import type { Effect, EnemyDef, EncounterTableDef, EventDef, ItemDef, LootTableDef, QuestDef, ShopDef, SpellDef, StatusEffectDef, Ruleset } from '@/lib/engine-types'
+import type { ClassDef, EquipWeight, ItemSlot, Effect, EnemyDef, EncounterTableDef, EventDef, ItemDef, LootTableDef, QuestDef, ShopDef, SpellDef, StatusEffectDef, Ruleset } from '@/lib/engine-types'
+import { CLASS_SCHEMA, blankClass } from '@/lib/class-schema'
 import { EVENT_SCHEMA, QUEST_SCHEMA, blankEventDef, blankQuest } from '@/lib/npc-schema'
 import { ConditionBuilder } from '@/components/CellInspector'
 import { SimulatePanel } from '@/components/SimulatePanel'
@@ -14,10 +15,11 @@ import { ENEMY_SCHEMA, ENCOUNTER_TABLE_SCHEMA, blankEnemy } from '@/lib/enemy-sc
 import { SPELL_SCHEMA, STATUS_SCHEMA, blankSpell, blankStatusEffect } from '@/lib/spell-schema'
 import { SHOP_SCHEMA, blankShop } from '@/lib/shop-schema'
 
-type Category = 'items' | 'loot_tables' | 'bestiary' | 'encounters' | 'spells' | 'status_effects' | 'shops' | 'events' | 'quests'
+type Category = 'items' | 'loot_tables' | 'bestiary' | 'encounters' | 'spells' | 'status_effects' | 'shops' | 'classes' | 'events' | 'quests'
 
 const CATEGORIES: { id: Category; icon: React.ReactNode; label: string }[] = [
   { id: 'items',          icon: <Package className="w-4 h-4" />,  label: 'Items' },
+  { id: 'classes',        icon: <Shield className="w-4 h-4" />,   label: 'Classes' },
   { id: 'loot_tables',    icon: <List className="w-4 h-4" />,     label: 'Loot Tables' },
   { id: 'bestiary',       icon: <Skull className="w-4 h-4" />,    label: 'Bestiary' },
   { id: 'encounters',     icon: <Swords className="w-4 h-4" />,   label: 'Encounter Tables' },
@@ -105,8 +107,10 @@ function ItemEditor({
   const raw = item as unknown as Record<string, unknown>
 
   function handleSchemaChange(updated: Record<string, unknown>) {
-    // slot '' → undefined
+    // enum '— none —' sentinels → undefined
     if (updated.slot === '') updated = { ...updated, slot: undefined }
+    if (updated.weight === '') updated = { ...updated, weight: undefined }
+    if (updated.weaponKind === '') updated = { ...updated, weaponKind: undefined }
     onChange(updated as unknown as ItemDef)
   }
 
@@ -852,6 +856,7 @@ let _encSeq = 1
 let _spellSeq = 1
 let _statusSeq = 1
 let _shopSeq = 1
+let _classSeq = 1
 
 // ── Generic def list (NPCs / Events / Quests) ─────────────────────────────────
 
@@ -976,6 +981,207 @@ function QuestEditor({ quest, ruleset, onChange }: {
           ))}
         </div>
       </div>
+    </div>
+  )
+}
+
+// ── Class editor ──────────────────────────────────────────────────────────────
+
+const SLOT_OPTIONS: { slot: ItemSlot; label: string }[] = [
+  { slot: 'weapon', label: 'Weapon' },
+  { slot: 'offhand', label: 'Off-hand' },
+  { slot: 'head', label: 'Head' },
+  { slot: 'body', label: 'Body' },
+  { slot: 'hands', label: 'Hands' },
+  { slot: 'feet', label: 'Feet' },
+  { slot: 'ring', label: 'Ring' },
+  { slot: 'amulet', label: 'Amulet' },
+]
+const WEIGHT_OPTIONS: EquipWeight[] = ['heavy', 'medium', 'light']
+const COMMON_WEAPON_KINDS = ['blade', 'axe', 'mace', 'dagger', 'staff', 'wand', 'spear', 'gun', 'bow']
+
+function Chip({ active, label, onClick }: { active: boolean; label: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        'px-2 py-0.5 rounded text-xs border transition-colors capitalize',
+        active
+          ? 'bg-amber-600/25 border-amber-500/50 text-amber-200'
+          : 'bg-zinc-800 border-white/10 text-white/45 hover:text-white/70',
+      )}
+    >
+      {label}
+    </button>
+  )
+}
+
+function TagRow({ label, tags, suggestions, onChange, placeholder }: {
+  label: string
+  tags: string[]
+  suggestions?: string[]
+  onChange: (next: string[]) => void
+  placeholder?: string
+}) {
+  const [draft, setDraft] = useState('')
+  const toggle = (t: string) => onChange(tags.includes(t) ? tags.filter(x => x !== t) : [...tags, t])
+  const add = () => {
+    const v = draft.trim().toLowerCase()
+    if (v && !tags.includes(v)) onChange([...tags, v])
+    setDraft('')
+  }
+  const extra = tags.filter(t => !(suggestions ?? []).includes(t))
+  return (
+    <div>
+      <div className="text-xs font-medium text-white/60 mb-1">{label}</div>
+      <div className="flex flex-wrap gap-1 mb-1.5">
+        {(suggestions ?? []).map(s => <Chip key={s} active={tags.includes(s)} label={s} onClick={() => toggle(s)} />)}
+        {extra.map(t => (
+          <button key={t} type="button" onClick={() => toggle(t)}
+            className="px-2 py-0.5 rounded text-xs border bg-amber-600/25 border-amber-500/50 text-amber-200 capitalize">
+            {t} ✕
+          </button>
+        ))}
+      </div>
+      <div className="flex gap-1">
+        <input value={draft} placeholder={placeholder ?? 'add custom…'}
+          onChange={e => setDraft(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); add() } }}
+          className="flex-1 px-2 py-0.5 rounded bg-zinc-900 border border-white/10 text-xs text-white/85 focus:outline-none focus:border-amber-500/40" />
+        <button type="button" onClick={add}
+          className="px-2 py-0.5 rounded text-xs bg-amber-600/20 text-amber-300/80 hover:text-amber-200">Add</button>
+      </div>
+    </div>
+  )
+}
+
+function ClassEditor({ cls, ruleset, onChange }: {
+  cls: ClassDef
+  ruleset: Ruleset
+  onChange: (c: ClassDef) => void
+}) {
+  const raw = cls as unknown as Record<string, unknown>
+  const spellSchoolSuggestions = Array.from(new Set(ruleset.spells.map(s => s.school).filter(Boolean)))
+
+  function toggleSlot(slot: ItemSlot) {
+    const has = cls.allowedEquip.includes(slot)
+    onChange({ ...cls, allowedEquip: has ? cls.allowedEquip.filter(s => s !== slot) : [...cls.allowedEquip, slot] })
+  }
+  function setRestrict(field: 'weaponWeights' | 'armorWeights', on: boolean) {
+    onChange({ ...cls, [field]: on ? [...WEIGHT_OPTIONS] : undefined })
+  }
+  function toggleWeight(field: 'weaponWeights' | 'armorWeights', w: EquipWeight) {
+    const cur = cls[field]
+    if (!cur) return
+    const has = cur.includes(w)
+    onChange({ ...cls, [field]: has ? cur.filter(x => x !== w) : [...cur, w] })
+  }
+  function setAttr(field: 'attrModifiers' | 'attrGrowth', attrId: string, val: number) {
+    const next = { ...cls[field] }
+    if (!val || Number.isNaN(val)) delete next[attrId]
+    else next[attrId] = val
+    onChange({ ...cls, [field]: next })
+  }
+  function toggleStartingSpell(id: string) {
+    const cur = cls.startingSpells ?? []
+    const has = cur.includes(id)
+    const next = has ? cur.filter(s => s !== id) : [...cur, id]
+    onChange({ ...cls, startingSpells: next.length ? next : undefined })
+  }
+
+  const weightBlock = (field: 'weaponWeights' | 'armorWeights', label: string) => {
+    const cur = cls[field]
+    return (
+      <div>
+        <label className="flex items-center gap-1.5 text-xs font-medium text-white/60 mb-1 cursor-pointer">
+          <input type="checkbox" checked={cur !== undefined} onChange={e => setRestrict(field, e.target.checked)} />
+          Restrict {label} weight {cur === undefined && <span className="text-white/30">(any allowed)</span>}
+        </label>
+        {cur !== undefined && (
+          <div className="flex flex-wrap gap-1 pl-5">
+            {WEIGHT_OPTIONS.map(w => <Chip key={w} active={cur.includes(w)} label={w} onClick={() => toggleWeight(field, w)} />)}
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  return (
+    <div className="p-4 space-y-4 overflow-y-auto h-full">
+      <div className="flex items-center gap-2 mb-1">
+        <span className="text-2xl">{cls.icon ?? '🎓'}</span>
+        <div>
+          <div className="text-base font-bold text-white/90">{cls.name}</div>
+          <div className="text-xs text-white/40 font-mono">{cls.id}</div>
+        </div>
+      </div>
+
+      <SchemaForm schema={CLASS_SCHEMA} value={raw} onChange={u => onChange(u as unknown as ClassDef)} />
+
+      {/* Equippable slots */}
+      <div className="pt-2 border-t border-white/10">
+        <div className="text-xs font-medium text-white/60 mb-1">Equippable Slots</div>
+        <div className="flex flex-wrap gap-1">
+          {SLOT_OPTIONS.map(({ slot, label }) => (
+            <Chip key={slot} active={cls.allowedEquip.includes(slot)} label={label} onClick={() => toggleSlot(slot)} />
+          ))}
+        </div>
+      </div>
+
+      {/* Weight tiers */}
+      <div className="pt-2 border-t border-white/10 space-y-2.5">
+        {weightBlock('weaponWeights', 'weapon')}
+        {weightBlock('armorWeights', 'armor')}
+      </div>
+
+      {/* Weapon proficiency */}
+      <div className="pt-2 border-t border-white/10">
+        <TagRow label="Weapon Proficiency (empty = any type)" tags={cls.weaponKinds}
+          suggestions={COMMON_WEAPON_KINDS} placeholder="add weapon type…"
+          onChange={next => onChange({ ...cls, weaponKinds: next })} />
+      </div>
+
+      {/* Spell schools */}
+      <div className="pt-2 border-t border-white/10">
+        <TagRow label="Spell Schools" tags={cls.spellSchools}
+          suggestions={spellSchoolSuggestions} placeholder="add school…"
+          onChange={next => onChange({ ...cls, spellSchools: next })} />
+      </div>
+
+      {/* Attribute modifiers & growth */}
+      <div className="pt-2 border-t border-white/10">
+        <div className="text-xs font-medium text-white/60 mb-1">Attributes</div>
+        <div className="grid grid-cols-[1fr_auto_auto] gap-x-3 gap-y-1 items-center">
+          <div />
+          <div className="text-[10px] text-white/40 text-center uppercase tracking-wide">Modifier</div>
+          <div className="text-[10px] text-white/40 text-center uppercase tracking-wide">Growth/Lvl</div>
+          {ruleset.attributes.map(attr => (
+            <Fragment key={attr.id}>
+              <div className="text-xs text-white/70">{attr.name}</div>
+              <input type="number" value={cls.attrModifiers[attr.id] ?? ''} placeholder="0"
+                onChange={e => setAttr('attrModifiers', attr.id, parseInt(e.target.value, 10))}
+                className="w-16 px-1.5 py-0.5 rounded bg-zinc-900 border border-white/10 text-xs text-white/85 text-center focus:outline-none focus:border-amber-500/40" />
+              <input type="number" value={cls.attrGrowth[attr.id] ?? ''} placeholder="0"
+                onChange={e => setAttr('attrGrowth', attr.id, parseInt(e.target.value, 10))}
+                className="w-16 px-1.5 py-0.5 rounded bg-zinc-900 border border-white/10 text-xs text-white/85 text-center focus:outline-none focus:border-amber-500/40" />
+            </Fragment>
+          ))}
+        </div>
+      </div>
+
+      {/* Starting spells */}
+      {ruleset.spells.length > 0 && (
+        <div className="pt-2 border-t border-white/10">
+          <div className="text-xs font-medium text-white/60 mb-1">Starting Spells</div>
+          <div className="flex flex-wrap gap-1">
+            {ruleset.spells.map(sp => (
+              <Chip key={sp.id} active={(cls.startingSpells ?? []).includes(sp.id)}
+                label={`${sp.icon ?? '✨'} ${sp.name}`} onClick={() => toggleStartingSpell(sp.id)} />
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -1163,6 +1369,27 @@ export function DatabaseWorkspace({ ruleset, onRulesetChange }: DatabaseWorkspac
     if (selectedId === id) setSelectedId(next[0]?.id ?? null)
   }
 
+  // ── classes ──
+
+  const selectedClass = ruleset.classes.find(c => c.id === selectedId) ?? null
+
+  function addClass() {
+    const id = `class.class_${_classSeq++}`
+    onRulesetChange({ ...ruleset, classes: [...ruleset.classes, blankClass(id)] })
+    setSelectedId(id)
+    setCategory('classes')
+  }
+
+  function updateClass(cls: ClassDef) {
+    onRulesetChange({ ...ruleset, classes: ruleset.classes.map(c => c.id === cls.id ? cls : c) })
+  }
+
+  function deleteClass(id: string) {
+    const next = ruleset.classes.filter(c => c.id !== id)
+    onRulesetChange({ ...ruleset, classes: next })
+    if (selectedId === id) setSelectedId(next[0]?.id ?? null)
+  }
+
   const selectedEvent = (ruleset.events ?? []).find(e => e.id === selectedId) ?? null
   const selectedQuest = (ruleset.quests ?? []).find(q => q.id === selectedId) ?? null
 
@@ -1203,6 +1430,7 @@ export function DatabaseWorkspace({ ruleset, onRulesetChange }: DatabaseWorkspac
     if (cat === 'spells')         setSelectedId(ruleset.spells[0]?.id ?? null)
     if (cat === 'status_effects') setSelectedId(ruleset.statusEffects[0]?.id ?? null)
     if (cat === 'shops')          setSelectedId(ruleset.shops[0]?.id ?? null)
+    if (cat === 'classes')        setSelectedId(ruleset.classes[0]?.id ?? null)
     if (cat === 'events')         setSelectedId((ruleset.events ?? [])[0]?.id ?? null)
     if (cat === 'quests')         setSelectedId((ruleset.quests ?? [])[0]?.id ?? null)
   }
@@ -1251,6 +1479,10 @@ export function DatabaseWorkspace({ ruleset, onRulesetChange }: DatabaseWorkspac
         {category === 'shops' && (
           <ShopList shops={ruleset.shops} selectedId={selectedId} onSelect={setSelectedId} onAdd={addShop} onDelete={deleteShop} />
         )}
+        {category === 'classes' && (
+          <GenericDefList label="Classes" entries={ruleset.classes.map(c => ({ id: c.id, icon: c.icon ?? '🎓', name: c.name }))}
+            selectedId={selectedId} onSelect={setSelectedId} onAdd={addClass} onDelete={deleteClass} />
+        )}
         {category === 'events' && (
           <GenericDefList label="Events" entries={(ruleset.events ?? []).map(e => ({ id: e.id, icon: e.trigger === 'onFlag' ? '⚡' : '🧩', name: e.name }))}
             selectedId={selectedId} onSelect={setSelectedId} onAdd={addEventDef} onDelete={deleteEventDef} />
@@ -1277,6 +1509,8 @@ export function DatabaseWorkspace({ ruleset, onRulesetChange }: DatabaseWorkspac
           <StatusEditor status={selectedStatus} onChange={updateStatus} />
         ) : category === 'shops' && selectedShop ? (
           <ShopEditor shop={selectedShop} ruleset={ruleset} onChange={updateShop} />
+        ) : category === 'classes' && selectedClass ? (
+          <ClassEditor cls={selectedClass} ruleset={ruleset} onChange={updateClass} />
         ) : category === 'events' && selectedEvent ? (
           <EventDefEditor def={selectedEvent} ruleset={ruleset} onChange={updateEventDef} />
         ) : category === 'quests' && selectedQuest ? (
