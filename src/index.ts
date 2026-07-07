@@ -175,6 +175,10 @@ export { SPELL_SCHEMA, STATUS_SCHEMA, blankSpell, blankStatusEffect } from './li
 // Out-of-combat effect resolver
 export { applyEffectToChar, applyConsumable } from './lib/apply-effects'
 
+// Equip proficiency gate
+export { canEquip } from './lib/equipment'
+export type { EquipCheck } from './lib/equipment'
+
 // Encounter engine (Phase E3)
 export { resolveEncounterTable, checkCellForEncounter, makeFixedEncounter, visitedFlagKey } from './lib/encounter-engine'
 

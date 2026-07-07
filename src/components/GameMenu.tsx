@@ -16,6 +16,7 @@ import {
 import type { Character, Effect, Formation, ItemDef, ItemInstance, Ruleset, SpellDef } from '@/lib/engine-types'
 import { Portrait } from '@/lib/portraits'
 import { applyConsumable, applyEffectToChar } from '@/lib/apply-effects'
+import { canEquip } from '@/lib/equipment'
 import { itemDisplayName } from '@/lib/item-schema'
 import { questStageFlagKey, npcLineHeardFlagKey } from '@/lib/event-engine'
 import { resolveText } from '@/lib/text-tokens'
@@ -284,7 +285,8 @@ function equipFrom(char: Character, itemId: string, ruleset: Ruleset, inventory:
   const def = ruleset.items.find(i => i.id === itemId)
   if (!def?.slot) return { char, inventory, message: 'That cannot be equipped.', changed: false }
   const cls = ruleset.classes.find(c => c.id === char.classId)
-  if (cls?.allowedEquip && !cls.allowedEquip.includes(def.slot)) return { char, inventory, message: `${char.name} can't equip that.`, changed: false }
+  const gate = canEquip(cls, def)
+  if (!gate.ok) return { char, inventory, message: gate.reason ?? `${char.name} can't equip that.`, changed: false }
   let inv = inventory
   const current = char.equipment[def.slot]
   if (current) {

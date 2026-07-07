@@ -24,6 +24,8 @@ export type Dice = number | string
 
 export type ItemSlot = 'weapon' | 'offhand' | 'head' | 'body' | 'hands' | 'feet' | 'ring' | 'amulet'
 export type ItemKind = 'weapon' | 'armor' | 'consumable' | 'key' | 'quest' | 'misc'
+/** Equip weight tier for weapons and armor (FF-style class proficiency). */
+export type EquipWeight = 'heavy' | 'medium' | 'light'
 export type SpellTarget =
   | 'self' | 'ally' | 'allAllies'
   | 'enemy' | 'allEnemies' | 'enemyRow'
@@ -97,7 +99,13 @@ export interface ClassDef extends Definition {
   spellDie: number
   spellSchools: string[]
   allowedEquip: ItemSlot[]
+  /** Weapon types this class is proficient with (matched against ItemDef.weaponKind).
+   *  Empty = no per-type restriction. */
   weaponKinds: string[]
+  /** Weapon weight tiers this class may wield. Absent = all. */
+  weaponWeights?: EquipWeight[]
+  /** Armor weight tiers this class may wear. Absent = all. */
+  armorWeights?: EquipWeight[]
   startingSpells?: DefRef<SpellDef>[]
   attrGrowth: Partial<Record<string, number>>
   attrModifiers: Partial<Record<string, number>>
@@ -113,6 +121,9 @@ export interface ItemDef extends Definition {
   kind: ItemKind
   slot?: ItemSlot
   weaponKind?: string
+  /** Weight tier for weapons/armor — gated against the class's allowed weights.
+   *  Absent (and all accessories) = no weight restriction. */
+  weight?: EquipWeight
   modifiers?: StatModifier[]
   onUse?: Effect[]
   value: number

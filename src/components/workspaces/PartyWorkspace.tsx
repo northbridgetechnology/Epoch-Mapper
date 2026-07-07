@@ -11,6 +11,7 @@ import type {
 import { deriveMaxHp, deriveMaxMp, xpToNextLevel } from '@/lib/engine-types'
 import { newCharacter } from '@/lib/save-state'
 import { applyConsumable } from '@/lib/apply-effects'
+import { canEquip } from '@/lib/equipment'
 import { itemDisplayName } from '@/lib/item-schema'
 import { toast } from 'sonner'
 
@@ -226,6 +227,12 @@ export function EquipmentPanel({
   }
 
   function equip(slot: ItemSlot, itemId: string) {
+    // Proficiency gate — class must be allowed this slot/type/weight
+    const gate = canEquip(cls, itemDef(ruleset, itemId))
+    if (!gate.ok) {
+      toast.error(gate.reason ?? `${char.name} can't equip that.`)
+      return
+    }
     // Return currently equipped item to inventory
     let newInv = inventory
     const current = char.equipment[slot]
@@ -301,14 +308,19 @@ export function EquipmentPanel({
             candidates.map(inst => {
               const def = itemDef(ruleset, inst.def)
               if (!def) return null
+              const gate = canEquip(cls, def)
               return (
-                <button key={`${inst.def}_${inst.unidentified ? 'u' : 'i'}`} onClick={() => equip(pickSlot, inst.def)}
-                  className="flex items-center gap-2 w-full px-2 py-1 rounded hover:bg-amber-950/40 text-left">
+                <button key={`${inst.def}_${inst.unidentified ? 'u' : 'i'}`}
+                  onClick={() => gate.ok && equip(pickSlot, inst.def)} disabled={!gate.ok}
+                  title={gate.ok ? undefined : gate.reason}
+                  className={cn('flex items-center gap-2 w-full px-2 py-1 rounded text-left',
+                    gate.ok ? 'hover:bg-amber-950/40' : 'opacity-45 cursor-not-allowed')}>
                   <span className="text-sm">{inst.unidentified ? '❓' : def.icon ?? '📦'}</span>
                   <span className={cn('text-xs', inst.unidentified ? 'text-purple-300/90 italic' : 'text-white/80')}>
                     {itemDisplayName(def, inst)}
                   </span>
-                  <span className="text-xs text-white/30 ml-auto">×{inst.qty}</span>
+                  {!gate.ok && <span className="text-[10px] text-red-400/70 ml-auto truncate">{gate.reason}</span>}
+                  {gate.ok && <span className="text-xs text-white/30 ml-auto">×{inst.qty}</span>}
                 </button>
               )
             })
