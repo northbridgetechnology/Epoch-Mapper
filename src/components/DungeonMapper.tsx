@@ -78,6 +78,31 @@ function stampCell(sample: CellData): CellData {
 
 const EMPTY_CELL: CellData = { base: 0, overlays: [] }
 
+/** Import merge: add the imported ruleset's content collections into the current
+ *  one (keep current definitions on an id clash; append imported-only extras) so
+ *  imported maps' NPCs/events/items work — without hijacking the current game's
+ *  meta (title/opening/rules stay). */
+function mergeImportedRuleset(current: Ruleset, imported: Ruleset): Ruleset {
+  const union = <T extends { id: string }>(a: T[] = [], b: T[] = []): T[] => {
+    const byId = new globalThis.Map<string, T>(a.map(x => [x.id, x]))
+    for (const x of b) if (!byId.has(x.id)) byId.set(x.id, x)
+    return [...byId.values()]
+  }
+  return {
+    ...current,
+    items: union(current.items, imported.items),
+    spells: union(current.spells, imported.spells),
+    statusEffects: union(current.statusEffects, imported.statusEffects),
+    enemies: union(current.enemies, imported.enemies),
+    encounterTables: union(current.encounterTables, imported.encounterTables),
+    lootTables: union(current.lootTables, imported.lootTables),
+    shops: union(current.shops, imported.shops),
+    npcs: union(current.npcs, imported.npcs),
+    quests: union(current.quests, imported.quests),
+    events: union(current.events, imported.events),
+  }
+}
+
 /** Game-over test: the whole party has fallen, or (with meta.mcDeathEndsGame)
  *  the Main Character has fallen even if companions still stand. */
 function partyDefeated(party: Character[], meta: GameMeta): boolean {
@@ -1692,6 +1717,15 @@ export function DungeonMapper({
           setCustomMarkers(parsed.customMarkers)
           setMaps(loaded)
           setActiveIdx(0)
+          // Adopt the opened game's ruleset — items, spells, NPCs, quests, events,
+          // and all Settings (title/opening story/rules). Reset the play session so
+          // the new game's title/opening runs fresh.
+          if (parsed.ruleset) {
+            setRuleset(normalizeRuleset(parsed.ruleset))
+            setParty([]); setReserve([]); setFormation({ front: [], back: [] })
+            setInventory([]); setFlags({}); clearPartyTemplate()
+            setShowTitle(true); setIntroPhase(null)
+          }
           const maxId = parsed.customMarkers.reduce((mx, m) => Math.max(mx, m.id), CUSTOM_ID_START - 1)
           nextMarkerIdRef.current = Math.max(nextMarkerIdRef.current, maxId + 1)
           try {
@@ -1720,6 +1754,9 @@ export function DungeonMapper({
             setActiveIdx(prev.length)
             return next
           })
+          // Bring in the imported game's content (NPCs, events, items, …) so the
+          // added maps actually work; the current game's meta/settings are kept.
+          if (parsed.ruleset) setRuleset(r => mergeImportedRuleset(r, parsed.ruleset!))
           if (!gameTitle && parsed.gameTitle) setGameTitle(parsed.gameTitle)
           const note = remap.size > 0 ? ` (${remap.size} marker ID${remap.size === 1 ? '' : 's'} reassigned)` : ''
           toast.success(`Imported ${remapped.length} map${remapped.length === 1 ? '' : 's'}${note}`)
