@@ -16,7 +16,7 @@ export { exportMapsAsPdf } from './lib/dungeon-export'
 
 // Built-in pixel sprite library (EotB-style billboards)
 export { pixelSprite, pixelSpriteRect, hasPixelSprite, spriteAspect, resolveCreatureSprite, creatureSprite, bitmapSprite, isBitmapSprite, bitmapFrames, spriteKinds } from './lib/pixel-sprites'
-export { fileToSpriteDataUri, builtinSpritePng, downloadSpriteTemplate, SPRITE_MAX_DIM, SPRITE_MAX_BYTES, SPRITE_ACCEPT_TYPES, SPRITE_ACCEPT_ATTR } from './lib/sprite-upload'
+export { fileToSpriteDataUri, fileToImageDataUri, builtinSpritePng, downloadSpriteTemplate, SPRITE_MAX_DIM, SPRITE_MAX_BYTES, SPRITE_ACCEPT_TYPES, SPRITE_ACCEPT_ATTR, IMAGE_ACCEPT_TYPES, IMAGE_ACCEPT_ATTR } from './lib/sprite-upload'
 
 // Procedural generation
 export { buildBaseMap, buildGeneratedMap, buildGeneratedWorld, layoutDim, SIZE_DIM, EOTB_DIM } from './lib/map-generator'

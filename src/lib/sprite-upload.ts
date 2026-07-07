@@ -26,14 +26,68 @@ export const SPRITE_ACCEPT_TYPES = ['image/png', 'image/gif', 'image/webp'] as c
 /** `accept` attribute value for the file input. */
 export const SPRITE_ACCEPT_ATTR = SPRITE_ACCEPT_TYPES.join(',')
 
-function makeCanvas(w: number, h: number): [HTMLCanvasElement, CanvasRenderingContext2D] {
+function makeCanvas(w: number, h: number, smooth = false): [HTMLCanvasElement, CanvasRenderingContext2D] {
   const canvas = document.createElement('canvas')
   canvas.width = w
   canvas.height = h
   const ctx = canvas.getContext('2d')
   if (!ctx) throw new Error('Canvas is unavailable in this browser.')
-  ctx.imageSmoothingEnabled = false
+  ctx.imageSmoothingEnabled = smooth
   return [canvas, ctx]
+}
+
+function loadImage(url: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const i = new Image()
+    i.onload = () => resolve(i)
+    i.onerror = () => reject(new Error('Could not read that file as an image.'))
+    i.src = url
+  })
+}
+
+// ── Full-size image uploads (opening story splashes, etc.) ────────────────────────
+
+/** Photographic image formats accepted for full-size art (JPEG is fine — no alpha needed). */
+export const IMAGE_ACCEPT_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'] as const
+export const IMAGE_ACCEPT_ATTR = IMAGE_ACCEPT_TYPES.join(',')
+
+/**
+ * Decode a full-size image (a splash/illustration, not a sprite) and return a
+ * compact data URI: downscaled with smoothing to `maxDim` on the longest edge,
+ * kept as PNG when small enough, otherwise re-encoded as JPEG at descending
+ * quality until it fits `maxBytes`. No frame-splitting; JPEG allowed.
+ */
+export async function fileToImageDataUri(
+  file: File,
+  { maxDim = 960, maxBytes = 1_500_000 }: { maxDim?: number; maxBytes?: number } = {},
+): Promise<string> {
+  if (!(IMAGE_ACCEPT_TYPES as readonly string[]).includes(file.type)) {
+    throw new Error('Use a PNG, JPEG, WebP, or GIF image.')
+  }
+  const url = URL.createObjectURL(file)
+  try {
+    const img = await loadImage(url)
+    if (!img.width || !img.height) throw new Error('Image has no pixels.')
+    const scale = Math.min(1, maxDim / Math.max(img.width, img.height))
+    const w = Math.max(1, Math.round(img.width * scale))
+    const h = Math.max(1, Math.round(img.height * scale))
+    const [canvas, ctx] = makeCanvas(w, h, true)
+    ctx.drawImage(img, 0, 0, img.width, img.height, 0, 0, w, h)
+
+    let uri = canvas.toDataURL('image/png')
+    if (uri.length > maxBytes) {
+      for (const q of [0.85, 0.7, 0.55, 0.4]) {
+        uri = canvas.toDataURL('image/jpeg', q)
+        if (uri.length <= maxBytes) break
+      }
+    }
+    if (uri.length > maxBytes) {
+      throw new Error(`Image is still ${Math.ceil(uri.length / 1024)}KB after compression (limit ${Math.floor(maxBytes / 1024)}KB) — try a smaller image.`)
+    }
+    return uri
+  } finally {
+    URL.revokeObjectURL(url)
+  }
 }
 
 /** Downscale a region of `img` to at most `maxDim` on its longest edge and encode as a PNG data URI. */

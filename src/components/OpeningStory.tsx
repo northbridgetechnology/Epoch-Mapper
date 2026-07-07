@@ -45,7 +45,6 @@ export function OpeningStoryOverlay({ story, mc, onDone }: {
             src={slide.image}
             alt=""
             className="mx-auto max-h-[46vh] rounded-lg border border-white/10 shadow-2xl"
-            style={{ imageRendering: 'pixelated' }}
           />
         )}
         <p className="text-[15px] leading-relaxed text-amber-50/85 whitespace-pre-wrap"

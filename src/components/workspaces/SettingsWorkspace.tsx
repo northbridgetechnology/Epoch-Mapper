@@ -5,11 +5,12 @@ import { Upload, Plus, Trash2, ChevronUp, ChevronDown, Image as ImageIcon } from
 import { cn } from '@/lib/utils'
 import type { MapData } from '@/lib/types'
 import type { GameMeta, OpeningStory } from '@/lib/engine-types'
+import { toast } from 'sonner'
 import { THEMES, getTheme } from '@/lib/themes'
-import { fileToSpriteDataUri, SPRITE_ACCEPT_ATTR } from '@/lib/sprite-upload'
+import { fileToImageDataUri, IMAGE_ACCEPT_ATTR } from '@/lib/sprite-upload'
 
-const OPENING_IMG_MAXDIM = 640
-const OPENING_IMG_MAXBYTES = 400 * 1024
+const OPENING_IMG_MAXDIM = 960
+const OPENING_IMG_MAXBYTES = 1_500_000
 
 interface SettingsWorkspaceProps {
   maps: MapData[]
@@ -180,7 +181,11 @@ function OpeningSlideRow({ slide, index, count, onText, onImage, onMove, onRemov
     const file = e.target.files?.[0]
     e.target.value = ''
     if (!file) return
-    try { onImage(await fileToSpriteDataUri(file, OPENING_IMG_MAXDIM, OPENING_IMG_MAXBYTES)) } catch { /* ignore */ }
+    try {
+      onImage(await fileToImageDataUri(file, { maxDim: OPENING_IMG_MAXDIM, maxBytes: OPENING_IMG_MAXBYTES }))
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not add that image.')
+    }
   }
   return (
     <div className="flex gap-2 rounded-md border border-white/8 bg-zinc-900/50 p-2">
@@ -206,7 +211,7 @@ function OpeningSlideRow({ slide, index, count, onText, onImage, onMove, onRemov
                 <Upload className="w-3 h-3" /> add image
               </button>
             )}
-          <input ref={fileRef} type="file" accept={SPRITE_ACCEPT_ATTR} className="hidden" onChange={onFile} />
+          <input ref={fileRef} type="file" accept={IMAGE_ACCEPT_ATTR} className="hidden" onChange={onFile} />
         </div>
       </div>
       <button onClick={onRemove} className="self-start text-white/25 hover:text-red-400"><Trash2 className="w-3.5 h-3.5" /></button>
