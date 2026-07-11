@@ -1181,8 +1181,10 @@ export function DungeonMapper({
   }, [workspace])
 
   // In Play mode, follow the scene: default/title track → the current level's
-  // track. (Battle/boss swapping arrives in Phase 2.) Playback stays queued
-  // until the first user gesture unlocks it.
+  // track → the battle/boss track while a fight is active, restoring the
+  // exploration track when it ends. Playback stays queued until the first user
+  // gesture unlocks it.
+  const inBattle = combatState !== null
   useEffect(() => {
     if (workspace !== 'play') return
     if (showTitle || introPhase) {
@@ -1190,9 +1192,13 @@ export function DungeonMapper({
       if (t) void music.play(t); else music.stop()
       return
     }
-    const track = resolveTrack({ meta: ruleset.meta, mapMusicId: activeMap?.musicId }, ruleset.audioTracks)
-    if (track) void music.play(track); else music.stop()
-  }, [workspace, showTitle, introPhase, activeMap?.id, activeMap?.musicId, ruleset.meta, ruleset.audioTracks])
+    const enc = inBattle && activeEncounter
+      ? ruleset.encounterTables.find(t => t.id === activeEncounter.tableId)
+      : undefined
+    const battle = inBattle ? { musicId: enc?.musicId, boss: enc?.boss } : null
+    const track = resolveTrack({ meta: ruleset.meta, mapMusicId: activeMap?.musicId, battle }, ruleset.audioTracks)
+    if (track) void music.play(track, battle ? { crossfadeMs: 400 } : undefined); else music.stop()
+  }, [workspace, showTitle, introPhase, inBattle, activeEncounter, activeMap?.id, activeMap?.musicId, ruleset.meta, ruleset.audioTracks, ruleset.encounterTables])
 
   // Save-point policy: saving anywhere, or only on Save Point cells
   const canSaveHere = (ruleset.meta.savePolicy ?? 'anywhere') === 'anywhere'

@@ -534,6 +534,25 @@ function EncounterTableEditor({
         onChange={v => onChange({ ...table, ...(v as Partial<EncounterTableDef>) })}
       />
 
+      {/* Battle music + boss flag */}
+      <div className="pt-2 border-t border-white/10 space-y-2">
+        <label className="flex items-center gap-2 text-xs text-white/70 cursor-pointer">
+          <input type="checkbox" checked={!!table.boss}
+            onChange={e => onChange({ ...table, boss: e.target.checked || undefined })} />
+          <span>👑 Boss fight</span>
+          <span className="text-[10px] text-white/30">Uses the game&apos;s boss theme unless a custom track is set.</span>
+        </label>
+        <div>
+          <label className="block text-xs font-medium text-white/60 mb-0.5">Custom Battle Music <span className="text-white/30">(optional)</span></label>
+          <select value={table.musicId ?? ''}
+            onChange={e => onChange({ ...table, musicId: e.target.value || undefined })}
+            className="w-full px-2 py-1.5 rounded bg-zinc-800 border border-white/10 text-xs text-white/85 focus:outline-none focus:border-amber-500/50">
+            <option value="">— use {table.boss ? 'boss' : 'battle'} theme —</option>
+            {ruleset.audioTracks.map(t => <option key={t.id} value={t.id}>{t.icon ?? '🎵'} {t.name}</option>)}
+          </select>
+        </div>
+      </div>
+
       <div className="pt-2 border-t border-white/10">
         <div className="flex items-center justify-between mb-1.5">
           <span className="text-xs font-medium text-white/50 uppercase tracking-wide">Entries</span>
