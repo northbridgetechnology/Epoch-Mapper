@@ -29,7 +29,8 @@ export function blankClass(id: string): ClassDef {
     spellDie: 0,
     spellSchools: [],
     allowedEquip: ['weapon', 'body', 'ring', 'amulet'],
-    weaponKinds: [],
+    weaponTypes: [],
+    armorTypes: [],
     attrGrowth: {},
     attrModifiers: {},
   }

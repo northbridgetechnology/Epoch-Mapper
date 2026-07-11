@@ -14,13 +14,6 @@ const ITEM_KINDS = [
   { value: 'misc', label: 'Misc' },
 ]
 
-const ITEM_WEIGHTS = [
-  { value: '', label: '— none —' },
-  { value: 'heavy', label: 'Heavy' },
-  { value: 'medium', label: 'Medium' },
-  { value: 'light', label: 'Light' },
-]
-
 const ITEM_SLOTS = [
   { value: '', label: '— none —' },
   { value: 'weapon', label: 'Weapon (main hand)' },
@@ -48,19 +41,6 @@ export const ITEM_SCHEMA: FieldSchema[] = [
     key: 'slot',
     label: 'Equipment Slot',
     type: { kind: 'enum', options: ITEM_SLOTS },
-    optional: true,
-  },
-  {
-    key: 'weaponKind',
-    label: 'Weapon Type (proficiency — blade, axe, dagger, staff…)',
-    type: 'text',
-    optional: true,
-    placeholder: 'blade',
-  },
-  {
-    key: 'weight',
-    label: 'Weight Tier (weapons/armor — gated by class)',
-    type: { kind: 'enum', options: ITEM_WEIGHTS },
     optional: true,
   },
   { key: 'value',     label: 'Gold Value',  type: 'number', min: 0 },

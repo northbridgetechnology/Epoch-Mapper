@@ -15,6 +15,7 @@ import {
   type CombatState,
 } from '../src/lib/combat-engine'
 import { simulateEncounterTable } from '../src/lib/battle-sim'
+import { makeDefaultRuleset } from '../src/lib/default-ruleset'
 import type { Character, ItemInstance, ResolvedEncounter, Ruleset } from '../src/lib/engine-types'
 
 let passed = 0
@@ -301,6 +302,64 @@ test('simulator reports a rout for an outmatched encounter table', () => {
   assert.ok(res!.avgRounds >= 1)
   // Determinism: same config twice → identical result
   assert.deepEqual(res, simulateEncounterTable('enc.rats', simRules, { partySize: 4, level: 5, iterations: 50 }))
+})
+
+// ── Weapon/armor types feed combat ───────────────────────────────────────────
+
+const typeRules = makeDefaultRuleset()
+
+function heroWith(equipment: Record<string, { def: string; qty: number }>, attrs: Record<string, number>): Character {
+  return {
+    id: 'th', name: 'TypeHero', level: 1, hp: 30, maxHp: 30, mp: 0, maxMp: 0,
+    classId: 'class.fighter', raceId: 'race.human',
+    alive: true, statuses: [], knownSpells: [], equipment,
+    attributes: attrs,
+  } as unknown as Character
+}
+
+test('scalingAttr: a dagger scales attack off Agility, a sword off Might', () => {
+  const attrs = { might: 8, agility: 18, endurance: 10 }
+  const dagger = initCombat([heroWith({ weapon: { def: 'item.stiletto', qty: 1 } }, attrs)], encounter, { ruleset: typeRules })
+  const sword  = initCombat([heroWith({ weapon: { def: 'item.longsword', qty: 1 } }, attrs)], encounter, { ruleset: typeRules })
+  // stiletto (wtype.dagger → agility 18) out-scales longsword (wtype.sword → might 8)
+  assert.ok(dagger.actors[0].attack > sword.actors[0].attack)
+})
+
+test('weaponRange + weaponDamageType are set on the actor from the weapon type', () => {
+  const gun = initCombat([heroWith({ weapon: { def: 'item.pistol', qty: 1 } }, { agility: 12 })], encounter, { ruleset: typeRules })
+  assert.equal(gun.actors[0].weaponRange, 'ranged')
+  assert.equal(gun.actors[0].weaponDamageType, 'physical')
+})
+
+test('heavy armor applies its type speed penalty; a robe does not', () => {
+  const attrs = { agility: 12, endurance: 10 }
+  const plate = initCombat([heroWith({ body: { def: 'item.plate_armor', qty: 1 } }, attrs)], encounter, { ruleset: typeRules })
+  const robe  = initCombat([heroWith({ body: { def: 'item.mage_robe',   qty: 1 } }, attrs)], encounter, { ruleset: typeRules })
+  // atype.heavy speedMod -2; atype.robe none. Ignore item stat modifiers by
+  // comparing the two relative to each other.
+  assert.ok(plate.actors[0].speed < robe.actors[0].speed)
+})
+
+test('a fire weapon strikes a fire-weak enemy for extra damage', () => {
+  // Override a weapon to deal fire, and give the EnemyDef a fire weakness
+  // (actor resistances are sourced from ruleset.enemies, not the encounter).
+  const rules = {
+    ...typeRules,
+    items: typeRules.items.map(i => i.id === 'item.longsword' ? { ...i, damageType: 'fire' } : i),
+    enemies: [
+      ...typeRules.enemies.filter(e => e.id !== 'enemy.emberrat'),
+      { id: 'enemy.emberrat', name: 'Ember Rat', hp: 100, attack: 6, defense: 0, speed: 1, xp: 1, gold: { min: 0, max: 0 }, attributes: {}, resistances: { fire: -0.5 } },
+    ],
+  } as unknown as Ruleset
+  const weakEnc: ResolvedEncounter = {
+    ...encounter,
+    enemies: [{ ...encounter.enemies[0], defId: 'enemy.emberrat', hp: 100, maxHp: 100, defense: 0 }],
+  }
+  const hero0 = heroWith({ weapon: { def: 'item.longsword', qty: 1 } }, { might: 14, agility: 20 })
+  const s = initCombat([hero0], weakEnc, { ruleset: rules, seed: 3 })
+  const enemyIdx = s.actors.findIndex(a => a.kind === 'enemy')
+  const after = resolvePlayerAttack(s, enemyIdx, rules, () => 0.5)
+  assert.ok(after.events.some(e => e.kind === 'weak'), 'fire attack should register as a weakness hit')
 })
 
 console.log(`\n${passed} passed`)

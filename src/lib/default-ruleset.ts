@@ -5,7 +5,7 @@
 
 import type {
   AttributeDef, ClassDef, RaceDef, SpellDef, StatusEffectDef,
-  ItemDef, EnemyDef, EncounterTableDef, LootTableDef, ShopDef,
+  ItemDef, WeaponTypeDef, ArmorTypeDef, EnemyDef, EncounterTableDef, LootTableDef, ShopDef,
   Ruleset,
 } from './engine-types'
 
@@ -28,9 +28,8 @@ export const DEFAULT_CLASSES: ClassDef[] = [
     description: 'A seasoned warrior who excels in melee combat and can wear heavy armor.',
     hitDie: 10, spellDie: 0, spellSchools: [],
     allowedEquip: ['weapon', 'offhand', 'head', 'body', 'hands', 'feet', 'ring', 'amulet'],
-    weaponKinds: ['blade', 'axe', 'mace', 'bow', 'spear'],
-    weaponWeights: ['heavy', 'medium', 'light'],
-    armorWeights: ['heavy', 'medium', 'light'],
+    weaponTypes: ['wtype.sword', 'wtype.katana', 'wtype.greatsword', 'wtype.axe', 'wtype.mace', 'wtype.hammer', 'wtype.spear', 'wtype.bow'],
+    armorTypes: [],
     attrGrowth: { might: 1, endurance: 1 },
     attrModifiers: { might: 2, endurance: 2 },
   },
@@ -38,10 +37,9 @@ export const DEFAULT_CLASSES: ClassDef[] = [
     id: 'class.mage', name: 'Mage', icon: '🔮', color: '#8e44ad',
     description: 'A scholarly spellcaster who channels arcane and elemental energies. Frail but devastating.',
     hitDie: 4, spellDie: 8, spellSchools: ['arcane', 'element'],
-    allowedEquip: ['weapon', 'ring', 'amulet'],
-    weaponKinds: ['staff', 'wand', 'dagger'],
-    weaponWeights: ['light'],
-    armorWeights: ['light'],
+    allowedEquip: ['weapon', 'body', 'ring', 'amulet'],
+    weaponTypes: ['wtype.staff', 'wtype.rod', 'wtype.dagger'],
+    armorTypes: ['atype.robe', 'atype.light'],
     startingSpells: ['spell.agi', 'spell.bufu', 'spell.zio'],
     attrGrowth: { intellect: 2 },
     attrModifiers: { intellect: 3 },
@@ -51,9 +49,8 @@ export const DEFAULT_CLASSES: ClassDef[] = [
     description: 'A devoted priest wielding divine magic. Heals allies and smites the unholy.',
     hitDie: 6, spellDie: 6, spellSchools: ['divine', 'holy'],
     allowedEquip: ['weapon', 'offhand', 'head', 'body', 'hands', 'feet', 'ring', 'amulet'],
-    weaponKinds: ['mace', 'staff', 'hammer'],
-    weaponWeights: ['medium', 'light'],
-    armorWeights: ['medium', 'light'],
+    weaponTypes: ['wtype.mace', 'wtype.staff', 'wtype.hammer'],
+    armorTypes: ['atype.medium', 'atype.light', 'atype.robe', 'atype.buckler', 'atype.shield'],
     startingSpells: ['spell.dia', 'spell.hama', 'spell.cure_poison'],
     attrGrowth: { spirit: 2 },
     attrModifiers: { spirit: 3 },
@@ -63,9 +60,8 @@ export const DEFAULT_CLASSES: ClassDef[] = [
     description: 'A quick and cunning adventurer skilled in stealth and precision strikes.',
     hitDie: 6, spellDie: 0, spellSchools: [],
     allowedEquip: ['weapon', 'offhand', 'head', 'body', 'hands', 'feet', 'ring', 'amulet'],
-    weaponKinds: ['dagger', 'blade', 'bow', 'gun'],
-    weaponWeights: ['medium', 'light'],
-    armorWeights: ['light', 'medium'],
+    weaponTypes: ['wtype.dagger', 'wtype.sword', 'wtype.bow', 'wtype.gun'],
+    armorTypes: ['atype.light', 'atype.medium', 'atype.buckler'],
     attrGrowth: { agility: 2 },
     attrModifiers: { agility: 3, luck: 1 },
   },
@@ -74,12 +70,38 @@ export const DEFAULT_CLASSES: ClassDef[] = [
     description: 'A sharp-eyed marksman wielding firearms and quick reflexes.',
     hitDie: 6, spellDie: 0, spellSchools: [],
     allowedEquip: ['weapon', 'head', 'body', 'hands', 'feet', 'ring', 'amulet'],
-    weaponKinds: ['gun'],
-    weaponWeights: ['light', 'medium', 'heavy'],
-    armorWeights: ['light', 'medium'],
+    weaponTypes: ['wtype.gun', 'wtype.heavy_gun'],
+    armorTypes: ['atype.light', 'atype.medium'],
     attrGrowth: { agility: 1, luck: 1 },
     attrModifiers: { agility: 2, luck: 2 },
   },
+]
+
+// ── Weapon & armor types ────────────────────────────────────────────────────────
+
+export const DEFAULT_WEAPON_TYPES: WeaponTypeDef[] = [
+  { id: 'wtype.sword',      name: 'Sword',      icon: '⚔️', color: '#dfe6e9', description: 'Balanced one-handed blades — the versatile martial standard.', weight: 'medium', scalingAttr: 'attr.might',     damageType: 'physical', range: 'melee' },
+  { id: 'wtype.katana',     name: 'Katana',     icon: '🗡️', color: '#e17055', description: 'Curved single-edged blades prized for their keen cutting edge.', weight: 'medium', scalingAttr: 'attr.might',     damageType: 'physical', range: 'melee' },
+  { id: 'wtype.greatsword', name: 'Greatsword', icon: '⚔️', color: '#636e72', description: 'Massive two-handed blades that trade speed for crushing force.', weight: 'heavy',  scalingAttr: 'attr.might',     damageType: 'physical', range: 'melee' },
+  { id: 'wtype.axe',        name: 'Axe',        icon: '🪓', color: '#b07d4a', description: 'Heavy chopping weapons that bite deep but swing slow.',        weight: 'heavy',  scalingAttr: 'attr.might',     damageType: 'physical', range: 'melee' },
+  { id: 'wtype.mace',       name: 'Mace',       icon: '🔨', color: '#a0522d', description: 'Blunt bludgeons that shatter armor and bone alike.',           weight: 'medium', scalingAttr: 'attr.might',     damageType: 'physical', range: 'melee' },
+  { id: 'wtype.hammer',     name: 'Warhammer',  icon: '🔨', color: '#7f8c8d', description: 'Two-handed hammers built for raw concussive impact.',          weight: 'heavy',  scalingAttr: 'attr.might',     damageType: 'physical', range: 'melee' },
+  { id: 'wtype.dagger',     name: 'Dagger',     icon: '🗡️', color: '#2d3436', description: 'Light, quick blades that reward speed over strength.',          weight: 'light',  scalingAttr: 'attr.agility',   damageType: 'physical', range: 'melee' },
+  { id: 'wtype.spear',      name: 'Spear',      icon: '🔱', color: '#f9ca24', description: 'Long polearms with reach and thrusting power.',                weight: 'medium', scalingAttr: 'attr.might',     damageType: 'physical', range: 'melee' },
+  { id: 'wtype.staff',      name: 'Staff',      icon: '🪄', color: '#8e44ad', description: 'Focusing rods that channel magic; feeble as a bludgeon.',      weight: 'light',  scalingAttr: 'attr.intellect', damageType: 'physical', range: 'melee' },
+  { id: 'wtype.rod',        name: 'Rod',        icon: '🪄', color: '#a29bfe', description: 'Slender wands that amplify arcane precision.',                 weight: 'light',  scalingAttr: 'attr.intellect', damageType: 'physical', range: 'melee' },
+  { id: 'wtype.bow',        name: 'Bow',        icon: '🏹', color: '#27ae60', description: 'Ranged weapons that strike from the back rank unhindered.',    weight: 'medium', scalingAttr: 'attr.agility',   damageType: 'physical', range: 'ranged' },
+  { id: 'wtype.gun',        name: 'Firearm',    icon: '🔫', color: '#636e72', description: 'Sidearms that reach across the field with agile precision.',    weight: 'medium', scalingAttr: 'attr.agility',   damageType: 'physical', range: 'ranged' },
+  { id: 'wtype.heavy_gun',  name: 'Heavy Gun',  icon: '🔫', color: '#2d3436', description: 'Two-handed firearms — devastating but cumbersome.',            weight: 'heavy',  scalingAttr: 'attr.agility',   damageType: 'physical', range: 'ranged' },
+]
+
+export const DEFAULT_ARMOR_TYPES: ArmorTypeDef[] = [
+  { id: 'atype.light',   name: 'Light Armor',  icon: '🥋', color: '#b07d4a', description: 'Leathers and padding — freedom of movement over protection.', weight: 'light' },
+  { id: 'atype.medium',  name: 'Medium Armor', icon: '🛡️', color: '#b2bec3', description: 'Mail and scale — a balance of guard and mobility.',           weight: 'medium', speedMod: -1 },
+  { id: 'atype.heavy',   name: 'Heavy Armor',  icon: '🛡️', color: '#636e72', description: 'Plate — maximum protection at the cost of initiative.',        weight: 'heavy',  speedMod: -2 },
+  { id: 'atype.robe',    name: 'Robe',         icon: '👘', color: '#6c5ce7', description: "A spellcaster's vestments — no burden on the arcane.",         weight: 'light' },
+  { id: 'atype.buckler', name: 'Buckler',      icon: '🛡️', color: '#b07d4a', description: 'A small light shield strapped to the forearm.',                weight: 'light' },
+  { id: 'atype.shield',  name: 'Shield',       icon: '🛡️', color: '#b2bec3', description: 'A full shield — sturdy cover that slows the guard.',            weight: 'medium', speedMod: -1 },
 ]
 
 // ── Races ──────────────────────────────────────────────────────────────────────
@@ -667,24 +689,21 @@ export const DEFAULT_ITEMS: ItemDef[] = [
   {
     id: 'item.shortsword', name: 'Shortsword', icon: '🗡️', color: '#b2bec3',
     description: 'A simple one-handed blade. Reliable and easy to use.',
-    kind: 'weapon', slot: 'weapon', weaponKind: 'blade',
-    weight: 'medium',
+    kind: 'weapon', slot: 'weapon', weaponType: 'wtype.sword',
     value: 150, stackable: false,
     modifiers: [{ target: 'attribute', key: 'might', op: 'add', amount: 2 }],
   },
   {
     id: 'item.longsword', name: 'Longsword', icon: '⚔️', color: '#dfe6e9',
     description: 'A well-balanced blade with excellent reach.',
-    kind: 'weapon', slot: 'weapon', weaponKind: 'blade',
-    weight: 'medium',
+    kind: 'weapon', slot: 'weapon', weaponType: 'wtype.sword',
     value: 400, stackable: false,
     modifiers: [{ target: 'attribute', key: 'might', op: 'add', amount: 4 }],
   },
   {
     id: 'item.katana', name: 'Katana', icon: '⚔️', color: '#e17055',
     description: 'A razor-sharp curved blade of superior craftsmanship.',
-    kind: 'weapon', slot: 'weapon', weaponKind: 'blade', twoHanded: true,
-    weight: 'medium',
+    kind: 'weapon', slot: 'weapon', weaponType: 'wtype.katana', twoHanded: true,
     value: 900, stackable: false,
     modifiers: [
       { target: 'attribute', key: 'might', op: 'add', amount: 6 },
@@ -694,8 +713,7 @@ export const DEFAULT_ITEMS: ItemDef[] = [
   {
     id: 'item.zweihander', name: 'Zweihänder', icon: '⚔️', color: '#636e72',
     description: 'A massive two-handed greatsword. Devastating but slow.',
-    kind: 'weapon', slot: 'weapon', weaponKind: 'blade', twoHanded: true,
-    weight: 'heavy',
+    kind: 'weapon', slot: 'weapon', weaponType: 'wtype.greatsword', twoHanded: true,
     value: 1200, stackable: false,
     modifiers: [
       { target: 'attribute', key: 'might', op: 'add', amount: 10 },
@@ -705,24 +723,21 @@ export const DEFAULT_ITEMS: ItemDef[] = [
   {
     id: 'item.battle_axe', name: 'Battle Axe', icon: '🪓', color: '#b07d4a',
     description: 'A heavy war axe that cleaves through armor.',
-    kind: 'weapon', slot: 'weapon', weaponKind: 'axe', twoHanded: true,
-    weight: 'heavy',
+    kind: 'weapon', slot: 'weapon', weaponType: 'wtype.axe', twoHanded: true,
     value: 500, stackable: false,
     modifiers: [{ target: 'attribute', key: 'might', op: 'add', amount: 7 }],
   },
   {
     id: 'item.mace', name: 'Mace', icon: '🔨', color: '#a0522d',
     description: 'A flanged mace blessed against the undead.',
-    kind: 'weapon', slot: 'weapon', weaponKind: 'mace',
-    weight: 'medium',
+    kind: 'weapon', slot: 'weapon', weaponType: 'wtype.mace',
     value: 300, stackable: false,
     modifiers: [{ target: 'attribute', key: 'might', op: 'add', amount: 3 }],
   },
   {
     id: 'item.stiletto', name: 'Stiletto', icon: '🗡️', color: '#2d3436',
     description: 'A slim, fast dagger ideal for precision strikes.',
-    kind: 'weapon', slot: 'weapon', weaponKind: 'dagger',
-    weight: 'light',
+    kind: 'weapon', slot: 'weapon', weaponType: 'wtype.dagger',
     value: 250, stackable: false,
     modifiers: [
       { target: 'attribute', key: 'might', op: 'add', amount: 2 },
@@ -732,8 +747,7 @@ export const DEFAULT_ITEMS: ItemDef[] = [
   {
     id: 'item.kris_knife', name: 'Kris Knife', icon: '🗡️', color: '#6c5ce7',
     description: 'A wavy-bladed ritual dagger. Said to carry dark power.',
-    kind: 'weapon', slot: 'weapon', weaponKind: 'dagger',
-    weight: 'light',
+    kind: 'weapon', slot: 'weapon', weaponType: 'wtype.dagger',
     value: 700, stackable: false,
     modifiers: [
       { target: 'attribute', key: 'might', op: 'add', amount: 4 },
@@ -743,8 +757,7 @@ export const DEFAULT_ITEMS: ItemDef[] = [
   {
     id: 'item.staff_fire', name: 'Flame Staff', icon: '🔥', color: '#e74c3c',
     description: 'A staff imbued with fire magic. Boosts arcane and elemental power.',
-    kind: 'weapon', slot: 'weapon', weaponKind: 'staff',
-    weight: 'light',
+    kind: 'weapon', slot: 'weapon', weaponType: 'wtype.staff',
     value: 650, stackable: false,
     modifiers: [
       { target: 'attribute', key: 'intellect', op: 'add', amount: 5 },
@@ -754,8 +767,7 @@ export const DEFAULT_ITEMS: ItemDef[] = [
   {
     id: 'item.staff_frost', name: 'Frost Staff', icon: '❄️', color: '#74b9ff',
     description: 'A staff channelling frozen power.',
-    kind: 'weapon', slot: 'weapon', weaponKind: 'staff',
-    weight: 'light',
+    kind: 'weapon', slot: 'weapon', weaponType: 'wtype.staff',
     value: 650, stackable: false,
     modifiers: [
       { target: 'attribute', key: 'intellect', op: 'add', amount: 5 },
@@ -765,16 +777,14 @@ export const DEFAULT_ITEMS: ItemDef[] = [
   {
     id: 'item.wand', name: 'Magic Wand', icon: '🪄', color: '#a29bfe',
     description: 'A simple wand for focusing magical energy.',
-    kind: 'weapon', slot: 'weapon', weaponKind: 'wand',
-    weight: 'light',
+    kind: 'weapon', slot: 'weapon', weaponType: 'wtype.rod',
     value: 200, stackable: false,
     modifiers: [{ target: 'attribute', key: 'intellect', op: 'add', amount: 3 }],
   },
   {
     id: 'item.holy_spear', name: 'Holy Spear', icon: '✝️', color: '#f9ca24',
     description: 'A spear blessed by divine power. Extra effective against the undead.',
-    kind: 'weapon', slot: 'weapon', weaponKind: 'spear', twoHanded: true,
-    weight: 'medium',
+    kind: 'weapon', slot: 'weapon', weaponType: 'wtype.spear', twoHanded: true,
     value: 1800, stackable: false,
     modifiers: [
       { target: 'attribute', key: 'might', op: 'add', amount: 7 },
@@ -784,8 +794,7 @@ export const DEFAULT_ITEMS: ItemDef[] = [
   {
     id: 'item.pistol', name: 'Pistol', icon: '🔫', color: '#636e72',
     description: 'A semi-automatic handgun. Fast and concealable.',
-    kind: 'weapon', slot: 'weapon', weaponKind: 'gun',
-    weight: 'medium',
+    kind: 'weapon', slot: 'weapon', weaponType: 'wtype.gun',
     value: 500, stackable: false,
     modifiers: [
       { target: 'attribute', key: 'agility', op: 'add', amount: 2 },
@@ -795,8 +804,7 @@ export const DEFAULT_ITEMS: ItemDef[] = [
   {
     id: 'item.assault_rifle', name: 'Assault Rifle', icon: '🔫', color: '#2d3436',
     description: 'A military-grade rifle. High damage at range.',
-    kind: 'weapon', slot: 'weapon', weaponKind: 'gun', twoHanded: true,
-    weight: 'heavy',
+    kind: 'weapon', slot: 'weapon', weaponType: 'wtype.heavy_gun', twoHanded: true,
     value: 1500, stackable: false,
     modifiers: [{ target: 'attribute', key: 'might', op: 'add', amount: 8 }],
   },
@@ -804,24 +812,21 @@ export const DEFAULT_ITEMS: ItemDef[] = [
   {
     id: 'item.leather_vest', name: 'Leather Vest', icon: '🥋', color: '#b07d4a',
     description: 'Simple but reliable leather protection.',
-    kind: 'armor', slot: 'body',
-    weight: 'light',
+    kind: 'armor', slot: 'body', armorType: 'atype.light',
     value: 120, stackable: false,
     modifiers: [{ target: 'attribute', key: 'endurance', op: 'add', amount: 2 }],
   },
   {
     id: 'item.chain_mail', name: 'Chain Mail', icon: '🛡️', color: '#b2bec3',
     description: 'Interlocking rings of steel. Moderate protection with decent flexibility.',
-    kind: 'armor', slot: 'body',
-    weight: 'medium',
+    kind: 'armor', slot: 'body', armorType: 'atype.medium',
     value: 400, stackable: false,
     modifiers: [{ target: 'attribute', key: 'endurance', op: 'add', amount: 5 }],
   },
   {
     id: 'item.plate_armor', name: 'Plate Armor', icon: '🛡️', color: '#636e72',
     description: 'Full plate steel armor. Maximum protection, but heavy.',
-    kind: 'armor', slot: 'body',
-    weight: 'heavy',
+    kind: 'armor', slot: 'body', armorType: 'atype.heavy',
     value: 1100, stackable: false,
     modifiers: [
       { target: 'attribute', key: 'endurance', op: 'add', amount: 9 },
@@ -831,8 +836,7 @@ export const DEFAULT_ITEMS: ItemDef[] = [
   {
     id: 'item.mage_robe', name: "Mage's Robe", icon: '👘', color: '#6c5ce7',
     description: 'A robe woven with arcane thread. Boosts magic power.',
-    kind: 'armor', slot: 'body',
-    weight: 'light',
+    kind: 'armor', slot: 'body', armorType: 'atype.robe',
     value: 350, stackable: false,
     modifiers: [
       { target: 'attribute', key: 'intellect', op: 'add', amount: 4 },
@@ -842,8 +846,7 @@ export const DEFAULT_ITEMS: ItemDef[] = [
   {
     id: 'item.shadow_cloak', name: 'Shadow Cloak', icon: '🌑', color: '#2d3436',
     description: 'A cloak that bends shadow. Boosts agility and reduces encounter rate.',
-    kind: 'armor', slot: 'body',
-    weight: 'light',
+    kind: 'armor', slot: 'body', armorType: 'atype.light',
     value: 800, stackable: false,
     modifiers: [
       { target: 'attribute', key: 'agility', op: 'add', amount: 4 },
@@ -853,8 +856,7 @@ export const DEFAULT_ITEMS: ItemDef[] = [
   {
     id: 'item.mythril_vest', name: 'Mythril Vest', icon: '✨', color: '#a29bfe',
     description: 'A lightweight vest of refined mythril. Excellent protection with minimal encumbrance.',
-    kind: 'armor', slot: 'body',
-    weight: 'medium',
+    kind: 'armor', slot: 'body', armorType: 'atype.medium',
     value: 2500, stackable: false,
     modifiers: [
       { target: 'attribute', key: 'endurance', op: 'add', amount: 8 },
@@ -865,24 +867,21 @@ export const DEFAULT_ITEMS: ItemDef[] = [
   {
     id: 'item.buckler', name: 'Buckler', icon: '🛡️', color: '#b07d4a',
     description: 'A small round shield. Easy to wield and reasonably protective.',
-    kind: 'armor', slot: 'offhand',
-    weight: 'light',
+    kind: 'armor', slot: 'offhand', armorType: 'atype.buckler',
     value: 100, stackable: false,
     modifiers: [{ target: 'attribute', key: 'endurance', op: 'add', amount: 2 }],
   },
   {
     id: 'item.heater_shield', name: 'Heater Shield', icon: '🛡️', color: '#b2bec3',
     description: 'A sturdy kite shield offering strong protection.',
-    kind: 'armor', slot: 'offhand',
-    weight: 'medium',
+    kind: 'armor', slot: 'offhand', armorType: 'atype.shield',
     value: 450, stackable: false,
     modifiers: [{ target: 'attribute', key: 'endurance', op: 'add', amount: 5 }],
   },
   {
     id: 'item.mythril_shield', name: 'Mythril Shield', icon: '✨', color: '#74b9ff',
     description: 'A shining mythril shield. Repels dark magic.',
-    kind: 'armor', slot: 'offhand',
-    weight: 'medium',
+    kind: 'armor', slot: 'offhand', armorType: 'atype.shield',
     value: 1800, stackable: false,
     modifiers: [
       { target: 'attribute', key: 'endurance', op: 'add', amount: 7 },
@@ -893,16 +892,14 @@ export const DEFAULT_ITEMS: ItemDef[] = [
   {
     id: 'item.leather_helm', name: 'Leather Helm', icon: '⛑️', color: '#b07d4a',
     description: 'A simple leather cap offering basic head protection.',
-    kind: 'armor', slot: 'head',
-    weight: 'light',
+    kind: 'armor', slot: 'head', armorType: 'atype.light',
     value: 80, stackable: false,
     modifiers: [{ target: 'attribute', key: 'endurance', op: 'add', amount: 1 }],
   },
   {
     id: 'item.iron_helm', name: 'Iron Helm', icon: '⛑️', color: '#636e72',
     description: 'A solid iron helmet.',
-    kind: 'armor', slot: 'head',
-    weight: 'medium',
+    kind: 'armor', slot: 'head', armorType: 'atype.medium',
     value: 250, stackable: false,
     modifiers: [{ target: 'attribute', key: 'endurance', op: 'add', amount: 3 }],
   },
@@ -1574,6 +1571,8 @@ export const DEFAULT_SHOPS: ShopDef[] = [
 export function normalizeRuleset(r: Ruleset): Ruleset {
   return {
     ...r,
+    weaponTypes: r.weaponTypes ?? [],
+    armorTypes: r.armorTypes ?? [],
     items: r.items ?? [],
     spells: r.spells ?? [],
     statusEffects: r.statusEffects ?? [],
@@ -1602,6 +1601,8 @@ export function makeDefaultRuleset(startMapId = 'map1'): Ruleset {
     attributes: DEFAULT_ATTRIBUTES,
     classes: DEFAULT_CLASSES,
     races: DEFAULT_RACES,
+    weaponTypes: DEFAULT_WEAPON_TYPES,
+    armorTypes: DEFAULT_ARMOR_TYPES,
     items: DEFAULT_ITEMS,
     spells: DEFAULT_SPELLS,
     statusEffects: DEFAULT_STATUS_EFFECTS,

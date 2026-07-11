@@ -228,7 +228,7 @@ export function EquipmentPanel({
 
   function equip(slot: ItemSlot, itemId: string) {
     // Proficiency gate — class must be allowed this slot/type/weight
-    const gate = canEquip(cls, itemDef(ruleset, itemId))
+    const gate = canEquip(cls, itemDef(ruleset, itemId), ruleset)
     if (!gate.ok) {
       toast.error(gate.reason ?? `${char.name} can't equip that.`)
       return
@@ -308,7 +308,7 @@ export function EquipmentPanel({
             candidates.map(inst => {
               const def = itemDef(ruleset, inst.def)
               if (!def) return null
-              const gate = canEquip(cls, def)
+              const gate = canEquip(cls, def, ruleset)
               return (
                 <button key={`${inst.def}_${inst.unidentified ? 'u' : 'i'}`}
                   onClick={() => gate.ok && equip(pickSlot, inst.def)} disabled={!gate.ok}

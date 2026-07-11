@@ -99,16 +99,41 @@ export interface ClassDef extends Definition {
   spellDie: number
   spellSchools: string[]
   allowedEquip: ItemSlot[]
-  /** Weapon types this class is proficient with (matched against ItemDef.weaponKind).
-   *  Empty = no per-type restriction. */
-  weaponKinds: string[]
-  /** Weapon weight tiers this class may wield. Absent = all. */
-  weaponWeights?: EquipWeight[]
-  /** Armor weight tiers this class may wear. Absent = all. */
-  armorWeights?: EquipWeight[]
+  /** Weapon types this class is proficient with (WeaponTypeDef ids).
+   *  Empty = no per-type restriction (any weapon type). */
+  weaponTypes: DefRef<WeaponTypeDef>[]
+  /** Armor types this class may wear (ArmorTypeDef ids).
+   *  Absent/empty = no per-type restriction (any armor type). */
+  armorTypes?: DefRef<ArmorTypeDef>[]
   startingSpells?: DefRef<SpellDef>[]
   attrGrowth: Partial<Record<string, number>>
   attrModifiers: Partial<Record<string, number>>
+}
+
+/** A weapon archetype (sword, bow, staff…). Individual weapon items reference
+ *  a type by id; the type carries the shared, category-level behaviour that
+ *  feeds both equip-gating and combat. */
+export interface WeaponTypeDef extends Definition {
+  /** Weight tier — every weapon of this type shares it (gated per class). */
+  weight: EquipWeight
+  /** Attribute id whose value scales this weapon's basic-attack damage
+   *  (e.g. 'attr.might' for swords, 'attr.agility' for bows). */
+  scalingAttr: string
+  /** Damage element dealt on a basic attack. Individual items may override. */
+  damageType: DamageType
+  /** Melee weapons take/deal back-rank penalties; ranged ignore them. */
+  range: 'melee' | 'ranged'
+}
+
+/** An armor archetype (light armor, plate, robe, shield…). Armor items
+ *  reference a type by id; the type carries the shared weight tier and any
+ *  passive combat effect (e.g. heavy armor's initiative penalty). */
+export interface ArmorTypeDef extends Definition {
+  /** Weight tier — every piece of this type shares it (gated per class). */
+  weight: EquipWeight
+  /** Flat speed/initiative modifier while any piece of this type is worn
+   *  (heavy armor is typically negative). Absent = 0. */
+  speedMod?: number
 }
 
 export interface RaceDef extends Definition {
@@ -120,10 +145,15 @@ export interface RaceDef extends Definition {
 export interface ItemDef extends Definition {
   kind: ItemKind
   slot?: ItemSlot
-  weaponKind?: string
-  /** Weight tier for weapons/armor — gated against the class's allowed weights.
-   *  Absent (and all accessories) = no weight restriction. */
-  weight?: EquipWeight
+  /** Weapons: the WeaponTypeDef this item belongs to (drives weight, scaling,
+   *  damage element, range, and class proficiency). */
+  weaponType?: DefRef<WeaponTypeDef>
+  /** Armor: the ArmorTypeDef this item belongs to (drives weight, passive
+   *  effects, and class proficiency). */
+  armorType?: DefRef<ArmorTypeDef>
+  /** Weapons: overrides the weapon type's damage element for this item only
+   *  (e.g. a Flamebrand sword that deals fire). Absent = the type's default. */
+  damageType?: DamageType
   modifiers?: StatModifier[]
   onUse?: Effect[]
   value: number
@@ -334,6 +364,8 @@ export interface Ruleset {
   attributes: AttributeDef[]
   classes: ClassDef[]
   races: RaceDef[]
+  weaponTypes: WeaponTypeDef[]
+  armorTypes: ArmorTypeDef[]
   items: ItemDef[]
   spells: SpellDef[]
   statusEffects: StatusEffectDef[]

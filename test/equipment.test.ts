@@ -1,6 +1,7 @@
 /**
- * Equip proficiency gate — canEquip() enforces slot, weapon-type, and weight
- * (heavy/medium/light) restrictions FF-style.
+ * Equip proficiency gate — canEquip() enforces slot plus per-type proficiency
+ * for weapons (WeaponTypeDef) and armor (ArmorTypeDef). Weight lives on the
+ * type, so weight proficiency is expressed by which types a class lists.
  * Run with:  tsx test/equipment.test.ts
  */
 
@@ -25,7 +26,6 @@ const byId = <T extends { id: string }>(arr: T[], id: string): T => {
 const fighter = byId(ruleset.classes, 'class.fighter')
 const mage = byId(ruleset.classes, 'class.mage')
 
-// Minimal ad-hoc defs so the test doesn't depend on exact default-ruleset item ids.
 function weapon(over: Partial<ItemDef> = {}): ItemDef {
   return { id: 'w', name: 'Test Weapon', kind: 'weapon', slot: 'weapon', value: 10, stackable: false, ...over }
 }
@@ -40,69 +40,68 @@ test('non-equippable item (no slot) is rejected', () => {
 })
 
 test('undefined class allows any equippable item', () => {
-  assert.equal(canEquip(undefined, weapon({ weight: 'heavy' })).ok, true)
+  assert.equal(canEquip(undefined, weapon({ weaponType: 'wtype.greatsword' })).ok, true)
 })
 
 test('slot not in allowedEquip is rejected', () => {
-  // A class that only allows the weapon slot
   const cls: ClassDef = { ...fighter, allowedEquip: ['weapon'] }
-  const res = canEquip(cls, armor())
+  const res = canEquip(cls, armor({ armorType: 'atype.light' }))
   assert.equal(res.ok, false)
   assert.match(res.reason ?? '', /slot/i)
 })
 
 test('weapon-type proficiency is enforced', () => {
-  const cls: ClassDef = { ...fighter, weaponKinds: ['sword'] }
-  assert.equal(canEquip(cls, weapon({ weaponKind: 'sword' })).ok, true)
-  const res = canEquip(cls, weapon({ weaponKind: 'axe' }))
+  const cls: ClassDef = { ...fighter, weaponTypes: ['wtype.sword'] }
+  assert.equal(canEquip(cls, weapon({ weaponType: 'wtype.sword' })).ok, true)
+  const res = canEquip(cls, weapon({ weaponType: 'wtype.axe' }), ruleset)
   assert.equal(res.ok, false)
-  assert.match(res.reason ?? '', /axe/i)
+  // reason resolves the type name from the ruleset
+  assert.match(res.reason ?? '', /Axe/)
 })
 
-test('empty weaponKinds means no weapon-type restriction', () => {
-  const cls: ClassDef = { ...fighter, weaponKinds: [] }
-  assert.equal(canEquip(cls, weapon({ weaponKind: 'axe' })).ok, true)
+test('empty weaponTypes means no weapon-type restriction', () => {
+  const cls: ClassDef = { ...fighter, weaponTypes: [] }
+  assert.equal(canEquip(cls, weapon({ weaponType: 'wtype.axe' })).ok, true)
 })
 
-test('weapon weight tier is enforced', () => {
-  const cls: ClassDef = { ...mage, weaponKinds: [], weaponWeights: ['light'] }
-  assert.equal(canEquip(cls, weapon({ weight: 'light' })).ok, true)
-  const res = canEquip(cls, weapon({ weight: 'heavy' }))
+test('armor-type proficiency is enforced', () => {
+  const cls: ClassDef = { ...fighter, allowedEquip: ['body'], armorTypes: ['atype.light'] }
+  assert.equal(canEquip(cls, armor({ armorType: 'atype.light' })).ok, true)
+  const res = canEquip(cls, armor({ armorType: 'atype.heavy' }), ruleset)
   assert.equal(res.ok, false)
-  assert.match(res.reason ?? '', /heavy/i)
+  assert.match(res.reason ?? '', /Heavy Armor/)
 })
 
-test('armor weight tier is enforced separately from weapons', () => {
-  const cls: ClassDef = { ...fighter, armorWeights: ['light'], weaponWeights: ['heavy'] }
-  assert.equal(canEquip(cls, armor({ weight: 'light' })).ok, true)
-  assert.equal(canEquip(cls, armor({ weight: 'heavy' })).ok, false)
-  // Weapon weight list must not gate armor and vice-versa
-  assert.equal(canEquip(cls, weapon({ weaponKind: undefined, weight: 'heavy' })).ok, true)
+test('absent/empty armorTypes means no armor-type restriction', () => {
+  const cls: ClassDef = { ...fighter, allowedEquip: ['body'], armorTypes: undefined }
+  assert.equal(canEquip(cls, armor({ armorType: 'atype.heavy' })).ok, true)
+  const cls2: ClassDef = { ...fighter, allowedEquip: ['body'], armorTypes: [] }
+  assert.equal(canEquip(cls2, armor({ armorType: 'atype.heavy' })).ok, true)
 })
 
-test('absent weight list means all weights allowed', () => {
-  const cls: ClassDef = { ...fighter, weaponWeights: undefined, armorWeights: undefined }
-  assert.equal(canEquip(cls, weapon({ weaponKind: undefined, weight: 'heavy' })).ok, true)
-  assert.equal(canEquip(cls, armor({ weight: 'heavy' })).ok, true)
+test('untyped weapon/armor is unrestricted by proficiency', () => {
+  const cls: ClassDef = { ...mage, allowedEquip: ['weapon', 'body'], weaponTypes: ['wtype.staff'], armorTypes: ['atype.robe'] }
+  assert.equal(canEquip(cls, weapon({ weaponType: undefined })).ok, true)
+  assert.equal(canEquip(cls, armor({ armorType: undefined })).ok, true)
 })
 
-test('untagged (no weight) weapon/armor is always allowed by weight', () => {
-  const cls: ClassDef = { ...mage, allowedEquip: ['weapon', 'body'], weaponKinds: [], weaponWeights: ['light'], armorWeights: ['light'] }
-  assert.equal(canEquip(cls, weapon({ weight: undefined })).ok, true)
-  assert.equal(canEquip(cls, armor({ weight: undefined })).ok, true)
-})
-
-test('accessories bypass weight even when tagged', () => {
-  // Accessories (rings/amulets) are kind 'misc' — weight only gates weapon/armor kinds
-  const cls: ClassDef = { ...mage, allowedEquip: ['ring'], weaponWeights: ['light'], armorWeights: ['light'] }
-  const ring: ItemDef = { id: 'r', name: 'Ring', kind: 'misc', slot: 'ring', weight: 'heavy', value: 100, stackable: false }
+test('accessories bypass type proficiency entirely', () => {
+  const cls: ClassDef = { ...mage, allowedEquip: ['ring'], weaponTypes: ['wtype.staff'], armorTypes: ['atype.robe'] }
+  const ring: ItemDef = { id: 'r', name: 'Ring', kind: 'misc', slot: 'ring', value: 100, stackable: false }
   assert.equal(canEquip(cls, ring).ok, true)
 })
 
-test('default fighter can equip heavy, mage cannot', () => {
-  assert.equal(canEquip(fighter, weapon({ weaponKind: undefined, weight: 'heavy' })).ok, true)
-  const mageHeavy = canEquip(mage, weapon({ weaponKind: undefined, weight: 'heavy' }))
-  assert.equal(mageHeavy.ok, false)
+test('default fighter wields greatswords, mage cannot', () => {
+  assert.equal(canEquip(fighter, weapon({ weaponType: 'wtype.greatsword' })).ok, true)
+  const mageGreat = canEquip(mage, weapon({ weaponType: 'wtype.greatsword' }), ruleset)
+  assert.equal(mageGreat.ok, false)
+})
+
+test('default mage wears robes but not plate', () => {
+  const robe = byId(ruleset.items, 'item.mage_robe')
+  const plate = byId(ruleset.items, 'item.plate_armor')
+  assert.equal(canEquip(mage, robe, ruleset).ok, true)
+  assert.equal(canEquip(mage, plate, ruleset).ok, false)
 })
 
 console.log(`\n${passed} equipment tests passed`)

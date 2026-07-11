@@ -1035,7 +1035,7 @@ export function buildGeneratedWorld(name: string, config: NewMapConfig, ruleset:
       {
         id: bladeId, name: 'Heartsbane Blade', icon: '🗡️', color: '#7c3aed',
         description: 'A blade that drinks. It does not let go.', kind: 'weapon',
-        slot: 'weapon', weaponKind: 'sword', value: 400, stackable: false,
+        slot: 'weapon', weaponType: 'wtype.sword', value: 400, stackable: false,
         unidentifiedName: '?Blade', cursed: true,
         modifiers: [{ target: 'derived', key: 'attack', op: 'add', amount: 8 }],
       },

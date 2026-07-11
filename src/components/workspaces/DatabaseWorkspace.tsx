@@ -3,7 +3,7 @@
 import { Fragment, useState } from 'react'
 import { Plus, Trash2, Package, List, Skull, Swords, Sparkles, Zap, Store, Puzzle, ScrollText, Shield } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import type { ClassDef, EquipWeight, ItemSlot, Effect, EnemyDef, EncounterTableDef, EventDef, ItemDef, LootTableDef, QuestDef, ShopDef, SpellDef, StatusEffectDef, Ruleset } from '@/lib/engine-types'
+import type { ClassDef, ItemSlot, Effect, EnemyDef, EncounterTableDef, EventDef, ItemDef, LootTableDef, QuestDef, ShopDef, SpellDef, StatusEffectDef, Ruleset } from '@/lib/engine-types'
 import { CLASS_SCHEMA, blankClass } from '@/lib/class-schema'
 import { EVENT_SCHEMA, QUEST_SCHEMA, blankEventDef, blankQuest } from '@/lib/npc-schema'
 import { ConditionBuilder } from '@/components/CellInspector'
@@ -997,9 +997,6 @@ const SLOT_OPTIONS: { slot: ItemSlot; label: string }[] = [
   { slot: 'ring', label: 'Ring' },
   { slot: 'amulet', label: 'Amulet' },
 ]
-const WEIGHT_OPTIONS: EquipWeight[] = ['heavy', 'medium', 'light']
-const COMMON_WEAPON_KINDS = ['blade', 'axe', 'mace', 'dagger', 'staff', 'wand', 'spear', 'gun', 'bow']
-
 function Chip({ active, label, onClick }: { active: boolean; label: string; onClick: () => void }) {
   return (
     <button
@@ -1068,21 +1065,26 @@ function ClassEditor({ cls, ruleset, onChange }: {
     const has = cls.allowedEquip.includes(slot)
     onChange({ ...cls, allowedEquip: has ? cls.allowedEquip.filter(s => s !== slot) : [...cls.allowedEquip, slot] })
   }
-  function setRestrict(field: 'weaponWeights' | 'armorWeights', on: boolean) {
-    onChange({ ...cls, [field]: on ? [...WEIGHT_OPTIONS] : undefined })
+  function toggleWeaponType(id: string) {
+    const has = cls.weaponTypes.includes(id)
+    onChange({ ...cls, weaponTypes: has ? cls.weaponTypes.filter(t => t !== id) : [...cls.weaponTypes, id] })
   }
-  function toggleWeight(field: 'weaponWeights' | 'armorWeights', w: EquipWeight) {
-    const cur = cls[field]
-    if (!cur) return
-    const has = cur.includes(w)
-    onChange({ ...cls, [field]: has ? cur.filter(x => x !== w) : [...cur, w] })
+  function toggleArmorType(id: string) {
+    const cur = cls.armorTypes ?? []
+    const has = cur.includes(id)
+    onChange({ ...cls, armorTypes: has ? cur.filter(t => t !== id) : [...cur, id] })
   }
   function setAttr(field: 'attrModifiers' | 'attrGrowth', attrId: string, val: number) {
+    // Store under the full attribute id, clearing any legacy short-key duplicate
+    const short = attrId.replace('attr.', '')
     const next = { ...cls[field] }
+    delete next[short]
     if (!val || Number.isNaN(val)) delete next[attrId]
     else next[attrId] = val
     onChange({ ...cls, [field]: next })
   }
+  const attrVal = (map: Partial<Record<string, number>>, attrId: string) =>
+    map[attrId] ?? map[attrId.replace('attr.', '')] ?? ''
   function toggleStartingSpell(id: string) {
     const cur = cls.startingSpells ?? []
     const has = cur.includes(id)
@@ -1090,22 +1092,7 @@ function ClassEditor({ cls, ruleset, onChange }: {
     onChange({ ...cls, startingSpells: next.length ? next : undefined })
   }
 
-  const weightBlock = (field: 'weaponWeights' | 'armorWeights', label: string) => {
-    const cur = cls[field]
-    return (
-      <div>
-        <label className="flex items-center gap-1.5 text-xs font-medium text-white/60 mb-1 cursor-pointer">
-          <input type="checkbox" checked={cur !== undefined} onChange={e => setRestrict(field, e.target.checked)} />
-          Restrict {label} weight {cur === undefined && <span className="text-white/30">(any allowed)</span>}
-        </label>
-        {cur !== undefined && (
-          <div className="flex flex-wrap gap-1 pl-5">
-            {WEIGHT_OPTIONS.map(w => <Chip key={w} active={cur.includes(w)} label={w} onClick={() => toggleWeight(field, w)} />)}
-          </div>
-        )}
-      </div>
-    )
-  }
+  const armorTypes = cls.armorTypes ?? []
 
   return (
     <div className="p-4 space-y-4 overflow-y-auto h-full">
@@ -1129,17 +1116,38 @@ function ClassEditor({ cls, ruleset, onChange }: {
         </div>
       </div>
 
-      {/* Weight tiers */}
-      <div className="pt-2 border-t border-white/10 space-y-2.5">
-        {weightBlock('weaponWeights', 'weapon')}
-        {weightBlock('armorWeights', 'armor')}
+      {/* Weapon proficiency (by type) */}
+      <div className="pt-2 border-t border-white/10">
+        <div className="text-xs font-medium text-white/60 mb-1">
+          Weapon Types <span className="text-white/30">(none selected = any)</span>
+        </div>
+        {ruleset.weaponTypes.length === 0 ? (
+          <div className="text-xs text-white/25">No weapon types defined — add some in the Weapon Types tab.</div>
+        ) : (
+          <div className="flex flex-wrap gap-1">
+            {ruleset.weaponTypes.map(wt => (
+              <Chip key={wt.id} active={cls.weaponTypes.includes(wt.id)}
+                label={`${wt.icon ?? '⚔️'} ${wt.name} · ${wt.weight}`} onClick={() => toggleWeaponType(wt.id)} />
+            ))}
+          </div>
+        )}
       </div>
 
-      {/* Weapon proficiency */}
+      {/* Armor proficiency (by type) */}
       <div className="pt-2 border-t border-white/10">
-        <TagRow label="Weapon Proficiency (empty = any type)" tags={cls.weaponKinds}
-          suggestions={COMMON_WEAPON_KINDS} placeholder="add weapon type…"
-          onChange={next => onChange({ ...cls, weaponKinds: next })} />
+        <div className="text-xs font-medium text-white/60 mb-1">
+          Armor Types <span className="text-white/30">(none selected = any)</span>
+        </div>
+        {ruleset.armorTypes.length === 0 ? (
+          <div className="text-xs text-white/25">No armor types defined — add some in the Armor Types tab.</div>
+        ) : (
+          <div className="flex flex-wrap gap-1">
+            {ruleset.armorTypes.map(at => (
+              <Chip key={at.id} active={armorTypes.includes(at.id)}
+                label={`${at.icon ?? '🛡️'} ${at.name} · ${at.weight}`} onClick={() => toggleArmorType(at.id)} />
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Spell schools */}
@@ -1159,10 +1167,10 @@ function ClassEditor({ cls, ruleset, onChange }: {
           {ruleset.attributes.map(attr => (
             <Fragment key={attr.id}>
               <div className="text-xs text-white/70">{attr.name}</div>
-              <input type="number" value={cls.attrModifiers[attr.id] ?? ''} placeholder="0"
+              <input type="number" value={attrVal(cls.attrModifiers, attr.id)} placeholder="0"
                 onChange={e => setAttr('attrModifiers', attr.id, parseInt(e.target.value, 10))}
                 className="w-16 px-1.5 py-0.5 rounded bg-zinc-900 border border-white/10 text-xs text-white/85 text-center focus:outline-none focus:border-amber-500/40" />
-              <input type="number" value={cls.attrGrowth[attr.id] ?? ''} placeholder="0"
+              <input type="number" value={attrVal(cls.attrGrowth, attr.id)} placeholder="0"
                 onChange={e => setAttr('attrGrowth', attr.id, parseInt(e.target.value, 10))}
                 className="w-16 px-1.5 py-0.5 rounded bg-zinc-900 border border-white/10 text-xs text-white/85 text-center focus:outline-none focus:border-amber-500/40" />
             </Fragment>

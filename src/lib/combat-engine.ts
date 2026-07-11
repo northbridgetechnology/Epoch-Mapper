@@ -41,6 +41,12 @@ export interface CombatActor {
   /** Damage-type reduction fractions (negative = weakness, ≥1 = immune).
    *  Enemies: from EnemyDef.resistances; party: from RaceDef.resistances. */
   resistances?: Partial<Record<string, number>>
+  /** Damage element of this actor's basic attack (from the equipped weapon's
+   *  type, or an item override). Absent = 'physical'. */
+  weaponDamageType?: string
+  /** Reach of this actor's basic attack. Ranged attacks ignore back-rank
+   *  penalties. Absent = 'melee'. */
+  weaponRange?: 'melee' | 'ranged'
 }
 
 /** A discrete thing that happened during one action — drives view feedback
@@ -127,6 +133,13 @@ function rollDice(dice: number | string, rng: () => number): number {
 
 // ── Actor construction ────────────────────────────────────────────────────────
 
+/** Character attribute maps are keyed inconsistently across the codebase —
+ *  runtime characters use the full id ('attr.might') while some seed data uses
+ *  the short form ('might'). Read an attribute robustly under either key. */
+function readAttr(attrs: Record<string, number>, attrId: string, fallback: number): number {
+  return attrs[attrId] ?? attrs[attrId.replace('attr.', '')] ?? fallback
+}
+
 function partyActorFromChar(
   char: Character,
   originalIdx: number,
@@ -137,6 +150,7 @@ function partyActorFromChar(
   // derived modifiers (attack/defense/speed) adjust the computed values
   const attrs: Record<string, number> = { ...char.attributes }
   const derived: { key: string; op: 'add' | 'mul'; amount: number }[] = []
+  let armorSpeedMod = 0
   for (const inst of Object.values(char.equipment ?? {})) {
     if (!inst) continue
     const item = ruleset?.items.find(i => i.id === inst.def)
@@ -149,10 +163,24 @@ function partyActorFromChar(
         derived.push(m)
       }
     }
+    // Armor pieces carry a passive initiative modifier via their type
+    if (item?.kind === 'armor' && item.armorType) {
+      armorSpeedMod += ruleset?.armorTypes.find(t => t.id === item.armorType)?.speedMod ?? 0
+    }
   }
-  let attack = (attrs['might'] ?? 10) + Math.floor(char.level * 0.5)
-  let defense = Math.floor((attrs['endurance'] ?? 10) / 2)
-  let speed = attrs['agility'] ?? 10
+
+  // The equipped weapon's type drives which attribute scales attack, the basic
+  // attack's damage element, and its reach (melee/ranged).
+  const weaponInst = char.equipment?.weapon
+  const weaponItem = weaponInst ? ruleset?.items.find(i => i.id === weaponInst.def) : undefined
+  const wtype = weaponItem?.weaponType ? ruleset?.weaponTypes.find(t => t.id === weaponItem.weaponType) : undefined
+  const scalingAttrId = wtype?.scalingAttr ?? 'attr.might'
+  const weaponDamageType = weaponItem?.damageType ?? wtype?.damageType ?? 'physical'
+  const weaponRange: 'melee' | 'ranged' = wtype?.range ?? 'melee'
+
+  let attack = readAttr(attrs, scalingAttrId, 10) + Math.floor(char.level * 0.5)
+  let defense = Math.floor(readAttr(attrs, 'attr.endurance', 10) / 2)
+  let speed = readAttr(attrs, 'attr.agility', 10) + armorSpeedMod
   for (const m of derived) {
     if (m.key === 'attack')       attack  = m.op === 'mul' ? Math.round(attack * m.amount)  : attack + m.amount
     else if (m.key === 'defense') defense = m.op === 'mul' ? Math.round(defense * m.amount) : defense + m.amount
@@ -176,6 +204,8 @@ function partyActorFromChar(
     statuses: char.statuses ?? [],
     rank,
     resistances: ruleset?.races.find(r => r.id === char.raceId)?.resistances,
+    weaponDamageType,
+    weaponRange,
   }
 }
 
@@ -424,12 +454,16 @@ function calcHit(
   const base = Math.max(1, attacker.attack - Math.floor(defender.defense / 2))
   const variance = rng() * t.variance
   let raw = Math.max(1, Math.round(base * (1 + variance) * (crit ? t.critMult : 1)))
-  // Row rules: melee dealt from the back rank and melee taken in the back
-  // rank are each reduced (spells/effects ignore rank)
-  if (attacker.rank === 1) raw = Math.max(1, Math.floor(raw * t.backRankMeleeMult))
-  if (defender.rank === 1) raw = Math.max(1, Math.floor(raw * t.backRankMeleeMult))
-  // Physical resistance (negative = weakness, ≥1 = immune)
-  const resist = defender.resistances?.['physical'] ?? 0
+  // Row rules: melee dealt from the back rank and melee taken in the back rank
+  // are each reduced. Ranged weapons (bows/guns) ignore rank entirely; spells
+  // and effects also ignore rank (handled elsewhere).
+  const isMelee = (attacker.weaponRange ?? 'melee') === 'melee'
+  if (isMelee && attacker.rank === 1) raw = Math.max(1, Math.floor(raw * t.backRankMeleeMult))
+  if (isMelee && defender.rank === 1) raw = Math.max(1, Math.floor(raw * t.backRankMeleeMult))
+  // Elemental resistance keyed to the weapon's damage type (negative = weakness,
+  // ≥1 = immune). Most weapons are 'physical'; a Flamebrand deals 'fire', etc.
+  const dmgType = attacker.weaponDamageType ?? 'physical'
+  const resist = defender.resistances?.[dmgType] ?? 0
   raw = Math.max(0, Math.round(raw * (1 - resist)))
   const damage = defender.defending && raw > 0 ? Math.max(1, Math.floor(raw * t.defendMult)) : raw
   return { damage, crit, miss: false, weak: resist < 0, resisted: resist > 0 }
