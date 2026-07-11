@@ -221,6 +221,30 @@ export interface EnemyDef extends Definition {
 
 export interface EncounterTableDef extends Definition {
   entries: { enemy: DefRef<EnemyDef>; min: number; max: number; weight: number }[]
+  /** Custom battle music for this specific fight (AudioTrackDef id). Overrides
+   *  the generic battle/boss track. Absent = use the global battle/boss track. */
+  musicId?: DefRef<AudioTrackDef>
+  /** Marks this as a boss fight — resolves to the global boss track (and, on
+   *  the map, may drive other boss-only behaviour later). */
+  boss?: boolean
+}
+
+/** A looping background-music track. The bytes never live in the ruleset JSON:
+ *  uploaded tracks are stored in IndexedDB (keyed by this id) and baked into the
+ *  .epochmap on export; 'url' tracks stream from an external address. */
+export interface AudioTrackDef extends Definition {
+  /** 'upload' = blob in IndexedDB under this id (baked on export);
+   *  'url' = streamed from `src`. */
+  source: 'upload' | 'url'
+  /** For 'url': the external address. For 'upload': the original filename
+   *  (informational — the blob is keyed by id, not by this). */
+  src?: string
+  /** MIME type of an uploaded blob (e.g. 'audio/ogg'). Informational. */
+  mime?: string
+  /** Loop seamlessly (default true — it's background music). */
+  loop?: boolean
+  /** Baseline gain 0..1 applied before the player's master volume (default 1). */
+  volume?: number
 }
 
 export interface LootTableDef extends Definition {
@@ -324,6 +348,14 @@ export interface GameMeta {
   attrMethod?: 'fixed' | 'pointBuy'
   /** Points the player distributes in point-buy (default 10). */
   pointBuyPool?: number
+  /** Default background track (AudioTrackDef id) — plays on the title screen
+   *  and on any map without its own musicId. */
+  defaultMusicId?: DefRef<AudioTrackDef>
+  /** Generic battle track — plays for normal encounters. */
+  battleMusicId?: DefRef<AudioTrackDef>
+  /** Generic boss track — plays for encounters flagged boss (unless the
+   *  encounter carries its own custom musicId). */
+  bossMusicId?: DefRef<AudioTrackDef>
 }
 
 /** A short, paced intro shown once when starting a new game. */
@@ -366,6 +398,7 @@ export interface Ruleset {
   races: RaceDef[]
   weaponTypes: WeaponTypeDef[]
   armorTypes: ArmorTypeDef[]
+  audioTracks: AudioTrackDef[]
   items: ItemDef[]
   spells: SpellDef[]
   statusEffects: StatusEffectDef[]

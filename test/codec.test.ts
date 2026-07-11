@@ -125,6 +125,25 @@ test('door boundary round-trips with state', () => {
   assert.deepEqual(back.maps[0].boundaries?.['0,0:E'], { door: { state: 'locked', keyItem: 'gold-key' } })
 })
 
+test('per-level musicId and baked audio blobs round-trip', () => {
+  const file: EpochmapFile = {
+    version: 2,
+    gameTitle: '',
+    romHash: '',
+    customMarkers: [],
+    maps: [{
+      id: 'm', name: 'Cavern', playerX: 0, playerY: 0,
+      cells: { '0,0': { base: 1, overlays: [] } },
+      revealedChunks: ['0,0'],
+      musicId: 'trk.cave_theme',
+    }],
+    audioBlobs: { 'trk.cave_theme': 'QUJDRA==' }, // base64 of "ABCD"
+  }
+  const back = parseDotEpochmap(serializeDotEpochmap(file))
+  assert.equal(back.maps[0].musicId, 'trk.cave_theme')
+  assert.equal(back.audioBlobs?.['trk.cave_theme'], 'QUJDRA==')
+})
+
 test('v2 keeps only the first overlay per cell (documented limitation)', () => {
   const file: EpochmapFile = {
     version: 2,

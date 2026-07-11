@@ -263,11 +263,13 @@ export function serializeDotEpochmap(file: EpochmapFile): Uint8Array {
     ruleset?: Ruleset
     mapEntities?: Array<Record<string, CellEntity[]>>
     mapBoundaries?: Array<Record<string, BoundaryData>>
-    mapMeta?: Array<{ theme?: string; dark?: boolean; seed?: number }>
+    mapMeta?: Array<{ theme?: string; dark?: boolean; seed?: number; musicId?: string }>
+    audioBlobs?: Record<string, string>
   } = {}
   if (file.ruleset) v2ext.ruleset = file.ruleset
-  const mapMeta = maps.map(m => ({ theme: m.theme, dark: m.dark, seed: m.seed }))
-  if (mapMeta.some(m => m.theme !== undefined || m.dark !== undefined || m.seed !== undefined)) v2ext.mapMeta = mapMeta
+  if (file.audioBlobs && Object.keys(file.audioBlobs).length > 0) v2ext.audioBlobs = file.audioBlobs
+  const mapMeta = maps.map(m => ({ theme: m.theme, dark: m.dark, seed: m.seed, musicId: m.musicId }))
+  if (mapMeta.some(m => m.theme !== undefined || m.dark !== undefined || m.seed !== undefined || m.musicId !== undefined)) v2ext.mapMeta = mapMeta
   const mapEntities: Array<Record<string, CellEntity[]>> = maps.map(map => {
     const ent: Record<string, CellEntity[]> = {}
     for (const [key, cell] of Object.entries(map.cells)) {
@@ -408,9 +410,11 @@ export function parseDotEpochmap(buffer: ArrayBuffer | Uint8Array): EpochmapFile
           ruleset?: Ruleset
           mapEntities?: Array<Record<string, CellEntity[]>>
           mapBoundaries?: Array<Record<string, BoundaryData>>
-          mapMeta?: Array<{ theme?: string; dark?: boolean; seed?: number }>
+          mapMeta?: Array<{ theme?: string; dark?: boolean; seed?: number; musicId?: string }>
+          audioBlobs?: Record<string, string>
         }
         if (ext.ruleset) result.ruleset = ext.ruleset
+        if (ext.audioBlobs) result.audioBlobs = ext.audioBlobs
         if (ext.mapMeta) {
           ext.mapMeta.forEach((meta, mi) => {
             const map = maps[mi]
@@ -418,6 +422,7 @@ export function parseDotEpochmap(buffer: ArrayBuffer | Uint8Array): EpochmapFile
             if (meta.theme !== undefined) map.theme = meta.theme
             if (meta.dark !== undefined) map.dark = meta.dark
             if (meta.seed !== undefined) map.seed = meta.seed
+            if (meta.musicId !== undefined) map.musicId = meta.musicId
           })
         }
         if (ext.mapEntities) {

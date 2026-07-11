@@ -12,6 +12,9 @@ import {
 import type { CellData, CellMap, CustomMarker, EdgeDir, EpochmapFile, MapData, MarkerDef, SubcubeObject } from '@/lib/types'
 import { getTheme } from '@/lib/themes'
 import { parseDotEpochmap, serializeDotEpochmap } from '@/lib/epochmap-codec'
+import { gatherAudioBlobs, restoreAudioBlobs } from '@/lib/audio-store'
+import { music } from '@/lib/audio-controller'
+import { resolveTrack, trackById } from '@/lib/music'
 import { resolveMarkerImport, remapMapMarkers } from '@/lib/markers'
 import { exportMapsAsPdf } from '@/lib/dungeon-export'
 import { Map, Database, Users, Play, Settings } from 'lucide-react'
@@ -1157,6 +1160,7 @@ export function DungeonMapper({
     setIntroPhase(null)
   }, [ruleset, setParty, setReserve, setFormation, setActiveIdx])
   const beginNewGame = useCallback(() => {
+    music.unlock() // the click is our audio-autoplay gesture
     setShowTitle(false)
     if (ruleset.meta.opening?.slides?.length) setIntroPhase('opening')
     else if (needsBuilder()) setIntroPhase('build')
@@ -1169,6 +1173,26 @@ export function DungeonMapper({
   const finishBuilder = useCallback((hero: Character) => {
     startNewGame(hero)
   }, [startNewGame])
+
+  // Background music: stop whenever we leave Play mode (runs only on that
+  // transition, so authoring-time track previews aren't interrupted).
+  useEffect(() => {
+    if (workspace !== 'play') music.stop({ fadeMs: 300 })
+  }, [workspace])
+
+  // In Play mode, follow the scene: default/title track → the current level's
+  // track. (Battle/boss swapping arrives in Phase 2.) Playback stays queued
+  // until the first user gesture unlocks it.
+  useEffect(() => {
+    if (workspace !== 'play') return
+    if (showTitle || introPhase) {
+      const t = trackById(ruleset.audioTracks, ruleset.meta.defaultMusicId)
+      if (t) void music.play(t); else music.stop()
+      return
+    }
+    const track = resolveTrack({ meta: ruleset.meta, mapMusicId: activeMap?.musicId }, ruleset.audioTracks)
+    if (track) void music.play(track); else music.stop()
+  }, [workspace, showTitle, introPhase, activeMap?.id, activeMap?.musicId, ruleset.meta, ruleset.audioTracks])
 
   // Save-point policy: saving anywhere, or only on Save Point cells
   const canSaveHere = (ruleset.meta.savePolicy ?? 'anywhere') === 'anywhere'
@@ -1708,6 +1732,8 @@ export function DungeonMapper({
       try {
         const buf = await file.arrayBuffer()
         const parsed = parseDotEpochmap(buf)
+        // Unpack any baked-in music blobs back into IndexedDB (keyed by track id).
+        try { await restoreAudioBlobs(parsed.audioBlobs) } catch { /* audio optional */ }
         const loaded = parsed.maps.map((m) => ({ ...m, id: uid() }))
         if (mode === 'open') {
           historyRef.current = []
@@ -1779,8 +1805,15 @@ export function DungeonMapper({
     e.target.value = ''
   }
 
-  const saveEpochmap = useCallback(() => {
-    const file: EpochmapFile = { version: 2, gameTitle, romHash, customMarkers, maps, ruleset }
+  const saveEpochmap = useCallback(async () => {
+    // Bake uploaded music blobs (kept in IndexedDB, out of the localStorage
+    // draft) into the file so the .epochmap stays self-contained.
+    const uploadIds = (ruleset?.audioTracks ?? []).filter(t => t.source === 'upload').map(t => t.id)
+    let audioBlobs: Record<string, string> | undefined
+    if (uploadIds.length) {
+      try { audioBlobs = await gatherAudioBlobs(uploadIds) } catch { /* skip audio bake on failure */ }
+    }
+    const file: EpochmapFile = { version: 2, gameTitle, romHash, customMarkers, maps, ruleset, audioBlobs }
     const bytes = serializeDotEpochmap(file)
     const blob = new Blob([bytes as BlobPart], { type: 'application/octet-stream' })
     const url = URL.createObjectURL(blob)
@@ -1791,7 +1824,7 @@ export function DungeonMapper({
     a.click()
     URL.revokeObjectURL(url)
     toast.success('Saved .epochmap')
-  }, [gameTitle, romHash, customMarkers, maps])
+  }, [gameTitle, romHash, customMarkers, maps, ruleset])
 
   const exportPdf = useCallback(async () => {
     if (maps.length === 0) return
@@ -2059,6 +2092,10 @@ export function DungeonMapper({
           }
           onThemeChange={(idx, themeId) =>
             setMaps(prev => prev.map((m, i) => i === idx ? { ...m, theme: themeId } : m))
+          }
+          tracks={ruleset.audioTracks}
+          onMusicChange={(idx, musicId) =>
+            setMaps(prev => prev.map((m, i) => i === idx ? { ...m, musicId } : m))
           }
         />
       )}
@@ -2490,6 +2527,7 @@ export function DungeonMapper({
               {listSaveSlots().some(Boolean) && (
                 <button
                   onClick={() => {
+                    music.unlock() // audio-autoplay gesture
                     const slots = listSaveSlots()
                     const latest = slots.reduce<number>((best, s, i) =>
                       s && (best < 0 || s.at > (slots[best]?.at ?? 0)) ? i : best, -1)

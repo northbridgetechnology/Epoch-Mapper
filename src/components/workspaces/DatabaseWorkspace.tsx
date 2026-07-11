@@ -1,11 +1,15 @@
 'use client'
 
-import { Fragment, useState } from 'react'
-import { Plus, Trash2, Package, List, Skull, Swords, Sparkles, Zap, Store, Puzzle, ScrollText, Shield, Sword, Shirt } from 'lucide-react'
+import { Fragment, useEffect, useRef, useState } from 'react'
+import { Plus, Trash2, Package, List, Skull, Swords, Sparkles, Zap, Store, Puzzle, ScrollText, Shield, Sword, Shirt, Music, Upload, Play, Square } from 'lucide-react'
+import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
-import type { ClassDef, ItemSlot, DamageType, WeaponTypeDef, ArmorTypeDef, Effect, EnemyDef, EncounterTableDef, EventDef, ItemDef, LootTableDef, QuestDef, ShopDef, SpellDef, StatusEffectDef, Ruleset } from '@/lib/engine-types'
+import type { ClassDef, ItemSlot, DamageType, WeaponTypeDef, ArmorTypeDef, AudioTrackDef, Effect, EnemyDef, EncounterTableDef, EventDef, ItemDef, LootTableDef, QuestDef, ShopDef, SpellDef, StatusEffectDef, Ruleset } from '@/lib/engine-types'
 import { CLASS_SCHEMA, blankClass } from '@/lib/class-schema'
 import { WEAPON_TYPE_SCHEMA, ARMOR_TYPE_SCHEMA, DAMAGE_TYPE_OPTIONS, blankWeaponType, blankArmorType } from '@/lib/type-schema'
+import { blankAudioTrack } from '@/lib/music'
+import { putTrack, deleteTrack, hasTrack } from '@/lib/audio-store'
+import { music } from '@/lib/audio-controller'
 import { EVENT_SCHEMA, QUEST_SCHEMA, blankEventDef, blankQuest } from '@/lib/npc-schema'
 import { ConditionBuilder } from '@/components/CellInspector'
 import { SimulatePanel } from '@/components/SimulatePanel'
@@ -16,12 +20,13 @@ import { ENEMY_SCHEMA, ENCOUNTER_TABLE_SCHEMA, blankEnemy } from '@/lib/enemy-sc
 import { SPELL_SCHEMA, STATUS_SCHEMA, blankSpell, blankStatusEffect } from '@/lib/spell-schema'
 import { SHOP_SCHEMA, blankShop } from '@/lib/shop-schema'
 
-type Category = 'items' | 'weapon_types' | 'armor_types' | 'loot_tables' | 'bestiary' | 'encounters' | 'spells' | 'status_effects' | 'shops' | 'classes' | 'events' | 'quests'
+type Category = 'items' | 'weapon_types' | 'armor_types' | 'audio' | 'loot_tables' | 'bestiary' | 'encounters' | 'spells' | 'status_effects' | 'shops' | 'classes' | 'events' | 'quests'
 
 const CATEGORIES: { id: Category; icon: React.ReactNode; label: string }[] = [
   { id: 'items',          icon: <Package className="w-4 h-4" />,  label: 'Items' },
   { id: 'weapon_types',   icon: <Sword className="w-4 h-4" />,    label: 'Weapon Types' },
   { id: 'armor_types',    icon: <Shirt className="w-4 h-4" />,    label: 'Armor Types' },
+  { id: 'audio',          icon: <Music className="w-4 h-4" />,    label: 'Music' },
   { id: 'classes',        icon: <Shield className="w-4 h-4" />,   label: 'Classes' },
   { id: 'loot_tables',    icon: <List className="w-4 h-4" />,     label: 'Loot Tables' },
   { id: 'bestiary',       icon: <Skull className="w-4 h-4" />,    label: 'Bestiary' },
@@ -899,6 +904,7 @@ let _shopSeq = 1
 let _classSeq = 1
 let _wtypeSeq = 1
 let _atypeSeq = 1
+let _audioSeq = 1
 
 // ── Generic def list (NPCs / Events / Quests) ─────────────────────────────────
 
@@ -1291,6 +1297,139 @@ function ArmorTypeEditor({ atype, onChange }: {
   )
 }
 
+// ── Audio track editor ────────────────────────────────────────────────────────
+
+const MAX_TRACK_BYTES = 25 * 1024 * 1024      // hard cap
+const WARN_TRACK_BYTES = 8 * 1024 * 1024      // soft warning (keeps .epochmap lean)
+
+function AudioTrackEditor({ track, onChange }: {
+  track: AudioTrackDef
+  onChange: (t: AudioTrackDef) => void
+}) {
+  const [stored, setStored] = useState<boolean | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [previewing, setPreviewing] = useState(false)
+  const fileRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    if (track.source === 'upload') hasTrack(track.id).then(setStored).catch(() => setStored(false))
+    else setStored(null)
+  }, [track.id, track.source])
+
+  // Stop preview when leaving this track / unmounting.
+  useEffect(() => () => { if (music.currentTrackId() === track.id) music.stop({ fadeMs: 150 }) }, [track.id])
+
+  async function onFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0]
+    e.target.value = ''
+    if (!f) return
+    if (f.size > MAX_TRACK_BYTES) { toast.error(`"${f.name}" is too large (max 25 MB).`); return }
+    if (f.size > WARN_TRACK_BYTES) toast('Large track — a shorter looped clip keeps your .epochmap lean.')
+    setBusy(true)
+    try {
+      await putTrack(track.id, f)
+      setStored(true)
+      onChange({ ...track, src: f.name, mime: f.type || 'audio/mpeg' })
+      toast.success('Track stored.')
+    } catch {
+      toast.error('Could not store the audio file.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function togglePreview() {
+    if (previewing || music.currentTrackId() === track.id) {
+      music.stop({ fadeMs: 150 })
+      setPreviewing(false)
+      return
+    }
+    music.unlock() // the click is our user gesture
+    try {
+      await music.play(track, { crossfadeMs: 200 })
+      setPreviewing(true)
+    } catch {
+      toast.error('Could not play this track.')
+    }
+  }
+
+  const canPreview = track.source === 'url' ? !!track.src : stored === true
+
+  return (
+    <div className="p-4 space-y-4 overflow-y-auto h-full">
+      <div className="flex items-center gap-2 mb-1">
+        <span className="text-2xl">{track.icon ?? '🎵'}</span>
+        <div>
+          <div className="text-base font-bold text-white/90">{track.name}</div>
+          <div className="text-xs text-white/40 font-mono">{track.id}</div>
+        </div>
+      </div>
+
+      <div>
+        <label className="block text-xs font-medium text-white/60 mb-0.5">Name</label>
+        <input type="text" value={track.name}
+          onChange={e => onChange({ ...track, name: e.target.value })}
+          className="w-full px-2 py-1.5 rounded bg-zinc-800 border border-white/10 text-sm text-white/85 focus:outline-none focus:border-amber-500/50" />
+      </div>
+
+      {/* Source */}
+      <div>
+        <label className="block text-xs font-medium text-white/60 mb-1">Source</label>
+        <div className="flex gap-1 mb-2">
+          <Chip active={track.source === 'upload'} label="Upload" onClick={() => onChange({ ...track, source: 'upload' })} />
+          <Chip active={track.source === 'url'} label="External URL" onClick={() => onChange({ ...track, source: 'url' })} />
+        </div>
+        {track.source === 'upload' ? (
+          <div className="flex items-center gap-2">
+            <input ref={fileRef} type="file" accept="audio/*" className="hidden" onChange={onFile} />
+            <button type="button" disabled={busy} onClick={() => fileRef.current?.click()}
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded text-xs bg-amber-600/20 text-amber-300/90 hover:text-amber-200 disabled:opacity-50">
+              <Upload className="w-3.5 h-3.5" /> {busy ? 'Storing…' : (stored ? 'Replace file' : 'Choose file')}
+            </button>
+            <span className="text-xs text-white/50 truncate">
+              {stored ? (track.src ?? 'stored ✓') : <span className="text-white/30">no file yet</span>}
+            </span>
+          </div>
+        ) : (
+          <input type="text" value={track.src ?? ''} placeholder="https://…/theme.ogg"
+            onChange={e => onChange({ ...track, src: e.target.value })}
+            className="w-full px-2 py-1.5 rounded bg-zinc-800 border border-white/10 text-xs text-white/85 focus:outline-none focus:border-amber-500/50" />
+        )}
+        <div className="text-[11px] text-white/35 mt-1">
+          {track.source === 'upload'
+            ? 'Stored locally and baked into the .epochmap on save — fully shareable.'
+            : 'Streamed from the web at play time (needs network + CORS). Keeps the file tiny.'}
+        </div>
+      </div>
+
+      {/* Loop + volume */}
+      <div className="flex items-center gap-4">
+        <label className="flex items-center gap-1.5 text-xs text-white/70 cursor-pointer">
+          <input type="checkbox" checked={track.loop ?? true} onChange={e => onChange({ ...track, loop: e.target.checked })} />
+          Loop
+        </label>
+        <label className="flex items-center gap-2 text-xs text-white/70 flex-1">
+          Volume
+          <input type="range" min={0} max={1} step={0.05} value={track.volume ?? 1}
+            onChange={e => onChange({ ...track, volume: parseFloat(e.target.value) })}
+            className="flex-1 accent-amber-500" />
+          <span className="w-8 text-right text-white/50 tabular-nums">{Math.round((track.volume ?? 1) * 100)}%</span>
+        </label>
+      </div>
+
+      {/* Preview */}
+      <div className="pt-2 border-t border-white/10">
+        <button type="button" onClick={togglePreview} disabled={!canPreview}
+          className={cn('flex items-center gap-1.5 px-3 py-1.5 rounded text-sm',
+            canPreview ? 'bg-amber-600/25 text-amber-200 hover:bg-amber-600/35' : 'bg-zinc-800 text-white/30 cursor-not-allowed')}>
+          {previewing ? <><Square className="w-4 h-4" /> Stop</> : <><Play className="w-4 h-4" /> Preview</>}
+        </button>
+        {!canPreview && <span className="ml-2 text-xs text-white/30">{track.source === 'url' ? 'Enter a URL to preview' : 'Upload a file to preview'}</span>}
+      </div>
+    </div>
+  )
+}
+
 export function DatabaseWorkspace({ ruleset, onRulesetChange }: DatabaseWorkspaceProps) {
   const [category, setCategory] = useState<Category>('items')
   const [selectedId, setSelectedId] = useState<string | null>(
@@ -1510,6 +1649,25 @@ export function DatabaseWorkspace({ ruleset, onRulesetChange }: DatabaseWorkspac
     if (selectedId === id) setSelectedId(next[0]?.id ?? null)
   }
 
+  // ── audio tracks ──
+
+  const selectedTrack = ruleset.audioTracks.find(t => t.id === selectedId) ?? null
+
+  function addTrack() {
+    const id = `trk.track_${_audioSeq++}`
+    onRulesetChange({ ...ruleset, audioTracks: [...ruleset.audioTracks, blankAudioTrack(id)] })
+    setSelectedId(id); setCategory('audio')
+  }
+  function updateTrack(t: AudioTrackDef) {
+    onRulesetChange({ ...ruleset, audioTracks: ruleset.audioTracks.map(x => x.id === t.id ? t : x) })
+  }
+  function deleteTrackDef(id: string) {
+    const next = ruleset.audioTracks.filter(t => t.id !== id)
+    onRulesetChange({ ...ruleset, audioTracks: next })
+    void deleteTrack(id) // drop the IndexedDB blob too
+    if (selectedId === id) setSelectedId(next[0]?.id ?? null)
+  }
+
   // ── classes ──
 
   const selectedClass = ruleset.classes.find(c => c.id === selectedId) ?? null
@@ -1573,6 +1731,7 @@ export function DatabaseWorkspace({ ruleset, onRulesetChange }: DatabaseWorkspac
     if (cat === 'shops')          setSelectedId(ruleset.shops[0]?.id ?? null)
     if (cat === 'weapon_types')   setSelectedId(ruleset.weaponTypes[0]?.id ?? null)
     if (cat === 'armor_types')    setSelectedId(ruleset.armorTypes[0]?.id ?? null)
+    if (cat === 'audio')          setSelectedId(ruleset.audioTracks[0]?.id ?? null)
     if (cat === 'classes')        setSelectedId(ruleset.classes[0]?.id ?? null)
     if (cat === 'events')         setSelectedId((ruleset.events ?? [])[0]?.id ?? null)
     if (cat === 'quests')         setSelectedId((ruleset.quests ?? [])[0]?.id ?? null)
@@ -1630,6 +1789,10 @@ export function DatabaseWorkspace({ ruleset, onRulesetChange }: DatabaseWorkspac
           <GenericDefList label="Armor Types" entries={ruleset.armorTypes.map(a => ({ id: a.id, icon: a.icon ?? '🛡️', name: `${a.name} · ${a.weight}` }))}
             selectedId={selectedId} onSelect={setSelectedId} onAdd={addArmorType} onDelete={deleteArmorType} />
         )}
+        {category === 'audio' && (
+          <GenericDefList label="Music" entries={ruleset.audioTracks.map(t => ({ id: t.id, icon: t.icon ?? '🎵', name: t.name }))}
+            selectedId={selectedId} onSelect={setSelectedId} onAdd={addTrack} onDelete={deleteTrackDef} />
+        )}
         {category === 'classes' && (
           <GenericDefList label="Classes" entries={ruleset.classes.map(c => ({ id: c.id, icon: c.icon ?? '🎓', name: c.name }))}
             selectedId={selectedId} onSelect={setSelectedId} onAdd={addClass} onDelete={deleteClass} />
@@ -1664,6 +1827,8 @@ export function DatabaseWorkspace({ ruleset, onRulesetChange }: DatabaseWorkspac
           <WeaponTypeEditor wtype={selectedWeaponType} ruleset={ruleset} onChange={updateWeaponType} />
         ) : category === 'armor_types' && selectedArmorType ? (
           <ArmorTypeEditor atype={selectedArmorType} onChange={updateArmorType} />
+        ) : category === 'audio' && selectedTrack ? (
+          <AudioTrackEditor track={selectedTrack} onChange={updateTrack} />
         ) : category === 'classes' && selectedClass ? (
           <ClassEditor cls={selectedClass} ruleset={ruleset} onChange={updateClass} />
         ) : category === 'events' && selectedEvent ? (

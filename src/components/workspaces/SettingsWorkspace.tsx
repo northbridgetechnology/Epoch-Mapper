@@ -4,7 +4,7 @@ import { useRef } from 'react'
 import { Upload, Plus, Trash2, ChevronUp, ChevronDown, Image as ImageIcon } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { MapData } from '@/lib/types'
-import type { GameMeta, OpeningStory } from '@/lib/engine-types'
+import type { AudioTrackDef, GameMeta, OpeningStory } from '@/lib/engine-types'
 import { toast } from 'sonner'
 import { THEMES, getTheme } from '@/lib/themes'
 import { fileToImageDataUri, IMAGE_ACCEPT_ATTR } from '@/lib/sprite-upload'
@@ -18,6 +18,61 @@ interface SettingsWorkspaceProps {
   onDarkChange?: (mapIdx: number, dark: boolean) => void
   meta?: GameMeta
   onMetaChange?: (patch: Partial<GameMeta>) => void
+  /** Audio tracks (from the ruleset) for the music pickers. */
+  tracks?: AudioTrackDef[]
+  onMusicChange?: (mapIdx: number, musicId: string | undefined) => void
+}
+
+const MUSIC_SELECT = 'px-2 py-1 rounded bg-zinc-800 border border-white/10 text-xs text-white/80 focus:outline-none focus:border-amber-500/40'
+
+function TrackSelect({ tracks, value, onChange, noneLabel = '— none —' }: {
+  tracks: AudioTrackDef[]
+  value: string | undefined
+  onChange: (id: string | undefined) => void
+  noneLabel?: string
+}) {
+  return (
+    <select value={value ?? ''} onChange={e => onChange(e.target.value || undefined)} className={MUSIC_SELECT}>
+      <option value="">{noneLabel}</option>
+      {tracks.map(t => <option key={t.id} value={t.id}>{t.icon ?? '🎵'} {t.name}</option>)}
+    </select>
+  )
+}
+
+function MusicSettings({ meta, tracks, onMetaChange }: {
+  meta: GameMeta
+  tracks: AudioTrackDef[]
+  onMetaChange: (patch: Partial<GameMeta>) => void
+}) {
+  return (
+    <div>
+      <h2 className="text-sm font-semibold text-white/70 mb-1">Music</h2>
+      <p className="text-xs text-white/35 leading-relaxed mb-3">
+        Looping background tracks. Build the track library in <span className="text-white/50">Database → Music</span>,
+        then assign the default, battle, and boss themes here and per-level music below.
+      </p>
+      {tracks.length === 0 ? (
+        <div className="text-xs text-white/30 rounded-lg border border-white/8 bg-white/4 px-3 py-2">
+          No tracks yet — add some in Database → Music.
+        </div>
+      ) : (
+        <div className="space-y-2">
+          <label className="flex items-center justify-between gap-3">
+            <span className="text-xs text-white/70">Default / title theme</span>
+            <TrackSelect tracks={tracks} value={meta.defaultMusicId} onChange={id => onMetaChange({ defaultMusicId: id })} />
+          </label>
+          <label className="flex items-center justify-between gap-3">
+            <span className="text-xs text-white/70">Battle theme</span>
+            <TrackSelect tracks={tracks} value={meta.battleMusicId} onChange={id => onMetaChange({ battleMusicId: id })} />
+          </label>
+          <label className="flex items-center justify-between gap-3">
+            <span className="text-xs text-white/70">Boss theme</span>
+            <TrackSelect tracks={tracks} value={meta.bossMusicId} onChange={id => onMetaChange({ bossMusicId: id })} />
+          </label>
+        </div>
+      )}
+    </div>
+  )
 }
 
 const RULE_INPUT = 'w-20 px-2 py-1 rounded bg-zinc-800 border border-white/10 text-xs text-white/80 focus:outline-none focus:border-amber-500/40'
@@ -219,7 +274,7 @@ function OpeningSlideRow({ slide, index, count, onText, onImage, onMove, onRemov
   )
 }
 
-export function SettingsWorkspace({ maps, onThemeChange, onDarkChange, meta, onMetaChange }: SettingsWorkspaceProps) {
+export function SettingsWorkspace({ maps, onThemeChange, onDarkChange, meta, onMetaChange, tracks = [], onMusicChange }: SettingsWorkspaceProps) {
   if (maps.length === 0) {
     return (
       <div className="flex-1 flex items-center justify-center text-white/20 text-sm">
@@ -233,6 +288,7 @@ export function SettingsWorkspace({ maps, onThemeChange, onDarkChange, meta, onM
       <div className="max-w-2xl mx-auto px-6 py-6 space-y-8">
         {meta && onMetaChange && <GameRules meta={meta} onMetaChange={onMetaChange} />}
         {meta && onMetaChange && <StoryAndProtagonist meta={meta} onMetaChange={onMetaChange} />}
+        {meta && onMetaChange && <MusicSettings meta={meta} tracks={tracks} onMetaChange={onMetaChange} />}
         <div>
           <h2 className="text-sm font-semibold text-white/70 mb-1">Visual Themes</h2>
           <p className="text-xs text-white/35 leading-relaxed">
@@ -306,6 +362,15 @@ export function SettingsWorkspace({ maps, onThemeChange, onDarkChange, meta, onM
                   <span className="text-[10px] text-white/30">
                     View collapses to the party&apos;s light — torches, lanterns, and light magic matter here.
                   </span>
+                </label>
+              )}
+
+              {onMusicChange && (
+                <label className="flex items-center gap-2.5 rounded-lg border border-white/8 bg-white/4 px-3 py-2">
+                  <span className="text-xs text-white/70">🎵 Level music</span>
+                  <TrackSelect tracks={tracks} value={map.musicId} onChange={id => onMusicChange(idx, id)}
+                    noneLabel={meta?.defaultMusicId ? '— use default —' : '— none —'} />
+                  <span className="text-[10px] text-white/30">Loops while exploring this level.</span>
                 </label>
               )}
             </div>

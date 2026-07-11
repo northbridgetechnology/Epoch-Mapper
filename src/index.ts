@@ -156,6 +156,12 @@ export { CLASS_SCHEMA, blankClass } from './lib/class-schema'
 // Weapon/armor type schema helpers
 export { WEAPON_TYPE_SCHEMA, ARMOR_TYPE_SCHEMA, DAMAGE_TYPE_OPTIONS, blankWeaponType, blankArmorType } from './lib/type-schema'
 
+// Audio subsystem — music resolution, controller, and blob store
+export { resolveMusicId, resolveTrack, trackById, blankAudioTrack } from './lib/music'
+export type { MusicContext } from './lib/music'
+export { music } from './lib/audio-controller'
+export { putTrack, getTrack, deleteTrack, hasTrack, listTrackIds, gatherAudioBlobs, restoreAudioBlobs } from './lib/audio-store'
+
 // Enemy + encounter-table schema helpers (Phase E3)
 export { ENEMY_SCHEMA, ENCOUNTER_TABLE_SCHEMA, blankEnemy, blankEncounterTable } from './lib/enemy-schema'
 

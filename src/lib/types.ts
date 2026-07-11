@@ -87,6 +87,9 @@ export interface MapData {
   /** Dark map: view distance collapses to the party's light radius (torches,
    *  lanterns, light spells). Absent/false = fully lit (classic behavior). */
   dark?: boolean
+  /** Looping background track for this level (AudioTrackDef id). Absent = fall
+   *  back to the game's default track (GameMeta.defaultMusicId). */
+  musicId?: string
 }
 
 /** A user-defined cell type or overlay icon. IDs are 128–255. */
@@ -107,6 +110,10 @@ export interface EpochmapFile {
   maps: MapData[]
   /** L1 ruleset — present in v2 files and in localStorage drafts. */
   ruleset?: import('./engine-types').Ruleset
+  /** Uploaded audio blobs baked into the .epochmap, keyed by AudioTrackDef id
+   *  and base64-encoded. Gathered from IndexedDB on export and written back on
+   *  import; never part of the localStorage draft (which stays lean). */
+  audioBlobs?: Record<string, string>
 }
 
 /** Built-in marker definition (base / overlay / edge tables). */
