@@ -153,6 +153,9 @@ export { ITEM_SCHEMA, LOOT_TABLE_SCHEMA, blankItem, blankLootTable, itemDisplayN
 // Class schema helpers
 export { CLASS_SCHEMA, blankClass } from './lib/class-schema'
 
+// Weapon/armor type schema helpers
+export { WEAPON_TYPE_SCHEMA, ARMOR_TYPE_SCHEMA, DAMAGE_TYPE_OPTIONS, blankWeaponType, blankArmorType } from './lib/type-schema'
+
 // Enemy + encounter-table schema helpers (Phase E3)
 export { ENEMY_SCHEMA, ENCOUNTER_TABLE_SCHEMA, blankEnemy, blankEncounterTable } from './lib/enemy-schema'
 

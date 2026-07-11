@@ -1,10 +1,11 @@
 'use client'
 
 import { Fragment, useState } from 'react'
-import { Plus, Trash2, Package, List, Skull, Swords, Sparkles, Zap, Store, Puzzle, ScrollText, Shield } from 'lucide-react'
+import { Plus, Trash2, Package, List, Skull, Swords, Sparkles, Zap, Store, Puzzle, ScrollText, Shield, Sword, Shirt } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import type { ClassDef, ItemSlot, Effect, EnemyDef, EncounterTableDef, EventDef, ItemDef, LootTableDef, QuestDef, ShopDef, SpellDef, StatusEffectDef, Ruleset } from '@/lib/engine-types'
+import type { ClassDef, ItemSlot, DamageType, WeaponTypeDef, ArmorTypeDef, Effect, EnemyDef, EncounterTableDef, EventDef, ItemDef, LootTableDef, QuestDef, ShopDef, SpellDef, StatusEffectDef, Ruleset } from '@/lib/engine-types'
 import { CLASS_SCHEMA, blankClass } from '@/lib/class-schema'
+import { WEAPON_TYPE_SCHEMA, ARMOR_TYPE_SCHEMA, DAMAGE_TYPE_OPTIONS, blankWeaponType, blankArmorType } from '@/lib/type-schema'
 import { EVENT_SCHEMA, QUEST_SCHEMA, blankEventDef, blankQuest } from '@/lib/npc-schema'
 import { ConditionBuilder } from '@/components/CellInspector'
 import { SimulatePanel } from '@/components/SimulatePanel'
@@ -15,10 +16,12 @@ import { ENEMY_SCHEMA, ENCOUNTER_TABLE_SCHEMA, blankEnemy } from '@/lib/enemy-sc
 import { SPELL_SCHEMA, STATUS_SCHEMA, blankSpell, blankStatusEffect } from '@/lib/spell-schema'
 import { SHOP_SCHEMA, blankShop } from '@/lib/shop-schema'
 
-type Category = 'items' | 'loot_tables' | 'bestiary' | 'encounters' | 'spells' | 'status_effects' | 'shops' | 'classes' | 'events' | 'quests'
+type Category = 'items' | 'weapon_types' | 'armor_types' | 'loot_tables' | 'bestiary' | 'encounters' | 'spells' | 'status_effects' | 'shops' | 'classes' | 'events' | 'quests'
 
 const CATEGORIES: { id: Category; icon: React.ReactNode; label: string }[] = [
   { id: 'items',          icon: <Package className="w-4 h-4" />,  label: 'Items' },
+  { id: 'weapon_types',   icon: <Sword className="w-4 h-4" />,    label: 'Weapon Types' },
+  { id: 'armor_types',    icon: <Shirt className="w-4 h-4" />,    label: 'Armor Types' },
   { id: 'classes',        icon: <Shield className="w-4 h-4" />,   label: 'Classes' },
   { id: 'loot_tables',    icon: <List className="w-4 h-4" />,     label: 'Loot Tables' },
   { id: 'bestiary',       icon: <Skull className="w-4 h-4" />,    label: 'Bestiary' },
@@ -129,6 +132,43 @@ function ItemEditor({
         value={raw}
         onChange={handleSchemaChange}
       />
+
+      {/* Weapon type + damage override */}
+      {item.kind === 'weapon' && (
+        <div className="pt-2 border-t border-white/10 space-y-3">
+          <div>
+            <label className="block text-xs font-medium text-white/60 mb-0.5">Weapon Type (weight · scaling · reach)</label>
+            <select value={item.weaponType ?? ''}
+              onChange={e => onChange({ ...item, weaponType: e.target.value || undefined })}
+              className="w-full px-2 py-1.5 rounded bg-zinc-800 border border-white/10 text-xs text-white/85 focus:outline-none focus:border-amber-500/50">
+              <option value="">— none (unrestricted) —</option>
+              {ruleset.weaponTypes.map(w => <option key={w.id} value={w.id}>{w.icon ?? '⚔️'} {w.name} · {w.weight} · {ruleset.attributes.find(a => a.id === w.scalingAttr)?.name ?? w.scalingAttr}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-white/60 mb-0.5">Damage Element Override <span className="text-white/30">(optional)</span></label>
+            <select value={item.damageType ?? ''}
+              onChange={e => onChange({ ...item, damageType: (e.target.value || undefined) as DamageType | undefined })}
+              className="w-full px-2 py-1.5 rounded bg-zinc-800 border border-white/10 text-xs text-white/85 focus:outline-none focus:border-amber-500/50">
+              <option value="">— use weapon type default —</option>
+              {DAMAGE_TYPE_OPTIONS.map(d => <option key={d.value} value={d.value}>{d.label}</option>)}
+            </select>
+          </div>
+        </div>
+      )}
+
+      {/* Armor type */}
+      {item.kind === 'armor' && (
+        <div className="pt-2 border-t border-white/10">
+          <label className="block text-xs font-medium text-white/60 mb-0.5">Armor Type (weight · passive effects)</label>
+          <select value={item.armorType ?? ''}
+            onChange={e => onChange({ ...item, armorType: e.target.value || undefined })}
+            className="w-full px-2 py-1.5 rounded bg-zinc-800 border border-white/10 text-xs text-white/85 focus:outline-none focus:border-amber-500/50">
+            <option value="">— none (unrestricted) —</option>
+            {ruleset.armorTypes.map(a => <option key={a.id} value={a.id}>{a.icon ?? '🛡️'} {a.name} · {a.weight}</option>)}
+          </select>
+        </div>
+      )}
 
       {/* On-use effects (consumables) */}
       <div className="pt-2 border-t border-white/10">
@@ -857,6 +897,8 @@ let _spellSeq = 1
 let _statusSeq = 1
 let _shopSeq = 1
 let _classSeq = 1
+let _wtypeSeq = 1
+let _atypeSeq = 1
 
 // ── Generic def list (NPCs / Events / Quests) ─────────────────────────────────
 
@@ -1194,6 +1236,61 @@ function ClassEditor({ cls, ruleset, onChange }: {
   )
 }
 
+// ── Weapon / armor type editors ──────────────────────────────────────────────
+
+function TypeEditorHeader({ def, fallback }: { def: { icon?: string; name: string; id: string }; fallback: string }) {
+  return (
+    <div className="flex items-center gap-2 mb-1">
+      <span className="text-2xl">{def.icon ?? fallback}</span>
+      <div>
+        <div className="text-base font-bold text-white/90">{def.name}</div>
+        <div className="text-xs text-white/40 font-mono">{def.id}</div>
+      </div>
+    </div>
+  )
+}
+
+function WeaponTypeEditor({ wtype, ruleset, onChange }: {
+  wtype: WeaponTypeDef
+  ruleset: Ruleset
+  onChange: (w: WeaponTypeDef) => void
+}) {
+  const raw = wtype as unknown as Record<string, unknown>
+  return (
+    <div className="p-4 space-y-4 overflow-y-auto h-full">
+      <TypeEditorHeader def={wtype} fallback="⚔️" />
+      <SchemaForm schema={WEAPON_TYPE_SCHEMA} value={raw} onChange={u => onChange(u as unknown as WeaponTypeDef)} />
+      <div>
+        <label className="block text-xs font-medium text-white/60 mb-0.5">Scaling Attribute (drives attack damage)</label>
+        <select value={wtype.scalingAttr}
+          onChange={e => onChange({ ...wtype, scalingAttr: e.target.value })}
+          className="w-full px-2 py-1.5 rounded bg-zinc-800 border border-white/10 text-xs text-white/85 focus:outline-none focus:border-amber-500/50">
+          {ruleset.attributes.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+        </select>
+      </div>
+    </div>
+  )
+}
+
+function ArmorTypeEditor({ atype, onChange }: {
+  atype: ArmorTypeDef
+  onChange: (a: ArmorTypeDef) => void
+}) {
+  const raw = atype as unknown as Record<string, unknown>
+  function handle(updated: Record<string, unknown>) {
+    if (updated.speedMod === '' || updated.speedMod === undefined || Number.isNaN(updated.speedMod)) {
+      updated = { ...updated, speedMod: undefined }
+    }
+    onChange(updated as unknown as ArmorTypeDef)
+  }
+  return (
+    <div className="p-4 space-y-4 overflow-y-auto h-full">
+      <TypeEditorHeader def={atype} fallback="🛡️" />
+      <SchemaForm schema={ARMOR_TYPE_SCHEMA} value={raw} onChange={handle} />
+    </div>
+  )
+}
+
 export function DatabaseWorkspace({ ruleset, onRulesetChange }: DatabaseWorkspaceProps) {
   const [category, setCategory] = useState<Category>('items')
   const [selectedId, setSelectedId] = useState<string | null>(
@@ -1377,6 +1474,42 @@ export function DatabaseWorkspace({ ruleset, onRulesetChange }: DatabaseWorkspac
     if (selectedId === id) setSelectedId(next[0]?.id ?? null)
   }
 
+  // ── weapon types ──
+
+  const selectedWeaponType = ruleset.weaponTypes.find(w => w.id === selectedId) ?? null
+
+  function addWeaponType() {
+    const id = `wtype.type_${_wtypeSeq++}`
+    onRulesetChange({ ...ruleset, weaponTypes: [...ruleset.weaponTypes, blankWeaponType(id)] })
+    setSelectedId(id); setCategory('weapon_types')
+  }
+  function updateWeaponType(w: WeaponTypeDef) {
+    onRulesetChange({ ...ruleset, weaponTypes: ruleset.weaponTypes.map(x => x.id === w.id ? w : x) })
+  }
+  function deleteWeaponType(id: string) {
+    const next = ruleset.weaponTypes.filter(w => w.id !== id)
+    onRulesetChange({ ...ruleset, weaponTypes: next })
+    if (selectedId === id) setSelectedId(next[0]?.id ?? null)
+  }
+
+  // ── armor types ──
+
+  const selectedArmorType = ruleset.armorTypes.find(a => a.id === selectedId) ?? null
+
+  function addArmorType() {
+    const id = `atype.type_${_atypeSeq++}`
+    onRulesetChange({ ...ruleset, armorTypes: [...ruleset.armorTypes, blankArmorType(id)] })
+    setSelectedId(id); setCategory('armor_types')
+  }
+  function updateArmorType(a: ArmorTypeDef) {
+    onRulesetChange({ ...ruleset, armorTypes: ruleset.armorTypes.map(x => x.id === a.id ? a : x) })
+  }
+  function deleteArmorType(id: string) {
+    const next = ruleset.armorTypes.filter(a => a.id !== id)
+    onRulesetChange({ ...ruleset, armorTypes: next })
+    if (selectedId === id) setSelectedId(next[0]?.id ?? null)
+  }
+
   // ── classes ──
 
   const selectedClass = ruleset.classes.find(c => c.id === selectedId) ?? null
@@ -1438,6 +1571,8 @@ export function DatabaseWorkspace({ ruleset, onRulesetChange }: DatabaseWorkspac
     if (cat === 'spells')         setSelectedId(ruleset.spells[0]?.id ?? null)
     if (cat === 'status_effects') setSelectedId(ruleset.statusEffects[0]?.id ?? null)
     if (cat === 'shops')          setSelectedId(ruleset.shops[0]?.id ?? null)
+    if (cat === 'weapon_types')   setSelectedId(ruleset.weaponTypes[0]?.id ?? null)
+    if (cat === 'armor_types')    setSelectedId(ruleset.armorTypes[0]?.id ?? null)
     if (cat === 'classes')        setSelectedId(ruleset.classes[0]?.id ?? null)
     if (cat === 'events')         setSelectedId((ruleset.events ?? [])[0]?.id ?? null)
     if (cat === 'quests')         setSelectedId((ruleset.quests ?? [])[0]?.id ?? null)
@@ -1487,6 +1622,14 @@ export function DatabaseWorkspace({ ruleset, onRulesetChange }: DatabaseWorkspac
         {category === 'shops' && (
           <ShopList shops={ruleset.shops} selectedId={selectedId} onSelect={setSelectedId} onAdd={addShop} onDelete={deleteShop} />
         )}
+        {category === 'weapon_types' && (
+          <GenericDefList label="Weapon Types" entries={ruleset.weaponTypes.map(w => ({ id: w.id, icon: w.icon ?? '⚔️', name: `${w.name} · ${w.weight}` }))}
+            selectedId={selectedId} onSelect={setSelectedId} onAdd={addWeaponType} onDelete={deleteWeaponType} />
+        )}
+        {category === 'armor_types' && (
+          <GenericDefList label="Armor Types" entries={ruleset.armorTypes.map(a => ({ id: a.id, icon: a.icon ?? '🛡️', name: `${a.name} · ${a.weight}` }))}
+            selectedId={selectedId} onSelect={setSelectedId} onAdd={addArmorType} onDelete={deleteArmorType} />
+        )}
         {category === 'classes' && (
           <GenericDefList label="Classes" entries={ruleset.classes.map(c => ({ id: c.id, icon: c.icon ?? '🎓', name: c.name }))}
             selectedId={selectedId} onSelect={setSelectedId} onAdd={addClass} onDelete={deleteClass} />
@@ -1517,6 +1660,10 @@ export function DatabaseWorkspace({ ruleset, onRulesetChange }: DatabaseWorkspac
           <StatusEditor status={selectedStatus} onChange={updateStatus} />
         ) : category === 'shops' && selectedShop ? (
           <ShopEditor shop={selectedShop} ruleset={ruleset} onChange={updateShop} />
+        ) : category === 'weapon_types' && selectedWeaponType ? (
+          <WeaponTypeEditor wtype={selectedWeaponType} ruleset={ruleset} onChange={updateWeaponType} />
+        ) : category === 'armor_types' && selectedArmorType ? (
+          <ArmorTypeEditor atype={selectedArmorType} onChange={updateArmorType} />
         ) : category === 'classes' && selectedClass ? (
           <ClassEditor cls={selectedClass} ruleset={ruleset} onChange={updateClass} />
         ) : category === 'events' && selectedEvent ? (
