@@ -1,6 +1,6 @@
 'use client'
 
-import { Fragment, useEffect, useRef, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { Plus, Trash2, Package, List, Skull, Swords, Sparkles, Zap, Store, Puzzle, ScrollText, Shield, Sword, Shirt, Music, BookOpen, Flame, Upload, Play, Square } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
@@ -18,7 +18,7 @@ import { SchemaForm } from '../forms/SchemaForm'
 import { EffectBuilder } from '../forms/EffectBuilder'
 import { ITEM_SCHEMA, LOOT_TABLE_SCHEMA, blankItem } from '@/lib/item-schema'
 import { ENEMY_SCHEMA, ENCOUNTER_TABLE_SCHEMA, blankEnemy } from '@/lib/enemy-schema'
-import { SPELL_SCHEMA, STATUS_SCHEMA, SPELL_SCHOOL_SCHEMA, blankSpell, blankStatusEffect, blankSpellSchool } from '@/lib/spell-schema'
+import { SPELL_SCHEMA, STATUS_SCHEMA, SPELL_SCHOOL_SCHEMA, blankSpell, blankStatusEffect, blankSpellSchool, sortSpells, spellLearnLevel, type SpellSort } from '@/lib/spell-schema'
 import { SHOP_SCHEMA, blankShop } from '@/lib/shop-schema'
 
 type Category = 'items' | 'weapon_types' | 'armor_types' | 'spell_schools' | 'skills' | 'audio' | 'loot_tables' | 'bestiary' | 'encounters' | 'spells' | 'status_effects' | 'shops' | 'classes' | 'events' | 'quests'
@@ -621,25 +621,55 @@ function EncounterTableEditor({
 
 // ── Spell list ────────────────────────────────────────────────────────────────
 
+const SPELL_SORT_KEY = 'epoch.db.spellSort'
+const SPELL_SORTS: { id: SpellSort; label: string }[] = [
+  { id: 'school', label: 'School' },
+  { id: 'level',  label: 'Level' },
+  { id: 'mp',     label: 'MP Cost' },
+  { id: 'name',   label: 'Name' },
+]
+
 function SpellList({
   spells,
+  ruleset,
   selectedId,
   onSelect,
   onAdd,
   onDelete,
 }: {
   spells: SpellDef[]
+  ruleset: Ruleset
   selectedId: string | null
   onSelect: (id: string) => void
   onAdd: () => void
   onDelete: (id: string) => void
 }) {
+  const [sort, setSort] = useState<SpellSort>(() => {
+    try {
+      const v = window.localStorage.getItem(SPELL_SORT_KEY)
+      if (v === 'school' || v === 'level' || v === 'mp' || v === 'name') return v
+    } catch { /* SSR / storage unavailable */ }
+    return 'school'
+  })
+  const pickSort = (v: SpellSort) => {
+    setSort(v)
+    try { window.localStorage.setItem(SPELL_SORT_KEY, v) } catch { /* ignore */ }
+  }
+  // View-only ordering — the authored ruleset array is never reordered.
+  const sorted = useMemo(() => sortSpells(spells, sort, ruleset.spellSchools ?? []), [spells, sort, ruleset.spellSchools])
+  const schoolOf = (id: string) => (ruleset.spellSchools ?? []).find(sc => sc.id === id)
+
   return (
     <div className="flex flex-col h-full min-h-0">
-      <div className="flex items-center justify-between px-3 py-2 border-b border-white/10">
+      <div className="flex items-center justify-between gap-1 px-3 py-2 border-b border-white/10">
         <span className="text-xs font-semibold text-white/60 uppercase tracking-wide">
           Spells ({spells.length})
         </span>
+        <select value={sort} onChange={e => pickSort(e.target.value as SpellSort)}
+          title="Sort spells by…"
+          className="ml-auto px-1 py-0.5 rounded bg-zinc-800 border border-white/10 text-[10px] text-white/60 focus:outline-none">
+          {SPELL_SORTS.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
+        </select>
         <button onClick={onAdd} className="flex items-center gap-1 px-2 py-0.5 rounded text-xs text-amber-300/80 hover:text-amber-200 hover:bg-amber-500/10">
           <Plus className="w-3 h-3" /> New
         </button>
@@ -648,24 +678,34 @@ function SpellList({
         {spells.length === 0 && (
           <div className="text-center text-white/25 text-xs py-6">No spells yet — click New</div>
         )}
-        {spells.map(s => (
-          <div
-            key={s.id}
-            className={cn(
-              'flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer group',
-              selectedId === s.id ? 'bg-amber-950/40 text-white' : 'text-white/70 hover:bg-white/5',
-            )}
-            onClick={() => onSelect(s.id)}
-          >
-            <span className="text-base w-6 text-center flex-shrink-0">{s.icon ?? '✨'}</span>
-            <div className="flex-1 min-w-0">
-              <div className="text-sm truncate">{s.name}</div>
-              <div className="text-xs text-white/35 capitalize">{s.school} · Lv {s.level} · {s.mpCost} MP</div>
+        {sorted.map((s, i) => (
+          <Fragment key={s.id}>
+            {sort === 'school' && (i === 0 || sorted[i - 1].school !== s.school) && (() => {
+              const sc = schoolOf(s.school)
+              return (
+                <div className="flex items-center gap-1.5 px-2 pt-2 pb-0.5 text-[10px] font-semibold uppercase tracking-wide"
+                  style={{ color: sc?.color ?? 'rgba(255,255,255,0.35)' }}>
+                  <span>{sc?.icon ?? '✨'}</span>{sc?.name ?? s.school}
+                </div>
+              )
+            })()}
+            <div
+              className={cn(
+                'flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer group',
+                selectedId === s.id ? 'bg-amber-950/40 text-white' : 'text-white/70 hover:bg-white/5',
+              )}
+              onClick={() => onSelect(s.id)}
+            >
+              <span className="text-base w-6 text-center flex-shrink-0">{s.icon ?? '✨'}</span>
+              <div className="flex-1 min-w-0">
+                <div className="text-sm truncate">{s.name}</div>
+                <div className="text-xs text-white/35 capitalize">{schoolOf(s.school)?.name ?? s.school} · Lv {spellLearnLevel(s)} · {s.mpCost} MP</div>
+              </div>
+              <button onClick={ev => { ev.stopPropagation(); onDelete(s.id) }} className="opacity-0 group-hover:opacity-100 p-0.5 rounded text-white/30 hover:text-red-400">
+                <Trash2 className="w-3 h-3" />
+              </button>
             </div>
-            <button onClick={ev => { ev.stopPropagation(); onDelete(s.id) }} className="opacity-0 group-hover:opacity-100 p-0.5 rounded text-white/30 hover:text-red-400">
-              <Trash2 className="w-3 h-3" />
-            </button>
-          </div>
+          </Fragment>
         ))}
       </div>
     </div>
@@ -1842,7 +1882,7 @@ export function DatabaseWorkspace({ ruleset, onRulesetChange }: DatabaseWorkspac
           <EncounterTableList tables={ruleset.encounterTables} selectedId={selectedId} onSelect={setSelectedId} onAdd={addEncounterTable} onDelete={deleteEncounterTable} />
         )}
         {category === 'spells' && (
-          <SpellList spells={ruleset.spells} selectedId={selectedId} onSelect={setSelectedId} onAdd={addSpell} onDelete={deleteSpell} />
+          <SpellList spells={ruleset.spells} ruleset={ruleset} selectedId={selectedId} onSelect={setSelectedId} onAdd={addSpell} onDelete={deleteSpell} />
         )}
         {category === 'status_effects' && (
           <StatusList statuses={ruleset.statusEffects} selectedId={selectedId} onSelect={setSelectedId} onAdd={addStatus} onDelete={deleteStatus} />

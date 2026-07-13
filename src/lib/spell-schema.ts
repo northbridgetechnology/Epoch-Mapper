@@ -1,5 +1,7 @@
 import type { SpellDef, SpellSchoolDef, StatusEffectDef, FieldSchema } from './engine-types'
 
+export type SpellSort = 'school' | 'level' | 'mp' | 'name'
+
 const SPELL_TARGETS = [
   { value: 'enemy',      label: 'Enemy (single)' },
   { value: 'allEnemies', label: 'All Enemies' },
@@ -17,6 +19,27 @@ const STATUS_KINDS = [
   { value: 'hot',     label: 'Heal over Time' },
   { value: 'control', label: 'Control (stun/sleep)' },
 ]
+
+
+/** The level a spell is actually acquired: the earliest learn-table entry,
+ *  falling back to the authored spell.level field. */
+export function spellLearnLevel(s: SpellDef): number {
+  if (s.learn?.length) return Math.min(...s.learn.map(l => l.level))
+  return s.level ?? 99
+}
+
+/** View-only sort for spell lists (never reorder the ruleset array itself). */
+export function sortSpells(spells: SpellDef[], sort: SpellSort, schools: SpellSchoolDef[]): SpellDef[] {
+  const schoolOrder = (id: string) => { const i = schools.findIndex(sc => sc.id === id); return i < 0 ? 999 : i }
+  const byName = (a: SpellDef, b: SpellDef) => a.name.localeCompare(b.name)
+  const arr = [...spells]
+  switch (sort) {
+    case 'school': return arr.sort((a, b) => schoolOrder(a.school) - schoolOrder(b.school) || spellLearnLevel(a) - spellLearnLevel(b) || byName(a, b))
+    case 'level':  return arr.sort((a, b) => spellLearnLevel(a) - spellLearnLevel(b) || byName(a, b))
+    case 'mp':     return arr.sort((a, b) => a.mpCost - b.mpCost || byName(a, b))
+    case 'name':   return arr.sort(byName)
+  }
+}
 
 export const SPELL_SCHEMA: FieldSchema[] = [
   { key: 'name',         label: 'Name',                type: 'text' },
