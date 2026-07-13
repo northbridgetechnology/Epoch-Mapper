@@ -12,7 +12,7 @@ import {
 import type { CellData, CellMap, CustomMarker, EdgeDir, EpochmapFile, MapData, MarkerDef, SubcubeObject } from '@/lib/types'
 import { getTheme } from '@/lib/themes'
 import { parseDotEpochmap, serializeDotEpochmap } from '@/lib/epochmap-codec'
-import { gatherAudioBlobs, restoreAudioBlobs } from '@/lib/audio-store'
+import { gatherAudioBlobs, restoreAudioBlobs, clearAudioStore } from '@/lib/audio-store'
 import { music } from '@/lib/audio-controller'
 import { resolveTrack, trackById } from '@/lib/music'
 import { resolveMarkerImport, remapMapMarkers } from '@/lib/markers'
@@ -1700,25 +1700,31 @@ export function DungeonMapper({
 
   // ── File operations ───────────────────────────────────────────────────────────
 
-  const doNew = useCallback(() => { setNewMapMode('session') }, [])
+  const doNew = useCallback(() => {
+    if (typeof window !== 'undefined' && !window.confirm(
+      'Start a new session? Your current game — maps, party, and all Settings (opening story, images, audio, and Database content) — will be discarded. Save it as an .epochmap first if you want to keep it.'
+    )) return
+    setNewMapMode('session')
+  }, [])
 
   const handleNewMapConfirm = useCallback((config: NewMapConfig) => {
     const world = config.generate ? buildGeneratedWorld(config.name, config, ruleset) : null
     const map = world ? world.map : buildBaseMap(config.name, config)
+    const generated = world ? [map, ...world.extraMaps] : [map]
 
     // Generated story content (NPCs, quest, events, items) joins the ruleset so
-    // the map's dialogue, levers, journal entries, and relics work out of the box
-    if (world && (world.npcs.length || world.quests.length || world.events.length || world.items.length)) {
-      setRuleset(r => ({
-        ...r,
-        npcs: [...(r.npcs ?? []).filter(n => !world.npcs.some(w => w.id === n.id)), ...world.npcs],
-        quests: [...(r.quests ?? []).filter(q => !world.quests.some(w => w.id === q.id)), ...world.quests],
-        events: [...(r.events ?? []).filter(e => !world.events.some(w => w.id === e.id)), ...world.events],
-        items: [...r.items.filter(i => !world.items.some(w => w.id === i.id)), ...world.items],
-      }))
-    }
+    // the map's dialogue, levers, journal entries, and relics work out of the box.
+    const mergeWorld = (base: Ruleset): Ruleset =>
+      world && (world.npcs.length || world.quests.length || world.events.length || world.items.length)
+        ? {
+            ...base,
+            npcs: [...(base.npcs ?? []).filter(n => !world.npcs.some(w => w.id === n.id)), ...world.npcs],
+            quests: [...(base.quests ?? []).filter(q => !world.quests.some(w => w.id === q.id)), ...world.quests],
+            events: [...(base.events ?? []).filter(e => !world.events.some(w => w.id === e.id)), ...world.events],
+            items: [...base.items.filter(i => !world.items.some(w => w.id === i.id)), ...world.items],
+          }
+        : base
 
-    const generated = world ? [map, ...world.extraMaps] : [map]
     if (newMapMode === 'session') {
       historyRef.current = []
       setCanUndo(false)
@@ -1727,18 +1733,28 @@ export function DungeonMapper({
       setCustomMarkers([])
       setMaps(generated)
       setActiveIdx(0)
-      // Clean slate: forget the party (incl. the Main Character), its saved
-      // template, inventory/flags, and reset the New Game intro flow.
+      // Full reset: a brand-new project. Settings, opening story + images, audio,
+      // and all Database content revert to the built-in defaults.
+      const fresh = mergeWorld(makeDefaultRuleset(map.id))
+      setRuleset(fresh)
+      void clearAudioStore() // drop orphaned uploaded tracks from IndexedDB
+      // Clean slate: party (incl. the Main Character), its saved template,
+      // inventory/flags, and every play-session leftover.
       setParty([])
       setReserve([])
       setFormation({ front: [], back: [] })
       setInventory([])
       setFlags({})
-      setGold(ruleset.meta.startingGold)
+      setGold(fresh.meta.startingGold)
+      setRevealedBoundaries(new Set<string>())
+      setStepsTaken(0); stepsRef.current = 0
+      setCombatState(null); setActiveEncounter(null); setDialogue(null); setInscription(null)
+      setGameOver(false)
       clearPartyTemplate()
       setShowTitle(true)
       setIntroPhase(null)
     } else {
+      if (world) setRuleset(r => mergeWorld(r))
       setMaps(prev => {
         const next = [...prev, ...generated]
         setActiveIdx(next.length - generated.length)

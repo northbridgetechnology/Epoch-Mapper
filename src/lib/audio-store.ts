@@ -72,6 +72,12 @@ export async function listTrackIds(): Promise<string[]> {
   return keys.map(String)
 }
 
+/** Wipe every stored track blob (e.g. on New Session). */
+export async function clearAudioStore(): Promise<void> {
+  if (!hasIDB()) return
+  await tx<undefined>('readwrite', s => s.clear())
+}
+
 // ── .epochmap bake / unpack ───────────────────────────────────────────────────
 
 function blobToBase64(blob: Blob): Promise<string> {
