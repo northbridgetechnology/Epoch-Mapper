@@ -90,8 +90,8 @@ export interface MapData {
   /** Looping background track for this level (AudioTrackDef id). Absent = fall
    *  back to the game's default track (GameMeta.defaultMusicId). */
   musicId?: string
-  /** Turn system for battles on this level. Absent/'classic' = the default
-   *  speed-ordered round-robin; 'pressTurn' = weakness/crit grants bonus turns. */
+  /** @deprecated Combat mode is now a global rule (GameMeta.combatMode). This
+   *  legacy per-map value is honored only when the global one is unset. */
   combatMode?: import('./engine-types').CombatMode
 }
 

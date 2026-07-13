@@ -406,6 +406,10 @@ export interface GameMeta {
   /** Generic boss track — plays for encounters flagged boss (unless the
    *  encounter carries its own custom musicId). */
   bossMusicId?: DefRef<AudioTrackDef>
+  /** Turn system for all battles (classic / oneMore / pressTurn). Global game
+   *  rule; legacy per-map MapData.combatMode is honored only when this is
+   *  unset. Default 'classic'. */
+  combatMode?: CombatMode
 }
 
 /** A short, paced intro shown once when starting a new game. */

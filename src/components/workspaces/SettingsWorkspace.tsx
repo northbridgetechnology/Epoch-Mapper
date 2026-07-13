@@ -24,7 +24,6 @@ interface SettingsWorkspaceProps {
   /** Author-tunable formula overrides (Ruleset.formulas). */
   formulas?: { xpToNext?: string }
   onFormulasChange?: (patch: { xpToNext?: string }) => void
-  onCombatModeChange?: (mapIdx: number, mode: 'classic' | 'oneMore' | 'pressTurn') => void
 }
 
 const COMBAT_MODES: { id: 'classic' | 'oneMore' | 'pressTurn'; label: string; hint: string }[] = [
@@ -120,6 +119,17 @@ function GameRules({ meta, onMetaChange }: { meta: GameMeta; onMetaChange: (patc
             <option value="anywhere">Anywhere</option>
             <option value="savePoints">Save points only</option>
           </select>
+        </label>
+        <label className="flex flex-col gap-1 rounded-lg border border-white/8 bg-white/4 px-3 py-2">
+          <span className="text-[11px] text-white/60 font-medium">⚔️ Combat system</span>
+          <select
+            value={meta.combatMode ?? 'classic'}
+            onChange={e => onMetaChange({ combatMode: e.target.value === 'classic' ? undefined : e.target.value as 'oneMore' | 'pressTurn' })}
+            className="px-2 py-1 rounded bg-zinc-800 border border-white/10 text-xs text-white/80 focus:outline-none"
+          >
+            {COMBAT_MODES.map(m => <option key={m.id} value={m.id}>{m.label}</option>)}
+          </select>
+          <span className="text-[10px] text-white/30">{COMBAT_MODES.find(m => m.id === (meta.combatMode ?? 'classic'))?.hint}</span>
         </label>
         <label className="flex flex-col gap-1 rounded-lg border border-white/8 bg-white/4 px-3 py-2">
           <span className="text-[11px] text-white/60 font-medium">Wipe gold penalty (%)</span>
@@ -284,7 +294,7 @@ function OpeningSlideRow({ slide, index, count, onText, onImage, onMove, onRemov
   )
 }
 
-export function SettingsWorkspace({ maps, onThemeChange, onDarkChange, meta, onMetaChange, tracks = [], onMusicChange, onCombatModeChange, formulas, onFormulasChange }: SettingsWorkspaceProps) {
+export function SettingsWorkspace({ maps, onThemeChange, onDarkChange, meta, onMetaChange, tracks = [], onMusicChange, formulas, onFormulasChange }: SettingsWorkspaceProps) {
   if (maps.length === 0) {
     return (
       <div className="flex-1 flex items-center justify-center text-white/20 text-sm">
@@ -395,24 +405,6 @@ export function SettingsWorkspace({ maps, onThemeChange, onDarkChange, meta, onM
                 </label>
               )}
 
-              {onCombatModeChange && (
-                <div className="flex items-center gap-2.5 rounded-lg border border-white/8 bg-white/4 px-3 py-2">
-                  <span className="text-xs text-white/70">⚔️ Combat</span>
-                  <div className="flex gap-1">
-                    {COMBAT_MODES.map(m => {
-                      const active = (map.combatMode ?? 'classic') === m.id
-                      return (
-                        <button key={m.id} onClick={() => onCombatModeChange(idx, m.id)} title={m.hint}
-                          className={cn('px-2 py-0.5 rounded text-xs border transition-colors',
-                            active ? 'bg-amber-600/25 border-amber-500/50 text-amber-200' : 'bg-zinc-800 border-white/10 text-white/45 hover:text-white/70')}>
-                          {m.label}
-                        </button>
-                      )
-                    })}
-                  </div>
-                  <span className="text-[10px] text-white/30">{COMBAT_MODES.find(m => m.id === (map.combatMode ?? 'classic'))?.hint}</span>
-                </div>
-              )}
             </div>
           )
         })}

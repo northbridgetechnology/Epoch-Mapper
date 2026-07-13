@@ -359,7 +359,11 @@ function resolveCombatEffects(
         }
         const def = ruleset.statusEffects.find(s => s.id === eff.status)
         if (!def) continue
-        if (!target.statuses.some(s => s.def === eff.status)) {
+        if (target.statuses.some(s => s.def === eff.status)) {
+          // No stacking and no timer refresh — re-applying (e.g. spamming
+          // Charge!) wastes the action. Say so.
+          log.push({ text: `${target.name} is already ${def.name}.`, kind: 'info' })
+        } else {
           const remaining = def.durationTurns > 0 ? def.durationTurns : 999
           cur = cur.map((a, i) =>
             i === tIdx

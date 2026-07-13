@@ -675,4 +675,52 @@ test('status modifiers now shape combat stats (Armor Broken → more damage)', (
   assert.ok(run(true) > run(false))   // -6 defense bites
 })
 
+
+// ── Charge anti-cheese: no stacking, one boost per action ────────────────────
+
+test('re-applying Charge neither stacks nor refreshes — wasted action is logged', () => {
+  const rules = makeDefaultRuleset()
+  const mk = () => ({ ...heroWith({}, { might: 14, agility: 20 }), id: 'nc', knownSkills: ['skill.charge'] }) as Character
+  const s0 = initCombat([mk()], modeEnc('enemy.tank'), { ruleset: rules, seed: 9 })
+  const primed = { ...s0, actors: s0.actors.map((a, i) => i === s0.turnIdx ? { ...a, statuses: [{ def: 'status.charged', remaining: 3 }] } : a) }
+  const after = resolvePlayerUseSkill(primed, 'skill.charge', [], rules, () => 0.5)
+  const me = after.actors.filter(a => a.kind === 'party')[0]
+  assert.equal(me.statuses.filter(st => st.def === 'status.charged').length, 1)  // still exactly one
+  assert.ok(after.log.some(l => l.text.includes('already')))                     // waste is visible
+})
+
+test('two boost statuses never multiply together — one consumed per attack', () => {
+  const rules = {
+    ...makeDefaultRuleset(),
+    statusEffects: [
+      ...makeDefaultRuleset().statusEffects,
+      { id: 'status.overdrive', name: 'Overdrive', kind: 'buff', durationTurns: 3, blocksAction: false, boostScope: 'physical', boostMult: 3 },
+    ],
+  } as unknown as Ruleset
+  const mk = () => ({ ...heroWith({}, { might: 14, agility: 20 }), id: 'db' }) as Character
+  const enemyIdxOf = (s: CombatState) => s.actors.findIndex(a => a.kind === 'enemy')
+  const plainState = initCombat([mk()], modeEnc('enemy.tank'), { ruleset: rules, seed: 11 })
+  const plain = 300 - resolvePlayerAttack(plainState, enemyIdxOf(plainState), rules, () => 0.5).actors[enemyIdxOf(plainState)].hp
+  const s0 = initCombat([mk()], modeEnc('enemy.tank'), { ruleset: rules, seed: 11 })
+  const doubled = { ...s0, actors: s0.actors.map((a, i) => i === s0.turnIdx
+    ? { ...a, statuses: [{ def: 'status.charged', remaining: 3 }, { def: 'status.overdrive', remaining: 3 }] } : a) }
+  const after = resolvePlayerAttack(doubled, enemyIdxOf(s0), rules, () => 0.5)
+  assert.equal(300 - after.actors[enemyIdxOf(s0)].hp, plain * 2)                 // ×2 only, never ×6
+  const me = after.actors.filter(a => a.kind === 'party')[0]
+  assert.ok(!me.statuses.some(st => st.def === 'status.charged'))               // charged consumed
+  assert.ok(me.statuses.some(st => st.def === 'status.overdrive'))             // overdrive survives for a LATER attack
+})
+
+test('Charged and Concentrated coexist but never double-dip one action', () => {
+  const rules = makeDefaultRuleset()
+  const mk = () => ({ ...heroWith({}, { might: 14, agility: 20 }), id: 'cc' }) as Character
+  const s0 = initCombat([mk()], modeEnc('enemy.tank'), { ruleset: rules, seed: 13 })
+  const both = { ...s0, actors: s0.actors.map((a, i) => i === s0.turnIdx
+    ? { ...a, statuses: [{ def: 'status.concentrated', remaining: 3 }, { def: 'status.charged', remaining: 3 }] } : a) }
+  const after = resolvePlayerAttack(both, s0.actors.findIndex(a => a.kind === 'enemy'), rules, () => 0.5)
+  const me = after.actors.filter(a => a.kind === 'party')[0]
+  assert.ok(!me.statuses.some(st => st.def === 'status.charged'))               // physical attack ate the physical boost
+  assert.ok(me.statuses.some(st => st.def === 'status.concentrated'))          // magical boost untouched
+})
+
 console.log(`\n${passed} passed`)
