@@ -160,4 +160,27 @@ test('normalizeRuleset seeds spell schools and keeps custom school strings', () 
   assert.equal(normalizeRuleset(modern).spellSchools, modern.spellSchools)
 })
 
+
+// ── Two-handed weapons claim the off-hand ─────────────────────────────────────
+
+test('a two-handed weapon is refused while the off-hand is occupied', () => {
+  const zwei = byId(ruleset.items, 'item.zweihander')
+  const equipment = { offhand: { def: 'item.buckler', qty: 1 } }
+  const res = canEquip(fighter, zwei, ruleset, equipment)
+  assert.equal(res.ok, false)
+  assert.match(res.reason ?? '', /both hands/i)
+  // hands free → fine
+  assert.equal(canEquip(fighter, zwei, ruleset, {}).ok, true)
+})
+
+test('an off-hand item is refused while a two-handed weapon is wielded', () => {
+  const buckler = byId(ruleset.items, 'item.buckler')
+  const equipment = { weapon: { def: 'item.zweihander', qty: 1 } }
+  const res = canEquip(fighter, buckler, ruleset, equipment)
+  assert.equal(res.ok, false)
+  assert.match(res.reason ?? '', /two-handed/i)
+  // one-handed weapon held → fine
+  assert.equal(canEquip(fighter, buckler, ruleset, { weapon: { def: 'item.longsword', qty: 1 } }).ok, true)
+})
+
 console.log(`\n${passed} equipment tests passed`)

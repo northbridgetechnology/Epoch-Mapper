@@ -45,6 +45,7 @@ export const ITEM_SCHEMA: FieldSchema[] = [
   },
   { key: 'value',     label: 'Gold Value',  type: 'number', min: 0 },
   { key: 'stackable', label: 'Stackable',   type: 'boolean' },
+  { key: 'modifiers', label: 'Stat Modifiers (while equipped — attribute or derived attack/defense/speed)', type: 'modifiers', optional: true },
   { key: 'twoHanded', label: 'Two-Handed',  type: 'boolean', optional: true },
   { key: 'charges',   label: 'Charges (wands/staves)', type: 'number', min: 1, optional: true },
   { key: 'lightRadius', label: 'Light Radius (cells, dark maps)', type: 'number', min: 1, optional: true },

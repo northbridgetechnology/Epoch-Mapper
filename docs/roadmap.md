@@ -211,3 +211,40 @@ World clocks driven by movement.
 - Anti-magic zones currently block party casting only; when enemy ability
   gating is revisited (press-turn work), extend `antiMagic` to enemy
   spell-like abilities (flag on `EnemyAbility`).
+
+## Known gaps & deferred work (scan of 2026-07-13)
+
+The three HIGH items from this scan are fixed (save-point policy detection,
+item/status stat-modifier editors, two-handed hand blocking). The rest is
+parked here, roughly by value:
+
+### Medium — half-wired features & system gaps
+- **Wand/staff charges never deplete.** The item editor promises
+  "Charges (wands/staves)" but `ItemInstance.charges` is only consumed by
+  torch burn-down (`burnSteps`). Design: cast-from-item consumes a charge;
+  at 0 the item breaks or goes inert.
+- **XP curve is hardcoded** (`xpToNextLevel = 50 × level^1.5`). Move it into
+  `FormulaOverrides` so authors can pace progression — and audit
+  `FormulaOverrides` generally: combat-engine doesn't read it either.
+- **Press-turn polish:** the HUD turn-order strip previews classic
+  round-robin during side phases; enemy AI neither exploits weaknesses nor
+  spends its icon economy deliberately; blink-icon animation.
+- **Skills system.** The Tab menu reserved room for Skills; martial classes
+  have no active abilities. A class-gated Skills table (stamina/cooldown)
+  would give Fighters/Rogues submenus and press-turn weakness tools.
+- **Enemy stat parity:** `EnemyDef.attributes` is a dead field — combat uses
+  flat attack/defense/speed. Wire it (enemy school scaling, stat-driven
+  bosses) or remove it.
+
+### Low — cleanup, polish, nice-to-haves
+- Dead fields with zero consumers: `GameMeta.startingPartyId`, `GameMeta.rows`,
+  `RaceDef.traits` (could become racial perks), `SpellDef.level` (redundant
+  with the `learn` table). Wire or delete.
+- Audio niceties: victory fanfare / boss-intro stingers, music ducking during
+  dialogue, a separate SFX bus with its own volume.
+- Spell-school depth: opposed schools, school-boost equipment
+  (+Elemental power gear), per-school MP discounts — the SpellSchoolDef table
+  already supports these without model changes.
+- QoL: a one-time "ruleset migrated" toast when `normalizeRuleset` heals a
+  legacy draft; a level-up summary popup (stat gains + spells learned) instead
+  of a name toast; Journal shows steps walked / playtime.

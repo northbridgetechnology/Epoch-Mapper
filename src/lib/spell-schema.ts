@@ -52,6 +52,7 @@ export const STATUS_SCHEMA: FieldSchema[] = [
   { key: 'kind',          label: 'Kind',                          type: { kind: 'enum', options: STATUS_KINDS } },
   { key: 'durationTurns', label: 'Duration (turns, 0=permanent)', type: 'number',  min: 0, max: 99 },
   { key: 'blocksAction',  label: 'Blocks Action (stun/sleep)',    type: 'boolean' },
+  { key: 'modifiers',     label: 'Stat Modifiers (while active — buffs/debuffs)', type: 'modifiers', optional: true },
   { key: 'tickEffects',   label: 'Tick Effects (each turn)',      type: 'effects' },
   { key: 'persistsExploring',   label: 'Persists while exploring (ticks per step)', type: 'boolean', optional: true },
   { key: 'exploreStepInterval', label: 'Steps between exploration ticks',           type: 'number', min: 1, max: 99, optional: true },

@@ -295,7 +295,7 @@ function equipFrom(char: Character, itemId: string, ruleset: Ruleset, inventory:
   const def = ruleset.items.find(i => i.id === itemId)
   if (!def?.slot) return { char, inventory, message: 'That cannot be equipped.', changed: false }
   const cls = ruleset.classes.find(c => c.id === char.classId)
-  const gate = canEquip(cls, def, ruleset)
+  const gate = canEquip(cls, def, ruleset, char.equipment)
   if (!gate.ok) return { char, inventory, message: gate.reason ?? `${char.name} can't equip that.`, changed: false }
   let inv = inventory
   const current = char.equipment[def.slot]

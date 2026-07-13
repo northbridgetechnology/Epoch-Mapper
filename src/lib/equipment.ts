@@ -6,7 +6,7 @@
  * untyped equippable are unrestricted. Pure; used by every equip surface.
  */
 
-import type { ClassDef, ItemDef, Ruleset } from './engine-types'
+import type { ClassDef, ItemDef, ItemInstance, ItemSlot, Ruleset } from './engine-types'
 
 export interface EquipCheck {
   ok: boolean
@@ -14,8 +14,27 @@ export interface EquipCheck {
   reason?: string
 }
 
-export function canEquip(cls: ClassDef | undefined, def: ItemDef | undefined, ruleset?: Ruleset): EquipCheck {
+export function canEquip(
+  cls: ClassDef | undefined,
+  def: ItemDef | undefined,
+  ruleset?: Ruleset,
+  /** The character's current equipment — enables the two-handed hand check. */
+  equipment?: Partial<Record<ItemSlot, ItemInstance>>,
+): EquipCheck {
   if (!def || !def.slot) return { ok: false, reason: 'Not equippable' }
+
+  // Two-handed weapons claim the off-hand: a 2H weapon can't join an occupied
+  // off-hand, and nothing fits the off-hand while a 2H weapon is wielded.
+  if (equipment) {
+    if (def.kind === 'weapon' && def.twoHanded && equipment.offhand) {
+      return { ok: false, reason: `${def.name} needs both hands — free the off-hand first` }
+    }
+    if (def.slot === 'offhand' && equipment.weapon && ruleset) {
+      const held = ruleset.items.find(i => i.id === equipment.weapon!.def)
+      if (held?.twoHanded) return { ok: false, reason: `Hands are full — ${held.name} is two-handed` }
+    }
+  }
+
   if (!cls) return { ok: true }
 
   if (!cls.allowedEquip.includes(def.slot)) {

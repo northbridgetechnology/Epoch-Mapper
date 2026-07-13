@@ -1214,8 +1214,9 @@ export function DungeonMapper({
     if (track) void music.play(track, battle ? { crossfadeMs: 400 } : undefined); else music.stop()
   }, [workspace, showTitle, introPhase, inBattle, activeEncounter, activeMap?.id, activeMap?.musicId, ruleset.meta, ruleset.audioTracks, ruleset.encounterTables])
 
-  // Save-point policy: saving anywhere, or only on Save Point cells
+  // Save-point policy: saving anywhere, or only while standing on a Save Point
   const canSaveHere = (ruleset.meta.savePolicy ?? 'anywhere') === 'anywhere'
+    || !!activeMap?.cells[`${activeMap.playerX},${activeMap.playerY}`]?.overlays?.includes(OVERLAY.SAVE_POINT)
     || !!(activeMap && activeMap.cells[`${activeMap.playerX},${activeMap.playerY}`]?.overlays?.includes(OVERLAY.SAVE_POINT))
 
   const handleSaveSlot = useCallback((slot: number) => {
