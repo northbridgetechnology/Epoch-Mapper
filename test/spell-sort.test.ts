@@ -6,7 +6,8 @@
 import assert from 'node:assert/strict'
 import { sortSpells, spellLearnLevel, sortStatuses } from '../src/lib/spell-schema'
 import { skillGroups } from '../src/lib/skill-schema'
-import type { ClassDef, SkillDef, SpellDef, SpellSchoolDef, StatusEffectDef } from '../src/lib/engine-types'
+import { itemGroups } from '../src/lib/item-schema'
+import type { ClassDef, ItemDef, SkillDef, SpellDef, SpellSchoolDef, StatusEffectDef } from '../src/lib/engine-types'
 
 let passed = 0
 function test(name: string, fn: () => void) {
@@ -89,6 +90,32 @@ test('skillGroups: name sort is flat (no groups)', () => {
   const { groups, rows } = skillGroups(skills, classes, 'name')
   assert.equal(groups, undefined)
   assert.deepEqual(rows.map(r => r.skill.id), ['orphan', 'shared', 'slash'])
+})
+
+// ── Item grouping ─────────────────────────────────────────────────────────────
+
+const it = (id: string, kind: string, value: number, slot?: string): ItemDef =>
+  ({ id, name: id, kind, slot, value, stackable: false }) as ItemDef
+const items = [
+  it('potion', 'consumable', 10),
+  it('plate', 'armor', 90, 'body'),
+  it('blade', 'weapon', 50, 'weapon'),
+  it('coin', 'misc', 1),
+]
+
+test('itemGroups: kind groups in ITEM_KINDS order, name within', () => {
+  const { groups, rows } = itemGroups(items, 'kind')
+  assert.deepEqual(groups?.map(g => g.id).slice(0, 3), ['weapon', 'armor', 'consumable'])
+  assert.deepEqual(rows.map(r => r.item.id), ['blade', 'plate', 'potion', 'coin'])
+})
+
+test('itemGroups: slot groups put non-equippables last; value/name are flat', () => {
+  const bySlot = itemGroups(items, 'slot')
+  assert.deepEqual(bySlot.rows.map(r => r.groupId), ['weapon', 'body', '_none', '_none'])
+  const byValue = itemGroups(items, 'value')
+  assert.equal(byValue.groups, undefined)
+  assert.deepEqual(byValue.rows.map(r => r.item.id), ['coin', 'potion', 'blade', 'plate'])
+  assert.deepEqual(itemGroups(items, 'name').rows.map(r => r.item.id), ['blade', 'coin', 'plate', 'potion'])
 })
 
 console.log(`\n${passed} spell-sort tests passed`)

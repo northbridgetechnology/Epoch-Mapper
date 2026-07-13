@@ -149,7 +149,8 @@ export { PlayWorkspace } from './components/workspaces/PlayWorkspace'
 export { GameMenu } from './components/GameMenu'
 
 // Item schema helpers
-export { ITEM_SCHEMA, LOOT_TABLE_SCHEMA, blankItem, blankLootTable, itemDisplayName } from './lib/item-schema'
+export { ITEM_SCHEMA, ITEM_KINDS, LOOT_TABLE_SCHEMA, blankItem, blankLootTable, itemDisplayName, itemGroups } from './lib/item-schema'
+export type { ItemSort } from './lib/item-schema'
 
 // Skill schema helpers
 export { SKILL_SCHEMA, blankSkill, skillGroups } from './lib/skill-schema'
