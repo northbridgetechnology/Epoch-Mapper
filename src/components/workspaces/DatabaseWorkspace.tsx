@@ -8,7 +8,7 @@ import type { ClassDef, ItemSlot, DamageType, WeaponTypeDef, ArmorTypeDef, Audio
 import { CLASS_SCHEMA, blankClass } from '@/lib/class-schema'
 import { WEAPON_TYPE_SCHEMA, ARMOR_TYPE_SCHEMA, DAMAGE_TYPE_OPTIONS, blankWeaponType, blankArmorType } from '@/lib/type-schema'
 import { blankAudioTrack } from '@/lib/music'
-import { SKILL_SCHEMA, blankSkill } from '@/lib/skill-schema'
+import { SKILL_SCHEMA, blankSkill, skillGroups, type SkillSort } from '@/lib/skill-schema'
 import { putTrack, deleteTrack, hasTrack } from '@/lib/audio-store'
 import { music } from '@/lib/audio-controller'
 import { EVENT_SCHEMA, QUEST_SCHEMA, blankEventDef, blankQuest } from '@/lib/npc-schema'
@@ -18,7 +18,7 @@ import { SchemaForm } from '../forms/SchemaForm'
 import { EffectBuilder } from '../forms/EffectBuilder'
 import { ITEM_SCHEMA, LOOT_TABLE_SCHEMA, blankItem } from '@/lib/item-schema'
 import { ENEMY_SCHEMA, ENCOUNTER_TABLE_SCHEMA, blankEnemy } from '@/lib/enemy-schema'
-import { SPELL_SCHEMA, STATUS_SCHEMA, SPELL_SCHOOL_SCHEMA, blankSpell, blankStatusEffect, blankSpellSchool, sortSpells, spellLearnLevel, type SpellSort } from '@/lib/spell-schema'
+import { SPELL_SCHEMA, STATUS_SCHEMA, STATUS_KINDS, SPELL_SCHOOL_SCHEMA, blankSpell, blankStatusEffect, blankSpellSchool, sortSpells, sortStatuses, spellLearnLevel, type SpellSort, type StatusSort } from '@/lib/spell-schema'
 import { SHOP_SCHEMA, blankShop } from '@/lib/shop-schema'
 
 type Category = 'items' | 'weapon_types' | 'armor_types' | 'spell_schools' | 'skills' | 'audio' | 'loot_tables' | 'bestiary' | 'encounters' | 'spells' | 'status_effects' | 'shops' | 'classes' | 'events' | 'quests'
@@ -621,7 +621,107 @@ function EncounterTableEditor({
 
 // ── Spell list ────────────────────────────────────────────────────────────────
 
-const SPELL_SORT_KEY = 'epoch.db.spellSort'
+// ── Sorted, collapsible-group lists (Spells / Status Effects / Skills) ────────
+
+/** A localStorage-persisted choice constrained to an allowed set. */
+function usePersistedChoice<T extends string>(key: string, allowed: readonly T[], dflt: T): [T, (v: T) => void] {
+  const [val, setVal] = useState<T>(() => {
+    try {
+      const v = window.localStorage.getItem(key)
+      if (v && (allowed as readonly string[]).includes(v)) return v as T
+    } catch { /* SSR / storage unavailable */ }
+    return dflt
+  })
+  const pick = (v: T) => {
+    setVal(v)
+    try { window.localStorage.setItem(key, v) } catch { /* ignore */ }
+  }
+  return [val, pick]
+}
+
+interface SortedRow { key: string; id: string; icon: string; name: string; sub?: string; groupId?: string }
+interface SortedGroup { id: string; label: string; icon?: string; color?: string }
+
+/** Entry list with a sort dropdown and collapsible group sections. Rows arrive
+ *  pre-sorted; groups (when present) render as clickable ▾/▸ headers. The group
+ *  holding the current selection stays open so it can never be lost. */
+function SortedList({ label, rows, groups, sortOptions, sort, onSort, selectedId, onSelect, onAdd, onDelete }: {
+  label: string
+  rows: SortedRow[]
+  groups?: SortedGroup[]
+  sortOptions: { id: string; label: string }[]
+  sort: string
+  onSort: (id: string) => void
+  selectedId: string | null
+  onSelect: (id: string) => void
+  onAdd: () => void
+  onDelete: (id: string) => void
+}) {
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
+  const toggle = (gid: string) => setCollapsed(prev => {
+    const next = new Set(prev)
+    if (next.has(gid)) next.delete(gid); else next.add(gid)
+    return next
+  })
+
+  const row = (r: SortedRow) => (
+    <div key={r.key}
+      className={cn('flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer group',
+        selectedId === r.id ? 'bg-amber-950/40 text-white' : 'text-white/70 hover:bg-white/5')}
+      onClick={() => onSelect(r.id)}
+    >
+      <span className="text-base w-6 text-center flex-shrink-0">{r.icon}</span>
+      <div className="flex-1 min-w-0">
+        <div className="text-sm truncate">{r.name}</div>
+        {r.sub && <div className="text-xs text-white/35 truncate">{r.sub}</div>}
+      </div>
+      <button onClick={ev => { ev.stopPropagation(); onDelete(r.id) }}
+        className="opacity-0 group-hover:opacity-100 p-0.5 rounded text-white/30 hover:text-red-400">
+        <Trash2 className="w-3 h-3" />
+      </button>
+    </div>
+  )
+
+  const uniqueCount = new Set(rows.map(r => r.id)).size
+  return (
+    <div className="flex flex-col h-full min-h-0">
+      <div className="flex items-center justify-between gap-1 px-3 py-2 border-b border-white/10">
+        <span className="text-xs font-semibold text-white/60 uppercase tracking-wide">{label} ({uniqueCount})</span>
+        <select value={sort} onChange={e => onSort(e.target.value)} title="Sort by…"
+          className="ml-auto px-1 py-0.5 rounded bg-zinc-800 border border-white/10 text-[10px] text-white/60 focus:outline-none">
+          {sortOptions.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
+        </select>
+        <button onClick={onAdd} className="flex items-center gap-1 px-2 py-0.5 rounded text-xs text-amber-300/80 hover:text-amber-200 hover:bg-amber-500/10">
+          <Plus className="w-3 h-3" /> New
+        </button>
+      </div>
+      <div className="flex-1 overflow-y-auto p-1.5 space-y-0.5 min-h-0">
+        {rows.length === 0 && <div className="text-center text-white/25 text-xs py-6">Nothing yet — click New</div>}
+        {groups ? groups.map(g => {
+          const members = rows.filter(r => r.groupId === g.id)
+          if (members.length === 0) return null
+          const containsSel = selectedId != null && members.some(r => r.id === selectedId)
+          const open = containsSel || !collapsed.has(g.id)
+          return (
+            <div key={g.id}>
+              <button onClick={() => toggle(g.id)}
+                title={containsSel ? 'Held open — contains the selected entry' : open ? 'Collapse' : 'Expand'}
+                className="flex items-center gap-1.5 w-full px-2 pt-2 pb-0.5 text-[10px] font-semibold uppercase tracking-wide text-left"
+                style={{ color: g.color ?? 'rgba(255,255,255,0.4)' }}>
+                <span className="w-3">{open ? '▾' : '▸'}</span>
+                {g.icon && <span>{g.icon}</span>}
+                <span className="flex-1">{g.label}</span>
+                <span className="text-white/25 normal-case">{members.length}</span>
+              </button>
+              {open && members.map(row)}
+            </div>
+          )
+        }) : rows.map(row)}
+      </div>
+    </div>
+  )
+}
+
 const SPELL_SORTS: { id: SpellSort; label: string }[] = [
   { id: 'school', label: 'School' },
   { id: 'level',  label: 'Level' },
@@ -629,14 +729,7 @@ const SPELL_SORTS: { id: SpellSort; label: string }[] = [
   { id: 'name',   label: 'Name' },
 ]
 
-function SpellList({
-  spells,
-  ruleset,
-  selectedId,
-  onSelect,
-  onAdd,
-  onDelete,
-}: {
+function SpellList({ spells, ruleset, selectedId, onSelect, onAdd, onDelete }: {
   spells: SpellDef[]
   ruleset: Ruleset
   selectedId: string | null
@@ -644,72 +737,23 @@ function SpellList({
   onAdd: () => void
   onDelete: (id: string) => void
 }) {
-  const [sort, setSort] = useState<SpellSort>(() => {
-    try {
-      const v = window.localStorage.getItem(SPELL_SORT_KEY)
-      if (v === 'school' || v === 'level' || v === 'mp' || v === 'name') return v
-    } catch { /* SSR / storage unavailable */ }
-    return 'school'
-  })
-  const pickSort = (v: SpellSort) => {
-    setSort(v)
-    try { window.localStorage.setItem(SPELL_SORT_KEY, v) } catch { /* ignore */ }
-  }
-  // View-only ordering — the authored ruleset array is never reordered.
-  const sorted = useMemo(() => sortSpells(spells, sort, ruleset.spellSchools ?? []), [spells, sort, ruleset.spellSchools])
-  const schoolOf = (id: string) => (ruleset.spellSchools ?? []).find(sc => sc.id === id)
-
-  return (
-    <div className="flex flex-col h-full min-h-0">
-      <div className="flex items-center justify-between gap-1 px-3 py-2 border-b border-white/10">
-        <span className="text-xs font-semibold text-white/60 uppercase tracking-wide">
-          Spells ({spells.length})
-        </span>
-        <select value={sort} onChange={e => pickSort(e.target.value as SpellSort)}
-          title="Sort spells by…"
-          className="ml-auto px-1 py-0.5 rounded bg-zinc-800 border border-white/10 text-[10px] text-white/60 focus:outline-none">
-          {SPELL_SORTS.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
-        </select>
-        <button onClick={onAdd} className="flex items-center gap-1 px-2 py-0.5 rounded text-xs text-amber-300/80 hover:text-amber-200 hover:bg-amber-500/10">
-          <Plus className="w-3 h-3" /> New
-        </button>
-      </div>
-      <div className="flex-1 overflow-y-auto p-1.5 space-y-0.5 min-h-0">
-        {spells.length === 0 && (
-          <div className="text-center text-white/25 text-xs py-6">No spells yet — click New</div>
-        )}
-        {sorted.map((s, i) => (
-          <Fragment key={s.id}>
-            {sort === 'school' && (i === 0 || sorted[i - 1].school !== s.school) && (() => {
-              const sc = schoolOf(s.school)
-              return (
-                <div className="flex items-center gap-1.5 px-2 pt-2 pb-0.5 text-[10px] font-semibold uppercase tracking-wide"
-                  style={{ color: sc?.color ?? 'rgba(255,255,255,0.35)' }}>
-                  <span>{sc?.icon ?? '✨'}</span>{sc?.name ?? s.school}
-                </div>
-              )
-            })()}
-            <div
-              className={cn(
-                'flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer group',
-                selectedId === s.id ? 'bg-amber-950/40 text-white' : 'text-white/70 hover:bg-white/5',
-              )}
-              onClick={() => onSelect(s.id)}
-            >
-              <span className="text-base w-6 text-center flex-shrink-0">{s.icon ?? '✨'}</span>
-              <div className="flex-1 min-w-0">
-                <div className="text-sm truncate">{s.name}</div>
-                <div className="text-xs text-white/35 capitalize">{schoolOf(s.school)?.name ?? s.school} · Lv {spellLearnLevel(s)} · {s.mpCost} MP</div>
-              </div>
-              <button onClick={ev => { ev.stopPropagation(); onDelete(s.id) }} className="opacity-0 group-hover:opacity-100 p-0.5 rounded text-white/30 hover:text-red-400">
-                <Trash2 className="w-3 h-3" />
-              </button>
-            </div>
-          </Fragment>
-        ))}
-      </div>
-    </div>
-  )
+  const [sort, setSort] = usePersistedChoice<SpellSort>('epoch.db.spellSort', ['school', 'level', 'mp', 'name'], 'school')
+  const schools = useMemo(() => ruleset.spellSchools ?? [], [ruleset.spellSchools])
+  const rows = useMemo<SortedRow[]>(() => sortSpells(spells, sort, schools).map(s => ({
+    key: s.id, id: s.id, icon: s.icon ?? '✨', name: s.name,
+    sub: `${schools.find(sc => sc.id === s.school)?.name ?? s.school} · Lv ${spellLearnLevel(s)} · ${s.mpCost} MP`,
+    groupId: sort === 'school' ? s.school : undefined,
+  })), [spells, sort, schools])
+  const groups = useMemo<SortedGroup[] | undefined>(() => {
+    if (sort !== 'school') return undefined
+    const known: SortedGroup[] = schools.map(sc => ({ id: sc.id, label: sc.name, icon: sc.icon, color: sc.color }))
+    const extras = Array.from(new Set(spells.map(s => s.school).filter(id => id && !schools.some(sc => sc.id === id))))
+      .map(id => ({ id, label: id }))
+    return [...known, ...extras]
+  }, [sort, schools, spells])
+  return <SortedList label="Spells" rows={rows} groups={groups} sortOptions={SPELL_SORTS}
+    sort={sort} onSort={v => setSort(v as SpellSort)}
+    selectedId={selectedId} onSelect={onSelect} onAdd={onAdd} onDelete={onDelete} />
 }
 
 // ── Spell editor ──────────────────────────────────────────────────────────────
@@ -736,55 +780,32 @@ function SpellEditor({ spell, ruleset, onChange }: { spell: SpellDef; ruleset: R
 
 // ── Status effect list ────────────────────────────────────────────────────────
 
-function StatusList({
-  statuses,
-  selectedId,
-  onSelect,
-  onAdd,
-  onDelete,
-}: {
+const STATUS_SORTS: { id: StatusSort; label: string }[] = [
+  { id: 'kind',     label: 'Kind' },
+  { id: 'duration', label: 'Duration' },
+  { id: 'name',     label: 'Name' },
+]
+
+function StatusList({ statuses, selectedId, onSelect, onAdd, onDelete }: {
   statuses: StatusEffectDef[]
   selectedId: string | null
   onSelect: (id: string) => void
   onAdd: () => void
   onDelete: (id: string) => void
 }) {
-  return (
-    <div className="flex flex-col h-full min-h-0">
-      <div className="flex items-center justify-between px-3 py-2 border-b border-white/10">
-        <span className="text-xs font-semibold text-white/60 uppercase tracking-wide">
-          Status Effects ({statuses.length})
-        </span>
-        <button onClick={onAdd} className="flex items-center gap-1 px-2 py-0.5 rounded text-xs text-amber-300/80 hover:text-amber-200 hover:bg-amber-500/10">
-          <Plus className="w-3 h-3" /> New
-        </button>
-      </div>
-      <div className="flex-1 overflow-y-auto p-1.5 space-y-0.5 min-h-0">
-        {statuses.length === 0 && (
-          <div className="text-center text-white/25 text-xs py-6">No status effects yet — click New</div>
-        )}
-        {statuses.map(s => (
-          <div
-            key={s.id}
-            className={cn(
-              'flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer group',
-              selectedId === s.id ? 'bg-amber-950/40 text-white' : 'text-white/70 hover:bg-white/5',
-            )}
-            onClick={() => onSelect(s.id)}
-          >
-            <span className="text-base w-6 text-center flex-shrink-0">{s.icon ?? '⚡'}</span>
-            <div className="flex-1 min-w-0">
-              <div className="text-sm truncate">{s.name}</div>
-              <div className="text-xs text-white/35 capitalize">{s.kind} · {s.durationTurns === 0 ? 'permanent' : `${s.durationTurns} turns`}</div>
-            </div>
-            <button onClick={ev => { ev.stopPropagation(); onDelete(s.id) }} className="opacity-0 group-hover:opacity-100 p-0.5 rounded text-white/30 hover:text-red-400">
-              <Trash2 className="w-3 h-3" />
-            </button>
-          </div>
-        ))}
-      </div>
-    </div>
-  )
+  const [sort, setSort] = usePersistedChoice<StatusSort>('epoch.db.statusSort', ['kind', 'duration', 'name'], 'kind')
+  const kindLabel = (k: string) => STATUS_KINDS.find(o => o.value === k)?.label ?? k
+  const rows = useMemo<SortedRow[]>(() => sortStatuses(statuses, sort).map(s => ({
+    key: s.id, id: s.id, icon: s.icon ?? '🌀', name: s.name,
+    sub: `${kindLabel(s.kind)} · ${s.durationTurns === 0 ? 'permanent' : `${s.durationTurns} turn${s.durationTurns === 1 ? '' : 's'}`}`,
+    groupId: sort === 'kind' ? s.kind : undefined,
+  })), [statuses, sort])
+  const groups = useMemo<SortedGroup[] | undefined>(() => sort === 'kind'
+    ? STATUS_KINDS.map(k => ({ id: k.value, label: k.label }))
+    : undefined, [sort])
+  return <SortedList label="Status Effects" rows={rows} groups={groups} sortOptions={STATUS_SORTS}
+    sort={sort} onSort={v => setSort(v as StatusSort)}
+    selectedId={selectedId} onSelect={onSelect} onAdd={onAdd} onDelete={onDelete} />
 }
 
 // ── Status effect editor ──────────────────────────────────────────────────────
@@ -1338,6 +1359,46 @@ function ArmorTypeEditor({ atype, onChange }: {
       <SchemaForm schema={ARMOR_TYPE_SCHEMA} value={raw} onChange={handle} />
     </div>
   )
+}
+
+const SKILL_SORTS: { id: SkillSort; label: string }[] = [
+  { id: 'class', label: 'Class' },
+  { id: 'name',  label: 'Name' },
+]
+
+function SkillList({ skills, ruleset, selectedId, onSelect, onAdd, onDelete }: {
+  skills: SkillDef[]
+  ruleset: Ruleset
+  selectedId: string | null
+  onSelect: (id: string) => void
+  onAdd: () => void
+  onDelete: (id: string) => void
+}) {
+  const [sort, setSort] = usePersistedChoice<SkillSort>('epoch.db.skillSort', ['class', 'name'], 'class')
+  const costOf = (s: SkillDef) => {
+    const bits: string[] = []
+    if (s.hpCostPct) bits.push(`${Math.round(s.hpCostPct * 100)}% HP`)
+    if (s.mpCost) bits.push(`${s.mpCost} MP`)
+    if (s.cooldown) bits.push(`CD ${s.cooldown}`)
+    return bits.length ? bits.join(' · ') : 'free'
+  }
+  const { rows, groups } = useMemo(() => {
+    const g = skillGroups(skills, ruleset.classes, sort)
+    return {
+      rows: g.rows.map(({ skill, groupId, key }) => {
+        const lv = groupId && groupId !== '_unassigned' ? skill.learn?.find(l => l.classId === groupId)?.level : undefined
+        return {
+          key, id: skill.id, icon: skill.icon ?? '💥', name: skill.name,
+          sub: `${lv ? `Lv ${lv} · ` : ''}${costOf(skill)}`,
+          groupId,
+        }
+      }),
+      groups: g.groups,
+    }
+  }, [skills, sort, ruleset.classes])
+  return <SortedList label="Skills" rows={rows} groups={groups} sortOptions={SKILL_SORTS}
+    sort={sort} onSort={v => setSort(v as SkillSort)}
+    selectedId={selectedId} onSelect={onSelect} onAdd={onAdd} onDelete={onDelete} />
 }
 
 // ── Spell school editor ───────────────────────────────────────────────────────
@@ -1899,7 +1960,7 @@ export function DatabaseWorkspace({ ruleset, onRulesetChange }: DatabaseWorkspac
             selectedId={selectedId} onSelect={setSelectedId} onAdd={addArmorType} onDelete={deleteArmorType} />
         )}
         {category === 'skills' && (
-          <GenericDefList label="Skills" entries={(ruleset.skills ?? []).map(s => ({ id: s.id, icon: s.icon ?? '💥', name: s.name }))}
+          <SkillList skills={ruleset.skills ?? []} ruleset={ruleset}
             selectedId={selectedId} onSelect={setSelectedId} onAdd={addSkill} onDelete={deleteSkill} />
         )}
         {category === 'spell_schools' && (

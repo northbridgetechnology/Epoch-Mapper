@@ -152,7 +152,8 @@ export { GameMenu } from './components/GameMenu'
 export { ITEM_SCHEMA, LOOT_TABLE_SCHEMA, blankItem, blankLootTable, itemDisplayName } from './lib/item-schema'
 
 // Skill schema helpers
-export { SKILL_SCHEMA, blankSkill } from './lib/skill-schema'
+export { SKILL_SCHEMA, blankSkill, skillGroups } from './lib/skill-schema'
+export type { SkillSort } from './lib/skill-schema'
 
 // Class schema helpers
 export { CLASS_SCHEMA, blankClass } from './lib/class-schema'
@@ -186,8 +187,8 @@ export { CharacterBuilder } from './components/CharacterBuilder'
 export { OpeningStoryOverlay } from './components/OpeningStory'
 
 // Spell + status-effect schema helpers (Phase E5)
-export { SPELL_SCHEMA, STATUS_SCHEMA, blankSpell, blankStatusEffect, SPELL_SCHOOL_SCHEMA, blankSpellSchool, sortSpells, spellLearnLevel } from './lib/spell-schema'
-export type { SpellSort } from './lib/spell-schema'
+export { SPELL_SCHEMA, STATUS_SCHEMA, STATUS_KINDS, blankSpell, blankStatusEffect, SPELL_SCHOOL_SCHEMA, blankSpellSchool, sortSpells, sortStatuses, spellLearnLevel } from './lib/spell-schema'
+export type { SpellSort, StatusSort } from './lib/spell-schema'
 
 // Out-of-combat effect resolver
 export { applyEffectToChar, applyConsumable } from './lib/apply-effects'

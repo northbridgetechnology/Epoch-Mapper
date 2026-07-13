@@ -4,8 +4,9 @@
  */
 
 import assert from 'node:assert/strict'
-import { sortSpells, spellLearnLevel } from '../src/lib/spell-schema'
-import type { SpellDef, SpellSchoolDef } from '../src/lib/engine-types'
+import { sortSpells, spellLearnLevel, sortStatuses } from '../src/lib/spell-schema'
+import { skillGroups } from '../src/lib/skill-schema'
+import type { ClassDef, SkillDef, SpellDef, SpellSchoolDef, StatusEffectDef } from '../src/lib/engine-types'
 
 let passed = 0
 function test(name: string, fn: () => void) {
@@ -46,6 +47,48 @@ test('sorting never mutates the input array', () => {
   const before = spells.map(s => s.id)
   sortSpells(spells, 'name', schools)
   assert.deepEqual(spells.map(s => s.id), before)
+})
+
+
+// ── Status sorting ────────────────────────────────────────────────────────────
+
+const st = (id: string, kind: string, dur: number): StatusEffectDef =>
+  ({ id, name: id, kind, durationTurns: dur, blocksAction: false }) as StatusEffectDef
+const statuses = [st('frozen', 'control', 2), st('haste', 'buff', 3), st('venom', 'dot', 4), st('slow', 'debuff', 1)]
+
+test('status sort: kind order (buff→debuff→dot→hot→control), duration, name', () => {
+  assert.deepEqual(sortStatuses(statuses, 'kind').map(s => s.id), ['haste', 'slow', 'venom', 'frozen'])
+  assert.deepEqual(sortStatuses(statuses, 'duration').map(s => s.id), ['slow', 'frozen', 'haste', 'venom'])
+  assert.deepEqual(sortStatuses(statuses, 'name').map(s => s.id), ['frozen', 'haste', 'slow', 'venom'])
+})
+
+// ── Skill grouping by class ───────────────────────────────────────────────────
+
+const classes = [
+  { id: 'c.fighter', name: 'Fighter' },
+  { id: 'c.rogue', name: 'Rogue' },
+] as ClassDef[]
+const sk = (id: string, learn?: { classId: string; level: number }[]): SkillDef =>
+  ({ id, name: id, target: 'enemy', effects: [], learn }) as SkillDef
+const skills = [
+  sk('shared', [{ classId: 'c.fighter', level: 6 }, { classId: 'c.rogue', level: 2 }]),
+  sk('slash', [{ classId: 'c.fighter', level: 1 }]),
+  sk('orphan'),
+]
+
+test('skillGroups: class groups in class order, learn-level ordering, multi-class duplication', () => {
+  const { groups, rows } = skillGroups(skills, classes, 'class')
+  assert.deepEqual(groups?.map(g => g.id), ['c.fighter', 'c.rogue', '_unassigned'])
+  // fighter: slash (lv1) before shared (lv6); rogue: shared; orphan → unassigned
+  assert.deepEqual(rows.map(r => r.key), ['c.fighter_slash', 'c.fighter_shared', 'c.rogue_shared', 'u_orphan'])
+  // shared appears in both class groups
+  assert.equal(rows.filter(r => r.skill.id === 'shared').length, 2)
+})
+
+test('skillGroups: name sort is flat (no groups)', () => {
+  const { groups, rows } = skillGroups(skills, classes, 'name')
+  assert.equal(groups, undefined)
+  assert.deepEqual(rows.map(r => r.skill.id), ['orphan', 'shared', 'slash'])
 })
 
 console.log(`\n${passed} spell-sort tests passed`)

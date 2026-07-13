@@ -12,7 +12,7 @@ const SPELL_TARGETS = [
   { value: 'none',       label: 'None (utility)' },
 ]
 
-const STATUS_KINDS = [
+export const STATUS_KINDS = [
   { value: 'buff',    label: 'Buff' },
   { value: 'debuff',  label: 'Debuff' },
   { value: 'dot',     label: 'Damage over Time' },
@@ -38,6 +38,21 @@ export function sortSpells(spells: SpellDef[], sort: SpellSort, schools: SpellSc
     case 'level':  return arr.sort((a, b) => spellLearnLevel(a) - spellLearnLevel(b) || byName(a, b))
     case 'mp':     return arr.sort((a, b) => a.mpCost - b.mpCost || byName(a, b))
     case 'name':   return arr.sort(byName)
+  }
+}
+
+
+export type StatusSort = 'kind' | 'duration' | 'name'
+
+/** View-only sort for the status-effect list (never reorders the ruleset). */
+export function sortStatuses(list: StatusEffectDef[], sort: StatusSort): StatusEffectDef[] {
+  const kindOrder = (k: string) => { const i = STATUS_KINDS.findIndex(o => o.value === k); return i < 0 ? 999 : i }
+  const byName = (a: StatusEffectDef, b: StatusEffectDef) => a.name.localeCompare(b.name)
+  const arr = [...list]
+  switch (sort) {
+    case 'kind':     return arr.sort((a, b) => kindOrder(a.kind) - kindOrder(b.kind) || byName(a, b))
+    case 'duration': return arr.sort((a, b) => a.durationTurns - b.durationTurns || byName(a, b))
+    case 'name':     return arr.sort(byName)
   }
 }
 
