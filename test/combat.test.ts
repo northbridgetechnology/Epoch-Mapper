@@ -10,6 +10,8 @@ import {
   resolvePlayerCast,
   resolvePlayerDefend,
   resolvePlayerUseItem,
+  resolvePlayerUseSkill,
+  canUseSkill,
   resolveEnemyTurn,
   resolveAllOutAttack,
   resolveSelectActor,
@@ -576,6 +578,46 @@ test('press modes: enemy AI overweights weakness-hitting abilities', () => {
   }
   assert.ok(!run('classic').events.some(e => e.kind === 'weak'))
   assert.ok(run('pressTurn').events.some(e => e.kind === 'weak'))
+})
+
+
+// ── Skills ────────────────────────────────────────────────────────────────────
+
+test('skill use: pays HP cost, damages, sets cooldown, blocks until ready', () => {
+  const rules = makeDefaultRuleset()
+  const bruiser = {
+    ...heroWith({}, { might: 14, agility: 20, endurance: 10 }),
+    id: 'br', name: 'Bruiser', knownSkills: ['skill.deadeye'],
+  } as Character
+  const s0 = initCombat([bruiser], modeEnc('enemy.tank'), { ruleset: rules, seed: 3 })
+  const enemyIdx = s0.actors.findIndex(a => a.kind === 'enemy')
+  const hpBefore = s0.actors[s0.turnIdx].hp
+  const maxHp = s0.actors[s0.turnIdx].maxHp
+  const s1 = resolvePlayerUseSkill(s0, 'skill.deadeye', [enemyIdx], rules, () => 0.5)
+  const userIdx = s0.turnIdx
+  assert.equal(s1.actors[userIdx].hp, hpBefore - Math.ceil(maxHp * 0.08))  // 8% HP paid
+  assert.ok(s1.actors[enemyIdx].hp < 300)                                  // damage landed
+  assert.equal(s1.skillCooldowns?.[`${userIdx}:skill.deadeye`], s0.round + 2)
+  const gate = canUseSkill({ ...s1, turnIdx: userIdx, phase: 'player_action' }, rules.skills.find(s => s.id === 'skill.deadeye')!)
+  assert.equal(gate.ok, false)
+  assert.match(gate.reason ?? '', /Ready in/)
+})
+
+test('level-up auto-learns class skills (fighter → Cleave at 4)', () => {
+  const rules = makeDefaultRuleset()
+  const vet = {
+    id: 'v', name: 'Vet', classId: 'class.fighter', raceId: 'race.human',
+    level: 3, xp: Math.round(50 * Math.pow(3, 1.5)) - 1, alive: true, statuses: [],
+    knownSpells: [], knownSkills: ['skill.power_strike'], equipment: {},
+    attributes: { 'attr.might': 12, 'attr.endurance': 12 }, hp: 20, maxHp: 40, mp: 0, maxMp: 0,
+  } as unknown as Character
+  const state = {
+    phase: 'victory', xpReward: 10, drops: [], goldReward: 0, itemsUsed: {},
+    actors: [{ kind: 'party', idx: 0, hp: 20, alive: true, mp: 0, statuses: [] }],
+  } as unknown as CombatState
+  const { party: after } = applyCombatOutcome([vet], state, rules)
+  assert.equal(after[0].level, 4)
+  assert.ok(after[0].knownSkills?.includes('skill.cleave'))
 })
 
 console.log(`\n${passed} passed`)

@@ -90,4 +90,13 @@ test('npcToCharacter: recruits above level 1 get class growth baked in', () => {
   assert.equal(ch.attributes['attr.might'], 17)
 })
 
+
+test('npcToCharacter: seeds class skills up to the recruit level', () => {
+  const fighter = ruleset.classes.find(c => c.id === 'class.fighter')!
+  const def: NpcDef = { id: 'npc.brute', name: 'Brute', classId: fighter.id, raceId: race.id, level: 5, lines: [], recruitable: true }
+  const ch = npcToCharacter(def, ruleset)
+  assert.ok(ch.knownSkills?.includes('skill.power_strike'))  // lv1
+  assert.ok(ch.knownSkills?.includes('skill.cleave'))        // lv4
+})
+
 console.log(`\n${passed} passed`)

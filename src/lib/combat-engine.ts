@@ -3,7 +3,7 @@
  * No DOM, no React. All mutations return new state objects.
  */
 
-import type { Character, ActiveStatus, CombatMode, CombatTuning, EnemyAbility, Effect, Formation, ItemInstance, Ruleset } from './engine-types'
+import type { Character, ActiveStatus, CombatMode, CombatTuning, EnemyAbility, Effect, Formation, ItemInstance, Ruleset, SkillDef } from './engine-types'
 import { resolveLootTable } from './event-engine'
 import { deriveMaxHp, deriveMaxMp, xpToNextLevel } from './engine-types'
 import type { ResolvedEncounter } from './engine-types'
@@ -109,6 +109,8 @@ export interface CombatState {
    *  party phase. When every living enemy is down, the party may All-Out Attack.
    *  Enemies stand back up (cleared) when the enemy phase begins. */
   downed?: number[]
+  /** Skill cooldowns: `${actorIdx}:${skillId}` → round it is usable again. */
+  skillCooldowns?: Record<string, number>
 }
 
 // ── Seeded RNG (mulberry32) ───────────────────────────────────────────────────
@@ -917,6 +919,54 @@ export function resolveAllOutAttack(state: CombatState, ruleset: Ruleset, rng?: 
   return finishAction(advancePressTurn(spent, ruleset, rand, 'normal'), box, events, state)
 }
 
+// ── Player: use skill ─────────────────────────────────────────────────────────
+
+/** Whether the current actor may use `skill` right now (cost + cooldown). */
+export function canUseSkill(state: CombatState, skill: SkillDef): { ok: boolean; reason?: string } {
+  const user = state.actors[state.turnIdx]
+  if (!user || !user.alive || user.kind !== 'party') return { ok: false, reason: 'Not your turn' }
+  const hpCost = Math.ceil(user.maxHp * (skill.hpCostPct ?? 0))
+  if (hpCost > 0 && user.hp <= hpCost) return { ok: false, reason: 'Not enough HP' }
+  if ((skill.mpCost ?? 0) > user.mp) return { ok: false, reason: 'Not enough MP' }
+  const readyAt = state.skillCooldowns?.[`${state.turnIdx}:${skill.id}`] ?? 0
+  if (state.round < readyAt) return { ok: false, reason: `Ready in ${readyAt - state.round} round${readyAt - state.round === 1 ? '' : 's'}` }
+  return { ok: true }
+}
+
+export function resolvePlayerUseSkill(
+  state: CombatState,
+  skillId: string,
+  targetActorIdxs: number[],
+  ruleset: Ruleset,
+  rng?: () => number,
+): CombatState {
+  const user = state.actors[state.turnIdx]
+  const skill = (ruleset.skills ?? []).find(s => s.id === skillId)
+  if (!user || !skill || !canUseSkill(state, skill).ok) return state
+
+  const box = { s: state.rngState }
+  const rand = rng ?? (() => nextRand(box))
+  const hpCost = Math.ceil(user.maxHp * (skill.hpCostPct ?? 0))
+  const actorsAfterCost = state.actors.map((a, i) =>
+    i === state.turnIdx ? { ...a, hp: a.hp - hpCost, mp: a.mp - (skill.mpCost ?? 0) } : a,
+  )
+  const entry: CombatLogEntry = { text: `${user.name} uses ${skill.name}!`, kind: 'spell' }
+  const { actors, log, events } = resolveCombatEffects(
+    skill.effects, state.turnIdx, targetActorIdxs, actorsAfterCost, ruleset, rand,
+  )
+  const skillCooldowns = skill.cooldown
+    ? { ...(state.skillCooldowns ?? {}), [`${state.turnIdx}:${skill.id}`]: state.round + skill.cooldown }
+    : state.skillCooldowns
+  return finishAction(
+    proceedAfterAction(
+      withDowned({ ...state, actors, skillCooldowns, log: [...state.log, entry, ...log] }, events),
+      ruleset, rand,
+      { weak: events.some(e => e.kind === 'weak'), crit: events.some(e => e.kind === 'crit') },
+    ),
+    box, events, state,
+  )
+}
+
 // ── Player: use item ──────────────────────────────────────────────────────────
 
 export function resolvePlayerUseItem(
@@ -1165,11 +1215,16 @@ export function applyCombatOutcome(
           .filter(sp => !char.knownSpells.includes(sp.id)
             && sp.learn?.some(l => l.classId === char.classId && l.level <= newLevel))
           .map(sp => sp.id)
+        const learnedSkills = (ruleset.skills ?? [])
+          .filter(sk => !(char.knownSkills ?? []).includes(sk.id)
+            && sk.learn?.some(l => l.classId === char.classId && l.level <= newLevel))
+          .map(sk => sk.id)
         return {
           ...char, level: newLevel, xp: newXp - threshold, attributes,
           unspentPoints: (char.unspentPoints ?? 0) + (cls.levelPoints ?? 0),
           maxHp: newMaxHp, hp: newMaxHp, maxMp: newMaxMp, mp: newMaxMp,
           knownSpells: learned.length > 0 ? [...char.knownSpells, ...learned] : char.knownSpells,
+          knownSkills: learnedSkills.length > 0 ? [...(char.knownSkills ?? []), ...learnedSkills] : char.knownSkills,
         }
       }
       return { ...char, xp: newXp }

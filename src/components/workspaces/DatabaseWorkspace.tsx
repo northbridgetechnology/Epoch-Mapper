@@ -1,13 +1,14 @@
 'use client'
 
 import { Fragment, useEffect, useRef, useState } from 'react'
-import { Plus, Trash2, Package, List, Skull, Swords, Sparkles, Zap, Store, Puzzle, ScrollText, Shield, Sword, Shirt, Music, BookOpen, Upload, Play, Square } from 'lucide-react'
+import { Plus, Trash2, Package, List, Skull, Swords, Sparkles, Zap, Store, Puzzle, ScrollText, Shield, Sword, Shirt, Music, BookOpen, Flame, Upload, Play, Square } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
-import type { ClassDef, ItemSlot, DamageType, WeaponTypeDef, ArmorTypeDef, AudioTrackDef, SpellSchoolDef, Effect, EnemyDef, EncounterTableDef, EventDef, ItemDef, LootTableDef, QuestDef, ShopDef, SpellDef, StatusEffectDef, Ruleset } from '@/lib/engine-types'
+import type { ClassDef, ItemSlot, DamageType, WeaponTypeDef, ArmorTypeDef, AudioTrackDef, SpellSchoolDef, SkillDef, Effect, EnemyDef, EncounterTableDef, EventDef, ItemDef, LootTableDef, QuestDef, ShopDef, SpellDef, StatusEffectDef, Ruleset } from '@/lib/engine-types'
 import { CLASS_SCHEMA, blankClass } from '@/lib/class-schema'
 import { WEAPON_TYPE_SCHEMA, ARMOR_TYPE_SCHEMA, DAMAGE_TYPE_OPTIONS, blankWeaponType, blankArmorType } from '@/lib/type-schema'
 import { blankAudioTrack } from '@/lib/music'
+import { SKILL_SCHEMA, blankSkill } from '@/lib/skill-schema'
 import { putTrack, deleteTrack, hasTrack } from '@/lib/audio-store'
 import { music } from '@/lib/audio-controller'
 import { EVENT_SCHEMA, QUEST_SCHEMA, blankEventDef, blankQuest } from '@/lib/npc-schema'
@@ -20,7 +21,7 @@ import { ENEMY_SCHEMA, ENCOUNTER_TABLE_SCHEMA, blankEnemy } from '@/lib/enemy-sc
 import { SPELL_SCHEMA, STATUS_SCHEMA, SPELL_SCHOOL_SCHEMA, blankSpell, blankStatusEffect, blankSpellSchool } from '@/lib/spell-schema'
 import { SHOP_SCHEMA, blankShop } from '@/lib/shop-schema'
 
-type Category = 'items' | 'weapon_types' | 'armor_types' | 'spell_schools' | 'audio' | 'loot_tables' | 'bestiary' | 'encounters' | 'spells' | 'status_effects' | 'shops' | 'classes' | 'events' | 'quests'
+type Category = 'items' | 'weapon_types' | 'armor_types' | 'spell_schools' | 'skills' | 'audio' | 'loot_tables' | 'bestiary' | 'encounters' | 'spells' | 'status_effects' | 'shops' | 'classes' | 'events' | 'quests'
 
 const CATEGORIES: { id: Category; icon: React.ReactNode; label: string }[] = [
   { id: 'items',          icon: <Package className="w-4 h-4" />,  label: 'Items' },
@@ -34,6 +35,7 @@ const CATEGORIES: { id: Category; icon: React.ReactNode; label: string }[] = [
   { id: 'spells',         icon: <Sparkles className="w-4 h-4" />, label: 'Spells' },
   { id: 'status_effects', icon: <Zap className="w-4 h-4" />,      label: 'Status Effects' },
   { id: 'spell_schools',  icon: <BookOpen className="w-4 h-4" />, label: 'Spell Schools' },
+  { id: 'skills',         icon: <Flame className="w-4 h-4" />,    label: 'Skills' },
   { id: 'shops',          icon: <Store className="w-4 h-4" />,    label: 'Shops' },
   { id: 'events',         icon: <Puzzle className="w-4 h-4" />,     label: 'Events' },
   { id: 'quests',         icon: <ScrollText className="w-4 h-4" />, label: 'Quests' },
@@ -929,6 +931,7 @@ let _wtypeSeq = 1
 let _atypeSeq = 1
 let _audioSeq = 1
 let _schoolSeq = 1
+let _skillSeq = 1
 
 // ── Generic def list (NPCs / Events / Quests) ─────────────────────────────────
 
@@ -1710,6 +1713,24 @@ export function DatabaseWorkspace({ ruleset, onRulesetChange }: DatabaseWorkspac
     if (selectedId === id) setSelectedId(next[0]?.id ?? null)
   }
 
+  // ── skills ──
+
+  const selectedSkill = (ruleset.skills ?? []).find(s => s.id === selectedId) ?? null
+
+  function addSkill() {
+    const id = `skill.skill_${_skillSeq++}`
+    onRulesetChange({ ...ruleset, skills: [...(ruleset.skills ?? []), blankSkill(id)] })
+    setSelectedId(id); setCategory('skills')
+  }
+  function updateSkill(s: SkillDef) {
+    onRulesetChange({ ...ruleset, skills: (ruleset.skills ?? []).map(x => x.id === s.id ? s : x) })
+  }
+  function deleteSkill(id: string) {
+    const next = (ruleset.skills ?? []).filter(s => s.id !== id)
+    onRulesetChange({ ...ruleset, skills: next })
+    if (selectedId === id) setSelectedId(next[0]?.id ?? null)
+  }
+
   // ── classes ──
 
   const selectedClass = ruleset.classes.find(c => c.id === selectedId) ?? null
@@ -1775,6 +1796,7 @@ export function DatabaseWorkspace({ ruleset, onRulesetChange }: DatabaseWorkspac
     if (cat === 'armor_types')    setSelectedId(ruleset.armorTypes[0]?.id ?? null)
     if (cat === 'audio')          setSelectedId(ruleset.audioTracks[0]?.id ?? null)
     if (cat === 'spell_schools')  setSelectedId(ruleset.spellSchools[0]?.id ?? null)
+    if (cat === 'skills')         setSelectedId((ruleset.skills ?? [])[0]?.id ?? null)
     if (cat === 'classes')        setSelectedId(ruleset.classes[0]?.id ?? null)
     if (cat === 'events')         setSelectedId((ruleset.events ?? [])[0]?.id ?? null)
     if (cat === 'quests')         setSelectedId((ruleset.quests ?? [])[0]?.id ?? null)
@@ -1832,6 +1854,10 @@ export function DatabaseWorkspace({ ruleset, onRulesetChange }: DatabaseWorkspac
           <GenericDefList label="Armor Types" entries={ruleset.armorTypes.map(a => ({ id: a.id, icon: a.icon ?? '🛡️', name: `${a.name} · ${a.weight}` }))}
             selectedId={selectedId} onSelect={setSelectedId} onAdd={addArmorType} onDelete={deleteArmorType} />
         )}
+        {category === 'skills' && (
+          <GenericDefList label="Skills" entries={(ruleset.skills ?? []).map(s => ({ id: s.id, icon: s.icon ?? '💥', name: s.name }))}
+            selectedId={selectedId} onSelect={setSelectedId} onAdd={addSkill} onDelete={deleteSkill} />
+        )}
         {category === 'spell_schools' && (
           <GenericDefList label="Spell Schools" entries={ruleset.spellSchools.map(s => ({ id: s.id, icon: s.icon ?? '✨', name: s.name }))}
             selectedId={selectedId} onSelect={setSelectedId} onAdd={addSchool} onDelete={deleteSchool} />
@@ -1874,6 +1900,12 @@ export function DatabaseWorkspace({ ruleset, onRulesetChange }: DatabaseWorkspac
           <WeaponTypeEditor wtype={selectedWeaponType} ruleset={ruleset} onChange={updateWeaponType} />
         ) : category === 'armor_types' && selectedArmorType ? (
           <ArmorTypeEditor atype={selectedArmorType} onChange={updateArmorType} />
+        ) : category === 'skills' && selectedSkill ? (
+          <div className="p-4 space-y-4 overflow-y-auto h-full">
+            <TypeEditorHeader def={selectedSkill} fallback="💥" />
+            <SchemaForm schema={SKILL_SCHEMA} value={selectedSkill as unknown as Record<string, unknown>} ruleset={ruleset}
+              onChange={v => updateSkill({ ...selectedSkill, ...(v as Partial<SkillDef>) })} />
+          </div>
         ) : category === 'spell_schools' && selectedSchool ? (
           <SpellSchoolEditor school={selectedSchool} ruleset={ruleset} onChange={updateSchool} />
         ) : category === 'audio' && selectedTrack ? (

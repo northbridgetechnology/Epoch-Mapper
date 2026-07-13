@@ -5,7 +5,7 @@
 
 import type {
   AttributeDef, ClassDef, RaceDef, SpellDef, StatusEffectDef,
-  ItemDef, WeaponTypeDef, ArmorTypeDef, SpellSchoolDef, EnemyDef, EncounterTableDef, LootTableDef, ShopDef,
+  ItemDef, WeaponTypeDef, ArmorTypeDef, SpellSchoolDef, SkillDef, EnemyDef, EncounterTableDef, LootTableDef, ShopDef,
   Ruleset,
 } from './engine-types'
 
@@ -118,6 +118,50 @@ export const DEFAULT_SPELL_SCHOOLS: SpellSchoolDef[] = [
   { id: 'element', name: 'Elemental', icon: '🔥', color: '#e17055', description: "Fire, ice, and storm bent to the caster's will. Scales with Intellect.", keyAttribute: 'attr.intellect' },
   { id: 'divine',  name: 'Divine',    icon: '✨', color: '#f39c12', description: 'Healing light and protective blessings. Scales with Spirit.', keyAttribute: 'attr.spirit' },
   { id: 'holy',    name: 'Holy',      icon: '✝️', color: '#f9ca24', description: 'Consecrated wrath against the unholy. Scales with Spirit.', keyAttribute: 'attr.spirit' },
+]
+
+
+// ── Skills (martial actives — HP/MP costs, cooldowns) ───────────────────────────
+
+export const DEFAULT_SKILLS: SkillDef[] = [
+  {
+    id: 'skill.power_strike', name: 'Power Strike', icon: '💥', color: '#c0392b',
+    description: 'Throw your whole body into one blow.',
+    hpCostPct: 0.05, target: 'enemy',
+    effects: [{ t: 'damage', dmgType: 'physical', amount: '2d6+4', canCrit: true }],
+    learn: [{ classId: 'class.fighter', level: 1 }],
+  },
+  {
+    id: 'skill.cleave', name: 'Cleave', icon: '🌪️', color: '#e17055',
+    description: 'A sweeping arc that bites every foe.',
+    hpCostPct: 0.12, cooldown: 2, target: 'allEnemies',
+    effects: [{ t: 'damage', dmgType: 'physical', amount: '1d8+3', canCrit: false }],
+    learn: [{ classId: 'class.fighter', level: 4 }],
+  },
+  {
+    id: 'skill.viper_bite', name: 'Viper Bite', icon: '🐍', color: '#27ae60',
+    description: 'A poisoned blade slipped between the ribs.',
+    hpCostPct: 0.05, target: 'enemy',
+    effects: [
+      { t: 'damage', dmgType: 'poison', amount: '1d6+3', canCrit: true },
+      { t: 'status', status: 'status.poisoned', chance: 0.5 },
+    ],
+    learn: [{ classId: 'class.rogue', level: 1 }],
+  },
+  {
+    id: 'skill.deadeye', name: 'Deadeye', icon: '🎯', color: '#2980b9',
+    description: 'One breath. One bullet.',
+    hpCostPct: 0.08, cooldown: 2, target: 'enemy',
+    effects: [{ t: 'damage', dmgType: 'physical', amount: '3d6+2', canCrit: true }],
+    learn: [{ classId: 'class.gunslinger', level: 2 }],
+  },
+  {
+    id: 'skill.smite', name: 'Smite', icon: '⚡', color: '#f9ca24',
+    description: 'Consecrated force brought down like a hammer.',
+    mpCost: 4, target: 'enemy',
+    effects: [{ t: 'damage', dmgType: 'holy', amount: '1d8+4', canCrit: false }],
+    learn: [{ classId: 'class.cleric', level: 2 }],
+  },
 ]
 
 // ── Races ──────────────────────────────────────────────────────────────────────
@@ -1675,6 +1719,7 @@ export function normalizeRuleset(r: Ruleset): Ruleset {
     audioTracks: r.audioTracks ?? [],
     items: migrated.items,
     spells: r.spells ?? [],
+    skills: r.skills ?? [],
     statusEffects: r.statusEffects ?? [],
     enemies: r.enemies ?? [],
     encounterTables: r.encounterTables ?? [],
@@ -1707,6 +1752,7 @@ export function makeDefaultRuleset(startMapId = 'map1'): Ruleset {
     audioTracks: [],
     items: DEFAULT_ITEMS,
     spells: DEFAULT_SPELLS,
+    skills: DEFAULT_SKILLS,
     statusEffects: DEFAULT_STATUS_EFFECTS,
     enemies: DEFAULT_ENEMIES,
     encounterTables: DEFAULT_ENCOUNTER_TABLES,

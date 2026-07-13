@@ -12,7 +12,7 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Swords, Wand2, Shield, FlaskConical, Wind, ChevronLeft, Check } from 'lucide-react'
+import { Swords, Wand2, Shield, FlaskConical, Wind, ChevronLeft, Check, Zap } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import {
   type CombatState,
@@ -22,6 +22,8 @@ import {
   resolvePlayerFlee,
   resolvePlayerDefend,
   resolvePlayerUseItem,
+  resolvePlayerUseSkill,
+  canUseSkill,
   resolveEnemyTurn,
   resolveAllOutAttack,
   resolveSelectActor,
@@ -29,14 +31,15 @@ import {
   upcomingTurns,
 } from '@/lib/combat-engine'
 import { buildBattlePlacements, type BattleViewState } from '@/lib/battle-scene'
-import type { Character, ItemDef, ItemInstance, Ruleset, SpellDef } from '@/lib/engine-types'
+import type { Character, ItemDef, ItemInstance, Ruleset, SkillDef, SpellDef } from '@/lib/engine-types'
 
 type Mode =
   | { k: 'menu' }
-  | { k: 'targets'; spell?: SpellDef; item?: ItemDef; equipSlot?: string }
+  | { k: 'targets'; spell?: SpellDef; item?: ItemDef; equipSlot?: string; skill?: SkillDef }
   | { k: 'spells' }
   | { k: 'items' }
-  | { k: 'allies'; spell?: SpellDef; item?: ItemDef; equipSlot?: string }
+  | { k: 'allies'; spell?: SpellDef; item?: ItemDef; equipSlot?: string; skill?: SkillDef }
+  | { k: 'skillList' }
 
 /** A consumable the party can still use this battle (qty net of itemsUsed). */
 export interface UsableItem {
@@ -59,6 +62,9 @@ export interface BattleHudProps {
   onChooseSpell: (spell: SpellDef) => void
   onOpenItems: () => void
   onChooseItem: (entry: UsableItem) => void
+  usableSkills: { def: SkillDef; ok: boolean; reason?: string }[]
+  onOpenSkills: () => void
+  onChooseSkill: (skill: SkillDef) => void
   onDefend: () => void
   onAllyTarget: (actorIdx: number) => void
   onConfirmTarget: () => void
@@ -153,6 +159,16 @@ export function useBattleController({ combat, ruleset, party, inventory, onActio
     return [...charged, ...consumables]
   }, [combat, inventory, party, ruleset])
 
+  // Known martial skills of the current actor, gated by cost + cooldown.
+  const usableSkills = useMemo<{ def: SkillDef; ok: boolean; reason?: string }[]>(() => {
+    if (!combat || !currentActor || currentActor.kind !== 'party') return []
+    const char = party[currentActor.idx]
+    return (char?.knownSkills ?? [])
+      .map(id => (ruleset.skills ?? []).find(s => s.id === id))
+      .filter((s): s is SkillDef => !!s)
+      .map(def => ({ def, ...canUseSkill(combat, def) }))
+  }, [combat, currentActor, party, ruleset])
+
   function execAttack(targetIdx: number) {
     const cur = combatRef.current
     if (!cur) return
@@ -172,9 +188,31 @@ export function useBattleController({ combat, ruleset, party, inventory, onActio
     setMode({ k: 'menu' }); setSel(null)
   }
 
-  function enterTargets(spell?: SpellDef, item?: ItemDef, equipSlot?: string) {
-    setMode({ k: 'targets', spell, item, equipSlot })
+  function execSkill(skill: SkillDef, targetIdxs: number[]) {
+    const cur = combatRef.current
+    if (!cur) return
+    onAction(resolvePlayerUseSkill(cur, skill.id, targetIdxs, ruleset))
+    setMode({ k: 'menu' }); setSel(null)
+  }
+
+  function enterTargets(spell?: SpellDef, item?: ItemDef, equipSlot?: string, skill?: SkillDef) {
+    setMode({ k: 'targets', spell, item, equipSlot, skill })
     setSel(aliveEnemyIdxs[0] ?? null)
+  }
+
+  function chooseSkill(skill: SkillDef) {
+    const target = skill.target ?? 'enemy'
+    if (target === 'enemy') return enterTargets(undefined, undefined, undefined, skill)
+    if (target === 'allEnemies' || target === 'enemyRow') return execSkill(skill, aliveEnemyIdxs)
+    if (target === 'ally') return setMode({ k: 'allies', skill })
+    if (target === 'allAllies') {
+      const allies = combatRef.current?.actors
+        .map((a, i) => ({ a, i }))
+        .filter(({ a }) => a.kind === 'party' && a.alive)
+        .map(({ i }) => i) ?? []
+      return execSkill(skill, allies)
+    }
+    execSkill(skill, [])
   }
 
   // Items whose effects include damage are thrown at enemies; the rest aid allies
@@ -209,7 +247,8 @@ export function useBattleController({ combat, ruleset, party, inventory, onActio
     if (mode.k !== 'targets') return
     const target = idx ?? sel
     if (target == null) return
-    if (mode.item) execUseItem(mode.item, [target], mode.equipSlot)
+    if (mode.skill) execSkill(mode.skill, [target])
+    else if (mode.item) execUseItem(mode.item, [target], mode.equipSlot)
     else if (mode.spell) execCast(mode.spell, [target])
     else execAttack(target)
   }
@@ -217,6 +256,7 @@ export function useBattleController({ combat, ruleset, party, inventory, onActio
   // Back out of targeting to the submenu it came from (spells / items / menu)
   function backOut() {
     setMode(m => {
+      if (m.k === 'targets' && m.skill) return { k: 'skillList' }
       if (m.k === 'targets' && m.spell) return { k: 'spells' }
       if (m.k === 'targets' && m.item) return { k: 'items' }
       return { k: 'menu' }
@@ -239,7 +279,7 @@ export function useBattleController({ combat, ruleset, party, inventory, onActio
         } else if (e.key === 'Escape') {
           e.preventDefault(); backOut(); setSel(null)
         }
-      } else if (mode.k === 'spells' || mode.k === 'items' || mode.k === 'allies') {
+      } else if (mode.k === 'spells' || mode.k === 'items' || mode.k === 'allies' || mode.k === 'skillList') {
         if (e.key === 'Escape') { e.preventDefault(); setMode({ k: 'menu' }) }
       }
     }
@@ -270,10 +310,14 @@ export function useBattleController({ combat, ruleset, party, inventory, onActio
     onChooseSpell: chooseSpell,
     onOpenItems: () => setMode({ k: 'items' }),
     onChooseItem: chooseItem,
+    usableSkills,
+    onOpenSkills: () => setMode({ k: 'skillList' }),
+    onChooseSkill: chooseSkill,
     onDefend: () => { const cur = combatRef.current; if (cur) onAction(resolvePlayerDefend(cur, ruleset)) },
     onAllyTarget: (idx) => {
       if (mode.k !== 'allies') return
-      if (mode.item) execUseItem(mode.item, [idx], mode.equipSlot)
+      if (mode.skill) execSkill(mode.skill, [idx])
+      else if (mode.item) execUseItem(mode.item, [idx], mode.equipSlot)
       else if (mode.spell) execCast(mode.spell, [idx])
     },
     onConfirmTarget: () => confirmTarget(),
@@ -318,6 +362,7 @@ function MenuButton({ icon, label, onClick, disabled, title }: {
 export function BattleHud({
   combat, mode, currentActor, castableSpells, usableItems, selectedIdx,
   onAttack, onOpenSpells, onChooseSpell, onOpenItems, onChooseItem, onDefend,
+  usableSkills, onOpenSkills, onChooseSkill,
   onAllyTarget, onConfirmTarget, onFlee, onBack,
   selectableParty, onSelectActor, canAllOut, onAllOut,
 }: BattleHudProps) {
@@ -397,6 +442,9 @@ export function BattleHud({
               onClick={onOpenSpells} disabled={castableSpells.length === 0}
               title={combat.antiMagic ? 'An anti-magic field smothers all spellcraft here'
                 : castableSpells.length === 0 ? 'No combat spells known' : undefined} />
+            <MenuButton icon={<Zap className="w-3.5 h-3.5" />} label="Skill"
+              onClick={onOpenSkills} disabled={usableSkills.length === 0}
+              title={usableSkills.length === 0 ? 'No skills known' : undefined} />
             <MenuButton icon={<FlaskConical className="w-3.5 h-3.5" />} label="Item"
               onClick={onOpenItems} disabled={usableItems.length === 0}
               title={usableItems.length === 0 ? 'No usable items' : undefined} />
@@ -426,6 +474,16 @@ export function BattleHud({
                   title={tooPoor ? 'Not enough MP' : undefined} />
               )
             })}
+            <MenuButton icon={<ChevronLeft className="w-3.5 h-3.5" />} label="Back" onClick={onBack} />
+          </div>
+        ) : mode.k === 'skillList' ? (
+          <div className="space-y-0.5 max-h-24 overflow-y-auto">
+            {usableSkills.map(({ def, ok, reason }) => (
+              <MenuButton key={def.id}
+                icon={<span className="text-sm leading-none">{def.icon ?? '💥'}</span>}
+                label={`${def.name}${def.hpCostPct ? ` (${Math.round(def.hpCostPct * 100)}% HP)` : def.mpCost ? ` (${def.mpCost} MP)` : ''}`}
+                onClick={() => onChooseSkill(def)} disabled={!ok} title={reason} />
+            ))}
             <MenuButton icon={<ChevronLeft className="w-3.5 h-3.5" />} label="Back" onClick={onBack} />
           </div>
         ) : mode.k === 'targets' ? (

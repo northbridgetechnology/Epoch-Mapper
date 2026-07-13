@@ -79,6 +79,7 @@ export type {
   RaceDef,
   ItemDef,
   SpellDef,
+  SkillDef,
   StatusEffectDef,
   EnemyDef,
   EncounterTableDef,
@@ -150,6 +151,9 @@ export { GameMenu } from './components/GameMenu'
 // Item schema helpers
 export { ITEM_SCHEMA, LOOT_TABLE_SCHEMA, blankItem, blankLootTable, itemDisplayName } from './lib/item-schema'
 
+// Skill schema helpers
+export { SKILL_SCHEMA, blankSkill } from './lib/skill-schema'
+
 // Class schema helpers
 export { CLASS_SCHEMA, blankClass } from './lib/class-schema'
 
@@ -210,6 +214,8 @@ export {
   resolvePlayerFlee,
   resolvePlayerDefend,
   resolvePlayerUseItem,
+  resolvePlayerUseSkill,
+  canUseSkill,
   resolveEnemyTurn,
   applyCombatOutcome,
   consumeCombatItems,

@@ -218,23 +218,23 @@ The three HIGH items from this scan are fixed (save-point policy detection,
 item/status stat-modifier editors, two-handed hand blocking). The rest is
 parked here, roughly by value:
 
-### Medium — half-wired features & system gaps
-- **Wand/staff charges never deplete.** The item editor promises
-  "Charges (wands/staves)" but `ItemInstance.charges` is only consumed by
-  torch burn-down (`burnSteps`). Design: cast-from-item consumes a charge;
-  at 0 the item breaks or goes inert.
-- **XP curve is hardcoded** (`xpToNextLevel = 50 × level^1.5`). Move it into
-  `FormulaOverrides` so authors can pace progression — and audit
-  `FormulaOverrides` generally: combat-engine doesn't read it either.
-- **Press-turn polish:** the HUD turn-order strip previews classic
-  round-robin during side phases; enemy AI neither exploits weaknesses nor
-  spends its icon economy deliberately; blink-icon animation.
-- **Skills system.** The Tab menu reserved room for Skills; martial classes
-  have no active abilities. A class-gated Skills table (stamina/cooldown)
-  would give Fighters/Rogues submenus and press-turn weakness tools.
-- **Enemy stat parity:** `EnemyDef.attributes` is a dead field — combat uses
-  flat attack/defense/speed. Wire it (enemy school scaling, stat-driven
-  bosses) or remove it.
+### Medium — FIXED (2026-07-13 batch)
+- ~~Wand/staff charges~~: combat use of equipped charged items (N⚡ in the
+  Item submenu), spends applied to equipment at battle end, inert at 0.
+  Still open: using charged items *outside* combat (field zaps).
+- ~~XP curve~~: `Ruleset.formulas.xpToNext` (safe mini-evaluator,
+  `src/lib/formula.ts`; variable `level`) + a Settings → Progression field.
+  Still open: the other FormulaOverrides entries (maxHp/attack/…) remain
+  declared-but-unwired.
+- ~~Press-turn polish~~: side-aware turn preview; enemy AI overweights
+  weakness-hitting abilities ×3 and hunts physically-weak members in press
+  modes. Still open: blink-conversion animation flourish.
+- ~~Skills system~~: SkillDef table (HP%-cost / MP-cost / round-cooldowns),
+  class learn tables, auto-learn on level-up + creation/recruit seeding,
+  battle Skill submenu, Database → Skills tab, 5 default martial skills.
+  Still open: out-of-combat (field) skills; a Tab-menu Skills screen.
+- ~~Enemy stat parity~~: dead `EnemyDef.attributes` removed (roadmap's
+  "wire or remove").
 
 ### Low — cleanup, polish, nice-to-haves
 - Dead fields with zero consumers: `GameMeta.startingPartyId`, `GameMeta.rows`,

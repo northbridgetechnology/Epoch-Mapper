@@ -201,6 +201,9 @@ export function newCharacter(
     maxMp: 0,
     equipment: {},
     knownSpells: [],
+    knownSkills: (ruleset.skills ?? [])
+      .filter(sk => sk.learn?.some(l => l.classId === classId && l.level <= 1))
+      .map(sk => sk.id),
     statuses: [],
     alive: true,
     ...(opts.portrait ? { portrait: opts.portrait } : {}),
@@ -263,6 +266,9 @@ export function npcToCharacter(def: NpcDef, ruleset: Ruleset): Character {
     maxMp: 0,
     equipment: def.equipment ? { ...def.equipment } : {},
     knownSpells: [...(def.knownSpells ?? [])],
+    knownSkills: (ruleset.skills ?? [])
+      .filter(sk => sk.learn?.some(l => l.classId === classId && l.level <= level))
+      .map(sk => sk.id),
     statuses: [],
     alive: true,
     sourceNpc: def.id,

@@ -209,6 +209,21 @@ export interface SpellDef extends Definition {
   learn?: { classId: DefRef<ClassDef>; level: number }[]
 }
 
+/** An active martial ability (Power Strike, Cleave…). SMT-flavoured costs:
+ *  HP (fraction of max), MP, or a cooldown in battle rounds — no new resource.
+ *  Class-gated via the same learn table shape as spells. */
+export interface SkillDef extends Definition {
+  /** HP cost as a fraction of the user's max HP (0.1 = 10%). Must leave ≥1 HP. */
+  hpCostPct?: number
+  mpCost?: number
+  /** Rounds before this skill can be used again by the same actor. */
+  cooldown?: number
+  target: SpellTarget
+  effects: Effect[]
+  /** Auto-learned when a character of classId reaches level. */
+  learn?: { classId: DefRef<ClassDef>; level: number }[]
+}
+
 export interface StatusEffectDef extends Definition {
   kind: 'buff' | 'debuff' | 'dot' | 'hot' | 'control'
   durationTurns: number
@@ -431,6 +446,7 @@ export interface Ruleset {
   audioTracks: AudioTrackDef[]
   items: ItemDef[]
   spells: SpellDef[]
+  skills: SkillDef[]
   statusEffects: StatusEffectDef[]
   enemies: EnemyDef[]
   encounterTables: EncounterTableDef[]
@@ -583,6 +599,7 @@ export interface Character {
   maxMp: number
   equipment: Partial<Record<ItemSlot, ItemInstance>>
   knownSpells: DefRef<SpellDef>[]
+  knownSkills?: DefRef<SkillDef>[]
   statuses: ActiveStatus[]
   alive: boolean
   /** Portrait: a built-in portrait id (see portraits.tsx) or an uploaded data-URI. */
