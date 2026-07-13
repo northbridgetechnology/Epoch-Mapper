@@ -4,7 +4,7 @@
  */
 
 import assert from 'node:assert/strict'
-import { applyMoveTricks, cellHasTrick, computeLightRadius, tickLightBurn, restParty, listFoes, advanceFoes, foeFlagKey, seenCellsFrom, DARK_BASE_RADIUS } from '../src/lib/exploration'
+import { applyMoveTricks, cellHasTrick, computeLightRadius, tickLightBurn, tickExplorationStatuses, restParty, listFoes, advanceFoes, foeFlagKey, seenCellsFrom, DARK_BASE_RADIUS } from '../src/lib/exploration'
 import { EDGE } from '../src/lib/constants'
 import { makeDefaultRuleset } from '../src/lib/default-ruleset'
 import type { CellData, MapData } from '../src/lib/types'
@@ -258,6 +258,41 @@ test('level-up auto-learns spells from the learn table', () => {
   assert.equal(levelUps.length, 1)
   assert.equal(after[0].level, 2)
   assert.ok(after[0].knownSpells.includes('spell.test_bolt'))
+})
+
+// ── Exploration status pressure ──────────────────────────────────────────────
+
+function afflicted(statusId: string, remaining: number, hp = 20): Character {
+  return {
+    id: 'p', name: 'Poor Soul', classId: 'class.fighter', raceId: 'race.human', level: 1, xp: 0,
+    attributes: {}, hp, maxHp: 30, mp: 0, maxMp: 0, equipment: {}, knownSpells: [],
+    statuses: [{ def: statusId, remaining }], alive: true,
+  } as unknown as Character
+}
+
+test('exploration: poison bites on its step interval and counts down', () => {
+  const c = afflicted('status.poisoned', 4, 20)
+  const skip = tickExplorationStatuses([c], ruleset, 1, () => 0) // step 1, interval 2 → skip
+  assert.equal(skip.changed, false)
+  assert.equal(skip.party[0].hp, 20)
+  const bite = tickExplorationStatuses([c], ruleset, 2, () => 0) // step 2 → 1d4 with rng 0 = 1
+  assert.equal(bite.changed, true)
+  assert.equal(bite.party[0].hp, 19)
+  assert.equal(bite.party[0].statuses[0].remaining, 3)
+})
+
+test('exploration: combat-only statuses do not tick while walking', () => {
+  const c = afflicted('status.burned', 3, 20) // burned has no persistsExploring flag
+  const r = tickExplorationStatuses([c], ruleset, 2, () => 0)
+  assert.equal(r.changed, false)
+  assert.equal(r.party[0].hp, 20)
+  assert.equal(r.party[0].statuses[0].remaining, 3)
+})
+
+test('exploration: poison can knock a member out', () => {
+  const r = tickExplorationStatuses([afflicted('status.poisoned', 4, 1)], ruleset, 2, () => 0)
+  assert.equal(r.party[0].alive, false)
+  assert.equal(r.party[0].hp, 0)
 })
 
 console.log(`\n${passed} passed`)

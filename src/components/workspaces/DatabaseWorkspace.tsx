@@ -746,7 +746,7 @@ function StatusList({
 
 // ── Status effect editor ──────────────────────────────────────────────────────
 
-function StatusEditor({ status, onChange }: { status: StatusEffectDef; onChange: (s: StatusEffectDef) => void }) {
+function StatusEditor({ status, ruleset, onChange }: { status: StatusEffectDef; ruleset: Ruleset; onChange: (s: StatusEffectDef) => void }) {
   return (
     <div className="p-4 space-y-4 overflow-y-auto h-full">
       <div className="flex items-center gap-2 mb-1">
@@ -759,6 +759,7 @@ function StatusEditor({ status, onChange }: { status: StatusEffectDef; onChange:
       <SchemaForm
         schema={STATUS_SCHEMA}
         value={status as unknown as Record<string, unknown>}
+        ruleset={ruleset}
         onChange={v => onChange({ ...status, ...(v as Partial<StatusEffectDef>) })}
       />
     </div>
@@ -1841,7 +1842,7 @@ export function DatabaseWorkspace({ ruleset, onRulesetChange }: DatabaseWorkspac
         ) : category === 'spells' && selectedSpell ? (
           <SpellEditor spell={selectedSpell} ruleset={ruleset} onChange={updateSpell} />
         ) : category === 'status_effects' && selectedStatus ? (
-          <StatusEditor status={selectedStatus} onChange={updateStatus} />
+          <StatusEditor status={selectedStatus} ruleset={ruleset} onChange={updateStatus} />
         ) : category === 'shops' && selectedShop ? (
           <ShopEditor shop={selectedShop} ruleset={ruleset} onChange={updateShop} />
         ) : category === 'weapon_types' && selectedWeaponType ? (

@@ -140,9 +140,10 @@ export const DEFAULT_RACES: RaceDef[] = [
 export const DEFAULT_STATUS_EFFECTS: StatusEffectDef[] = [
   {
     id: 'status.poisoned', name: 'Poisoned', icon: '☠️', color: '#2ecc71',
-    description: 'Takes poison damage each turn.',
+    description: 'Takes poison damage each turn — and every few steps in the dungeon.',
     kind: 'dot', durationTurns: 4, blocksAction: false,
     tickEffects: [{ t: 'damage', dmgType: 'poison', amount: '1d4', canCrit: false }],
+    persistsExploring: true, exploreStepInterval: 2,
   },
   {
     id: 'status.burned', name: 'Burned', icon: '🔥', color: '#e74c3c',
@@ -189,9 +190,10 @@ export const DEFAULT_STATUS_EFFECTS: StatusEffectDef[] = [
   },
   {
     id: 'status.regen', name: 'Regenerating', icon: '💚', color: '#27ae60',
-    description: 'Recovers HP each turn.',
+    description: 'Recovers HP each turn — and while exploring.',
     kind: 'hot', durationTurns: 4, blocksAction: false,
     tickEffects: [{ t: 'heal', amount: '1d6' }],
+    persistsExploring: true, exploreStepInterval: 2,
   },
   {
     id: 'status.tarukaja', name: 'Attack Up', icon: '⬆️', color: '#e17055',

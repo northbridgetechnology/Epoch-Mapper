@@ -41,6 +41,8 @@ export const STATUS_SCHEMA: FieldSchema[] = [
   { key: 'durationTurns', label: 'Duration (turns, 0=permanent)', type: 'number',  min: 0, max: 99 },
   { key: 'blocksAction',  label: 'Blocks Action (stun/sleep)',    type: 'boolean' },
   { key: 'tickEffects',   label: 'Tick Effects (each turn)',      type: 'effects' },
+  { key: 'persistsExploring',   label: 'Persists while exploring (ticks per step)', type: 'boolean', optional: true },
+  { key: 'exploreStepInterval', label: 'Steps between exploration ticks',           type: 'number', min: 1, max: 99, optional: true },
 ]
 
 export function blankSpell(id: string): SpellDef {

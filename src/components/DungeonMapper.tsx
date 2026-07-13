@@ -37,7 +37,7 @@ import { DialogueOverlay } from './DialogueOverlay'
 import { resolveText } from '@/lib/text-tokens'
 import { OpeningStoryOverlay } from './OpeningStory'
 import { CharacterBuilder } from './CharacterBuilder'
-import { applyMoveTricks, cellHasTrick, computeLightRadius, tickLightBurn, restParty, advanceFoes, listFoes, foeFlagKey, seenCellsFrom } from '@/lib/exploration'
+import { applyMoveTricks, cellHasTrick, computeLightRadius, tickLightBurn, tickExplorationStatuses, restParty, advanceFoes, listFoes, foeFlagKey, seenCellsFrom } from '@/lib/exploration'
 import { initCombat, applyCombatOutcome, consumeCombatItems, type CombatState } from '@/lib/combat-engine'
 import { CellInspector } from './CellInspector'
 import { usePanelWidth } from './ui/ResizablePanel'
@@ -292,6 +292,9 @@ export function DungeonMapper({
   const [gameOver, setGameOver] = useState(false)
   const gameOverRef = useRef(false)
   gameOverRef.current = gameOver
+  // Steps walked this playthrough — drives exploration status pressure.
+  const [stepsTaken, setStepsTaken] = useState(0)
+  const stepsRef = useRef(0)
   // Batch E: title screen (per play session) + gameEnd credits overlay
   const [showTitle, setShowTitle] = useState(true)
   // Batch F: New Game intro flow — title → opening story → character builder → play
@@ -733,10 +736,17 @@ export function DungeonMapper({
       updateActiveMap((m) => moveReveal(m, nx, ny))
       setCameraOffset({ x: 0, y: 0 })
 
-      // Burn-down light sources tick once per step (torches with burnSteps)
+      // One step taken: advance the counter, burn-down light sources, and let
+      // persistent statuses (poison, regen…) bite/heal per the step interval.
+      const newSteps = stepsRef.current + 1
+      stepsRef.current = newSteps
+      setStepsTaken(newSteps)
       const burn = tickLightBurn(party, ruleset)
-      if (burn.party !== party) setParty(burn.party)
       burn.messages.forEach(m => toast(m))
+      const pressure = tickExplorationStatuses(burn.party, ruleset, newSteps)
+      pressure.messages.forEach(m => toast(m))
+      if (burn.party !== party || pressure.changed) setParty(pressure.party)
+      if (pressure.changed && partyDefeated(pressure.party, ruleset.meta)) setGameOver(true)
 
       // Crossing a boundary: damage edges bite every crossing; onPass effects
       // fire (onPassOnce latches via passedFlag / a derived key)
@@ -1108,7 +1118,8 @@ export function DungeonMapper({
     revealedBoundaries: Array.from(revealedBoundaries),
     rngSeed: 0,
     playtimeMs: 0,
-  }), [ruleset.meta.version, activeMap, facing, party, reserve, formation, gold, inventory, flags, maps, revealedBoundaries])
+    stepsTaken,
+  }), [ruleset.meta.version, activeMap, facing, party, reserve, formation, gold, inventory, flags, maps, revealedBoundaries, stepsTaken])
 
   const applySaveState = useCallback((s: SaveState) => {
     setParty(s.party)
@@ -1127,6 +1138,7 @@ export function DungeonMapper({
       ...(i === idx ? { playerX: s.position.x, playerY: s.position.y } : {}),
     })))
     if (idx >= 0) setActiveIdx(idx)
+    setStepsTaken(s.stepsTaken ?? 0); stepsRef.current = s.stepsTaken ?? 0
     setCombatState(null); setActiveEncounter(null); setDialogue(null); setInscription(null); setGameOver(false)
     toast('Game loaded.')
   }, [maps, setMaps, setActiveIdx])
@@ -1158,6 +1170,7 @@ export function DungeonMapper({
     setReserve([])
     setFormation({ front: next.map((_, i) => i), back: [] })
     setActiveIdx(0)
+    setStepsTaken(0); stepsRef.current = 0
     setIntroPhase(null)
   }, [ruleset, setParty, setReserve, setFormation, setActiveIdx])
   const beginNewGame = useCallback(() => {
@@ -2026,6 +2039,7 @@ export function DungeonMapper({
             activeMap={activeMap}
             party={party}
             gold={gold}
+            stepsTaken={stepsTaken}
             facing={facing}
             customBase={customBase}
             customOverlay={customOverlay}

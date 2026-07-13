@@ -23,6 +23,7 @@ interface PlayWorkspaceProps {
   activeMap: MapData | null
   party: Character[]
   gold: number
+  stepsTaken?: number
   facing: Facing
   customBase: Record<number, MarkerDef>
   customOverlay: Record<number, MarkerDef>
@@ -87,7 +88,7 @@ function StatBar({ value, max, colorClass }: { value: number; max: number; color
 
 // ── Party HUD ─────────────────────────────────────────────────────────────────
 
-function PartyHud({ party, gold }: { party: Character[]; gold: number }) {
+function PartyHud({ party, gold, steps }: { party: Character[]; gold: number; steps?: number }) {
   if (party.length === 0) {
     return (
       <div className="px-4 py-2 text-xs text-white/30 italic">
@@ -137,9 +138,17 @@ function PartyHud({ party, gold }: { party: Character[]; gold: number }) {
           </div>
         )
       })}
-      <div className="ml-auto flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-amber-500/20 bg-amber-950/20 flex-shrink-0">
-        <Coins className="w-3.5 h-3.5 text-amber-400" />
-        <span className="text-sm font-semibold text-amber-300 tabular-nums">{gold}</span>
+      <div className="ml-auto flex items-center gap-2 flex-shrink-0">
+        {steps != null && (
+          <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-white/10 bg-zinc-900/60" title="Steps taken">
+            <span className="text-sm leading-none">👣</span>
+            <span className="text-sm font-semibold text-white/60 tabular-nums">{steps}</span>
+          </div>
+        )}
+        <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-amber-500/20 bg-amber-950/20">
+          <Coins className="w-3.5 h-3.5 text-amber-400" />
+          <span className="text-sm font-semibold text-amber-300 tabular-nums">{gold}</span>
+        </div>
       </div>
     </div>
   )
@@ -1263,7 +1272,7 @@ function DungeonViewport({
 // ── Main component ────────────────────────────────────────────────────────────
 
 export function PlayWorkspace({
-  activeMap, party, gold, facing,
+  activeMap, party, gold, stepsTaken, facing,
   customBase, customOverlay, isCellRevealed, revealedBoundaries, bumpTrigger,
   flags,
   combat, ruleset, inventory, reserve = [], formation = { front: [], back: [] },
@@ -1412,7 +1421,7 @@ export function PlayWorkspace({
         ) : (
           <>
             <div className="flex-1 min-w-0">
-              <PartyHud party={party} gold={gold} />
+              <PartyHud party={party} gold={gold} steps={stepsTaken} />
             </div>
             <BlobberDPad
               onForward={onMoveForward}

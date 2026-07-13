@@ -199,6 +199,11 @@ export interface StatusEffectDef extends Definition {
   modifiers?: StatModifier[]
   tickEffects?: Effect[]
   blocksAction?: boolean
+  /** When true, this status also ticks and counts down while walking the
+   *  dungeon (e.g. poison bites every step). Absent = combat-only. */
+  persistsExploring?: boolean
+  /** Steps between exploration ticks when persistsExploring (default 1). */
+  exploreStepInterval?: number
 }
 
 export interface EnemyAbility {
@@ -602,6 +607,8 @@ export interface SaveState {
   revealedBoundaries?: string[]
   rngSeed: number
   playtimeMs: number
+  /** Total steps walked this playthrough — drives exploration pressure. */
+  stepsTaken?: number
 }
 
 // ── Derived-stat helpers (formulas §6.3) ──────────────────────────────────────

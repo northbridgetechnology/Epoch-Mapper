@@ -287,6 +287,56 @@ export function restParty(
   }
 }
 
+/**
+ * Advance persistent statuses one step while exploring. Statuses flagged
+ * `persistsExploring` tick their `tickEffects` (poison bites, regen heals…) on
+ * their step interval and count down `remaining`; a member can be knocked out.
+ * Combat-only statuses are left untouched. Call once per player step, passing
+ * the new step total so per-status intervals line up.
+ */
+export function tickExplorationStatuses(
+  party: Character[],
+  ruleset: Ruleset,
+  stepsTaken: number,
+  rng: () => number = Math.random,
+): { party: Character[]; messages: string[]; changed: boolean } {
+  const messages: string[] = []
+  let changed = false
+  const next = party.map(ch => {
+    if (!ch.alive || !ch.statuses?.length) return ch
+    let hp = ch.hp
+    let mp = ch.mp
+    const kept: Character['statuses'] = []
+    let touched = false
+    for (const st of ch.statuses) {
+      const def = ruleset.statusEffects.find(s => s.id === st.def)
+      if (!def || !def.persistsExploring) { kept.push(st); continue }
+      const interval = Math.max(1, def.exploreStepInterval ?? 1)
+      if (stepsTaken % interval !== 0) { kept.push(st); continue }
+      touched = true
+      for (const eff of def.tickEffects ?? []) {
+        if (eff.t === 'damage') {
+          const d = rollDice(eff.amount, rng)
+          if (d > 0) { hp = Math.max(0, hp - d); messages.push(`${ch.name} suffers ${d} from ${def.name}.`) }
+        } else if (eff.t === 'heal') {
+          hp = Math.min(ch.maxHp, hp + rollDice(eff.amount, rng))
+        } else if (eff.t === 'restoreMp') {
+          mp = Math.min(ch.maxMp, mp + rollDice(eff.amount, rng))
+        }
+      }
+      const remaining = st.remaining - 1
+      if (remaining > 0) kept.push({ ...st, remaining })
+      else messages.push(`${ch.name}'s ${def.name} fades.`)
+    }
+    if (!touched) return ch
+    changed = true
+    const alive = hp > 0
+    if (!alive) messages.push(`${ch.name} has succumbed!`)
+    return { ...ch, hp, mp, statuses: kept, alive }
+  })
+  return { party: next, messages, changed }
+}
+
 // ── FOE patrols ────────────────────────────────────────────────────────────────
 
 type FoeEntity = Extract<CellEntity, { t: 'foe' }>
