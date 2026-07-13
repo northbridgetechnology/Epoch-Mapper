@@ -33,15 +33,18 @@ import type { Character, ItemDef, ItemInstance, Ruleset, SpellDef } from '@/lib/
 
 type Mode =
   | { k: 'menu' }
-  | { k: 'targets'; spell?: SpellDef; item?: ItemDef }
+  | { k: 'targets'; spell?: SpellDef; item?: ItemDef; equipSlot?: string }
   | { k: 'spells' }
   | { k: 'items' }
-  | { k: 'allies'; spell?: SpellDef; item?: ItemDef }
+  | { k: 'allies'; spell?: SpellDef; item?: ItemDef; equipSlot?: string }
 
 /** A consumable the party can still use this battle (qty net of itemsUsed). */
 export interface UsableItem {
   def: ItemDef
   remaining: number
+  /** Set when this is a charge from the current actor's equipped item
+   *  (wand/staff) rather than a shared-inventory consumable. */
+  equipSlot?: string
 }
 
 export interface BattleHudProps {
@@ -55,7 +58,7 @@ export interface BattleHudProps {
   onOpenSpells: () => void
   onChooseSpell: (spell: SpellDef) => void
   onOpenItems: () => void
-  onChooseItem: (item: ItemDef) => void
+  onChooseItem: (entry: UsableItem) => void
   onDefend: () => void
   onAllyTarget: (actorIdx: number) => void
   onConfirmTarget: () => void
@@ -125,17 +128,30 @@ export function useBattleController({ combat, ruleset, party, inventory, onActio
       .sort((a, b) => schoolOrder(a.school) - schoolOrder(b.school))
   }, [combat, currentActor, party, ruleset])
 
-  // Consumables with onUse effects the party still holds (net of this battle's usage)
+  // Consumables with onUse effects the party still holds (net of this battle's
+  // usage), plus the current actor's equipped charged items (wands/staves).
   const usableItems = useMemo<UsableItem[]>(() => {
     if (!combat) return []
-    return ruleset.items
+    const consumables = ruleset.items
       .filter(it => it.kind === 'consumable' && (it.onUse?.length ?? 0) > 0)
       .map(it => {
         const held = inventory.find(i => i.def === it.id)?.qty ?? 0
         return { def: it, remaining: held - (combat.itemsUsed[it.id] ?? 0) }
       })
       .filter(e => e.remaining > 0)
-  }, [combat, inventory, ruleset])
+    const actor = combat.actors[combat.turnIdx]
+    const char = actor?.kind === 'party' ? party[actor.idx] : undefined
+    const charged: UsableItem[] = []
+    for (const [slot, inst] of Object.entries(char?.equipment ?? {})) {
+      if (!inst) continue
+      const def = ruleset.items.find(i => i.id === inst.def)
+      if (!def?.charges || !def.onUse?.length) continue
+      const spent = combat.equipChargesUsed?.[`${actor!.idx}:${slot}`] ?? 0
+      const remaining = (inst.charges ?? def.charges) - spent
+      if (remaining > 0) charged.push({ def, remaining, equipSlot: slot })
+    }
+    return [...charged, ...consumables]
+  }, [combat, inventory, party, ruleset])
 
   function execAttack(targetIdx: number) {
     const cur = combatRef.current
@@ -149,23 +165,23 @@ export function useBattleController({ combat, ruleset, party, inventory, onActio
     onAction(resolvePlayerCast(cur, spell.id, targetIdxs, ruleset))
     setMode({ k: 'menu' }); setSel(null)
   }
-  function execUseItem(item: ItemDef, targetIdxs: number[]) {
+  function execUseItem(item: ItemDef, targetIdxs: number[], equipSlot?: string) {
     const cur = combatRef.current
     if (!cur) return
-    onAction(resolvePlayerUseItem(cur, item.id, targetIdxs, ruleset))
+    onAction(resolvePlayerUseItem(cur, item.id, targetIdxs, ruleset, undefined, equipSlot ? { equipSlot } : undefined))
     setMode({ k: 'menu' }); setSel(null)
   }
 
-  function enterTargets(spell?: SpellDef, item?: ItemDef) {
-    setMode({ k: 'targets', spell, item })
+  function enterTargets(spell?: SpellDef, item?: ItemDef, equipSlot?: string) {
+    setMode({ k: 'targets', spell, item, equipSlot })
     setSel(aliveEnemyIdxs[0] ?? null)
   }
 
   // Items whose effects include damage are thrown at enemies; the rest aid allies
-  function chooseItem(item: ItemDef) {
-    const offensive = item.onUse?.some(e => e.t === 'damage') ?? false
-    if (offensive) enterTargets(undefined, item)
-    else setMode({ k: 'allies', item })
+  function chooseItem(entry: UsableItem) {
+    const offensive = entry.def.onUse?.some(e => e.t === 'damage') ?? false
+    if (offensive) enterTargets(undefined, entry.def, entry.equipSlot)
+    else setMode({ k: 'allies', item: entry.def, equipSlot: entry.equipSlot })
   }
 
   function chooseSpell(spell: SpellDef) {
@@ -193,7 +209,7 @@ export function useBattleController({ combat, ruleset, party, inventory, onActio
     if (mode.k !== 'targets') return
     const target = idx ?? sel
     if (target == null) return
-    if (mode.item) execUseItem(mode.item, [target])
+    if (mode.item) execUseItem(mode.item, [target], mode.equipSlot)
     else if (mode.spell) execCast(mode.spell, [target])
     else execAttack(target)
   }
@@ -257,7 +273,7 @@ export function useBattleController({ combat, ruleset, party, inventory, onActio
     onDefend: () => { const cur = combatRef.current; if (cur) onAction(resolvePlayerDefend(cur, ruleset)) },
     onAllyTarget: (idx) => {
       if (mode.k !== 'allies') return
-      if (mode.item) execUseItem(mode.item, [idx])
+      if (mode.item) execUseItem(mode.item, [idx], mode.equipSlot)
       else if (mode.spell) execCast(mode.spell, [idx])
     },
     onConfirmTarget: () => confirmTarget(),
@@ -390,11 +406,11 @@ export function BattleHud({
           </div>
         ) : mode.k === 'items' ? (
           <div className="space-y-0.5 max-h-24 overflow-y-auto">
-            {usableItems.map(({ def, remaining }) => (
-              <MenuButton key={def.id}
-                icon={<span className="text-sm leading-none">{def.icon ?? '🧪'}</span>}
-                label={`${def.name} ×${remaining}`}
-                onClick={() => onChooseItem(def)} />
+            {usableItems.map(entry => (
+              <MenuButton key={`${entry.equipSlot ?? 'inv'}_${entry.def.id}`}
+                icon={<span className="text-sm leading-none">{entry.def.icon ?? '🧪'}</span>}
+                label={`${entry.def.name} ${entry.equipSlot ? `${entry.remaining}⚡` : `×${entry.remaining}`}`}
+                onClick={() => onChooseItem(entry)} />
             ))}
             <MenuButton icon={<ChevronLeft className="w-3.5 h-3.5" />} label="Back" onClick={onBack} />
           </div>

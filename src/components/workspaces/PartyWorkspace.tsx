@@ -395,7 +395,7 @@ export function CharacterSheet({
           </div>
           <div>
             <label className="block text-xs text-white/50 mb-0.5">XP / Next</label>
-            <div className="px-2 py-1 text-sm text-white/70">{char.xp} / {xpToNextLevel(char.level)}</div>
+            <div className="px-2 py-1 text-sm text-white/70">{char.xp} / {xpToNextLevel(char.level, ruleset.formulas?.xpToNext)}</div>
           </div>
         </div>
       </div>

@@ -1533,7 +1533,6 @@ export function DatabaseWorkspace({ ruleset, onRulesetChange }: DatabaseWorkspac
       speed: raw.speed as number,
       xp: raw.xp as number,
       gold: raw.gold as { min: number; max: number },
-      attributes: {},
     }
     onRulesetChange({ ...ruleset, enemies: [...ruleset.enemies, enemy] })
     setSelectedId(id)

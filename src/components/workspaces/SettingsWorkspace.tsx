@@ -21,6 +21,9 @@ interface SettingsWorkspaceProps {
   /** Audio tracks (from the ruleset) for the music pickers. */
   tracks?: AudioTrackDef[]
   onMusicChange?: (mapIdx: number, musicId: string | undefined) => void
+  /** Author-tunable formula overrides (Ruleset.formulas). */
+  formulas?: { xpToNext?: string }
+  onFormulasChange?: (patch: { xpToNext?: string }) => void
   onCombatModeChange?: (mapIdx: number, mode: 'classic' | 'oneMore' | 'pressTurn') => void
 }
 
@@ -281,7 +284,7 @@ function OpeningSlideRow({ slide, index, count, onText, onImage, onMove, onRemov
   )
 }
 
-export function SettingsWorkspace({ maps, onThemeChange, onDarkChange, meta, onMetaChange, tracks = [], onMusicChange, onCombatModeChange }: SettingsWorkspaceProps) {
+export function SettingsWorkspace({ maps, onThemeChange, onDarkChange, meta, onMetaChange, tracks = [], onMusicChange, onCombatModeChange, formulas, onFormulasChange }: SettingsWorkspaceProps) {
   if (maps.length === 0) {
     return (
       <div className="flex-1 flex items-center justify-center text-white/20 text-sm">
@@ -296,6 +299,17 @@ export function SettingsWorkspace({ maps, onThemeChange, onDarkChange, meta, onM
         {meta && onMetaChange && <GameRules meta={meta} onMetaChange={onMetaChange} />}
         {meta && onMetaChange && <StoryAndProtagonist meta={meta} onMetaChange={onMetaChange} />}
         {meta && onMetaChange && <MusicSettings meta={meta} tracks={tracks} onMetaChange={onMetaChange} />}
+        {onFormulasChange && (
+          <div>
+            <h2 className="text-sm font-semibold text-white/70 mb-1">Progression</h2>
+            <label className="flex items-center justify-between gap-3">
+              <span className="text-xs text-white/70">XP to next level <span className="text-white/30">(variable: level; blank = 50 * level ^ 1.5)</span></span>
+              <input type="text" value={formulas?.xpToNext ?? ''} placeholder="50 * level ^ 1.5"
+                onChange={e => onFormulasChange({ xpToNext: e.target.value || undefined })}
+                className="w-56 px-2 py-1 rounded bg-zinc-800 border border-white/10 text-xs font-mono text-white/80 focus:outline-none focus:border-amber-500/40" />
+            </label>
+          </div>
+        )}
         <div>
           <h2 className="text-sm font-semibold text-white/70 mb-1">Visual Themes</h2>
           <p className="text-xs text-white/35 leading-relaxed">

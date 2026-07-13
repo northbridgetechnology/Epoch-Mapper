@@ -777,6 +777,7 @@ export const DEFAULT_ITEMS: ItemDef[] = [
     description: 'A staff imbued with fire magic. Boosts arcane and elemental power.',
     kind: 'weapon', slot: 'weapon', weaponType: 'wtype.staff',
     value: 650, stackable: false,
+    charges: 12, onUse: [{ t: 'damage', dmgType: 'fire', amount: '2d6+2', canCrit: false }],
     modifiers: [
       { target: 'attribute', key: 'intellect', op: 'add', amount: 5 },
       { target: 'attribute', key: 'spirit', op: 'add', amount: 2 },
@@ -787,6 +788,7 @@ export const DEFAULT_ITEMS: ItemDef[] = [
     description: 'A staff channelling frozen power.',
     kind: 'weapon', slot: 'weapon', weaponType: 'wtype.staff',
     value: 650, stackable: false,
+    charges: 12, onUse: [{ t: 'damage', dmgType: 'ice', amount: '2d6+2', canCrit: false }],
     modifiers: [
       { target: 'attribute', key: 'intellect', op: 'add', amount: 5 },
       { target: 'attribute', key: 'spirit', op: 'add', amount: 2 },
@@ -797,6 +799,7 @@ export const DEFAULT_ITEMS: ItemDef[] = [
     description: 'A simple wand for focusing magical energy.',
     kind: 'weapon', slot: 'weapon', weaponType: 'wtype.rod',
     value: 200, stackable: false,
+    charges: 15, onUse: [{ t: 'damage', dmgType: 'lightning', amount: '1d10+2', canCrit: false }],
     modifiers: [{ target: 'attribute', key: 'intellect', op: 'add', amount: 3 }],
   },
   {
@@ -990,7 +993,6 @@ export const DEFAULT_ENEMIES: EnemyDef[] = [
     id: 'enemy.slime', name: 'Slime', icon: '🫧', color: '#00cec9',
     description: 'A gelatinous mass of semi-sentient ooze that absorbs almost anything.',
     hp: 25, attack: 8, defense: 2, speed: 3, xp: 10, gold: { min: 2, max: 8 },
-    attributes: { might: 6, agility: 3, endurance: 14 },
     resistances: { physical: 0.25, fire: -0.5, ice: -0.5 },
     loot: 'loot.weak_demon',
     abilities: [
@@ -1001,7 +1003,6 @@ export const DEFAULT_ENEMIES: EnemyDef[] = [
     id: 'enemy.pixie', name: 'Pixie', icon: '🧚', color: '#fd79a8',
     description: 'A tiny mischievous fairy. Weak in body but quick and knows a touch of magic.',
     hp: 30, attack: 10, defense: 4, speed: 12, xp: 15, gold: { min: 3, max: 12 },
-    attributes: { might: 7, agility: 12, intellect: 10, spirit: 9 },
     resistances: { dark: 0.5 },
     loot: 'loot.fairy_drop',
     abilities: [
@@ -1013,7 +1014,6 @@ export const DEFAULT_ENEMIES: EnemyDef[] = [
     id: 'enemy.obariyon', name: 'Obariyon', icon: '👺', color: '#e17055',
     description: 'A small red demon that loves leaping onto people\'s backs and crushing them.',
     hp: 40, attack: 14, defense: 6, speed: 9, xp: 20, gold: { min: 5, max: 18 },
-    attributes: { might: 13, agility: 9, endurance: 10 },
     loot: 'loot.weak_demon',
     abilities: [
       { weight: 3, effects: [{ t: 'damage', dmgType: 'physical', amount: '1d8+2', canCrit: true }], target: 'enemy' },
@@ -1023,7 +1023,6 @@ export const DEFAULT_ENEMIES: EnemyDef[] = [
     id: 'enemy.mokoi', name: 'Mokoi', icon: '💀', color: '#2d3436',
     description: 'The spirit of a murdered man whose grudge prevents it from passing on.',
     hp: 45, attack: 12, defense: 5, speed: 7, xp: 22, gold: { min: 4, max: 15 },
-    attributes: { might: 10, intellect: 11, spirit: 8 },
     resistances: { dark: 0.5, holy: -0.5 },
     loot: 'loot.undead_drop',
     abilities: [
@@ -1035,7 +1034,6 @@ export const DEFAULT_ENEMIES: EnemyDef[] = [
     id: 'enemy.jack_frost', name: 'Jack Frost', icon: '⛄', color: '#74b9ff',
     description: 'An adorable snowman-like spirit with an icy personality and freezing powers.',
     hp: 50, attack: 13, defense: 8, speed: 10, xp: 28, gold: { min: 6, max: 20 },
-    attributes: { might: 9, agility: 10, intellect: 13 },
     resistances: { ice: 1.0, fire: -0.75 },
     loot: 'loot.fairy_drop',
     abilities: [
@@ -1048,7 +1046,6 @@ export const DEFAULT_ENEMIES: EnemyDef[] = [
     id: 'enemy.pyro_jack', name: 'Pyro Jack', icon: '🎃', color: '#e17055',
     description: 'A flaming jack-o-lantern spirit who hurls fireballs with glee.',
     hp: 60, attack: 16, defense: 9, speed: 11, xp: 38, gold: { min: 8, max: 28 },
-    attributes: { might: 10, agility: 11, intellect: 15 },
     resistances: { fire: 1.0, ice: -0.75 },
     loot: 'loot.fairy_drop',
     abilities: [
@@ -1060,7 +1057,6 @@ export const DEFAULT_ENEMIES: EnemyDef[] = [
     id: 'enemy.lilim', name: 'Lilim', icon: '😈', color: '#fd79a8',
     description: 'A seductive demoness born from Lilith. Uses charm to bewitch and drain her prey.',
     hp: 65, attack: 14, defense: 10, speed: 13, xp: 42, gold: { min: 10, max: 35 },
-    attributes: { might: 10, agility: 13, intellect: 14, spirit: 12, luck: 14 },
     resistances: { dark: 0.5, holy: -0.5 },
     loot: 'loot.night_drop',
     abilities: [
@@ -1073,7 +1069,6 @@ export const DEFAULT_ENEMIES: EnemyDef[] = [
     id: 'enemy.fallen', name: 'Fallen Angel', icon: '🪽', color: '#6c5ce7',
     description: 'An angel cast down from the heavens. Bitter and wrathful, wielding dark fire.',
     hp: 70, attack: 18, defense: 12, speed: 11, xp: 48, gold: { min: 12, max: 40 },
-    attributes: { might: 15, agility: 11, intellect: 16, spirit: 10 },
     resistances: { dark: 0.5, fire: 0.25, holy: -0.5 },
     loot: 'loot.night_drop',
     abilities: [
@@ -1085,7 +1080,6 @@ export const DEFAULT_ENEMIES: EnemyDef[] = [
     id: 'enemy.bicorn', name: 'Bicorn', icon: '🦄', color: '#2d3436',
     description: 'A dark two-horned horse. Unlike the unicorn, it despises virtue.',
     hp: 80, attack: 20, defense: 11, speed: 14, xp: 45, gold: { min: 10, max: 30 },
-    attributes: { might: 17, agility: 14, endurance: 13 },
     resistances: { dark: 0.25 },
     loot: 'loot.beast_drop',
     abilities: [
@@ -1097,7 +1091,6 @@ export const DEFAULT_ENEMIES: EnemyDef[] = [
     id: 'enemy.apsaras', name: 'Apsaras', icon: '💧', color: '#74b9ff',
     description: 'A divine water spirit from Hindu mythology. Graceful and dangerous.',
     hp: 75, attack: 16, defense: 12, speed: 13, xp: 45, gold: { min: 10, max: 30 },
-    attributes: { might: 12, agility: 13, intellect: 15, spirit: 14 },
     resistances: { ice: 0.5, fire: -0.25 },
     loot: 'loot.divine_drop',
     abilities: [
@@ -1110,7 +1103,6 @@ export const DEFAULT_ENEMIES: EnemyDef[] = [
     id: 'enemy.zombie', name: 'Zombie', icon: '🧟', color: '#636e72',
     description: 'The reanimated corpse of an unfortunate soul. Slow but infectious.',
     hp: 75, attack: 17, defense: 8, speed: 4, xp: 35, gold: { min: 0, max: 5 },
-    attributes: { might: 15, agility: 4, endurance: 18 },
     resistances: { physical: 0.25, dark: 0.5, poison: 1.0, holy: -0.75, fire: -0.25 },
     loot: 'loot.undead_drop',
     abilities: [
@@ -1122,7 +1114,6 @@ export const DEFAULT_ENEMIES: EnemyDef[] = [
     id: 'enemy.ghost', name: 'Ghost', icon: '👻', color: '#dfe6e9',
     description: 'A spectral entity that drains the life from the living.',
     hp: 55, attack: 15, defense: 14, speed: 10, xp: 40, gold: { min: 0, max: 10 },
-    attributes: { might: 10, agility: 10, intellect: 12, spirit: 13 },
     resistances: { physical: 0.5, dark: 0.5, holy: -0.75, poison: 1.0 },
     loot: 'loot.undead_drop',
     abilities: [
@@ -1134,7 +1125,6 @@ export const DEFAULT_ENEMIES: EnemyDef[] = [
     id: 'enemy.oni', name: 'Oni', icon: '👹', color: '#e74c3c',
     description: 'A hulking red demon of Japanese legend. Carries an iron club and breathes fire.',
     hp: 90, attack: 22, defense: 14, speed: 9, xp: 58, gold: { min: 15, max: 45 },
-    attributes: { might: 20, agility: 9, endurance: 16, intellect: 10 },
     resistances: { fire: 0.5 },
     loot: 'loot.mid_demon',
     abilities: [
@@ -1146,7 +1136,6 @@ export const DEFAULT_ENEMIES: EnemyDef[] = [
     id: 'enemy.ogre', name: 'Ogre', icon: '👾', color: '#b07d4a',
     description: 'A massive, brutish creature that relies entirely on raw strength.',
     hp: 100, attack: 24, defense: 12, speed: 6, xp: 55, gold: { min: 10, max: 40 },
-    attributes: { might: 22, agility: 6, endurance: 18 },
     loot: 'loot.mid_demon',
     abilities: [
       { weight: 4, effects: [{ t: 'damage', dmgType: 'physical', amount: '3d6+8', canCrit: true }], target: 'enemy' },
@@ -1158,7 +1147,6 @@ export const DEFAULT_ENEMIES: EnemyDef[] = [
     id: 'enemy.skeleton', name: 'Skeleton Warrior', icon: '💀', color: '#dfe6e9',
     description: 'The animated bones of a fallen warrior, still wearing rusted armor.',
     hp: 85, attack: 19, defense: 16, speed: 8, xp: 52, gold: { min: 5, max: 25 },
-    attributes: { might: 17, agility: 8, endurance: 16 },
     resistances: { physical: 0.25, dark: 0.5, poison: 1.0, holy: -0.5, ice: -0.25 },
     loot: 'loot.undead_drop',
     abilities: [
@@ -1169,7 +1157,6 @@ export const DEFAULT_ENEMIES: EnemyDef[] = [
     id: 'enemy.succubus', name: 'Succubus', icon: '😈', color: '#6c5ce7',
     description: 'A powerful night demon who drains her victims dry, leaving nothing but a husk.',
     hp: 90, attack: 18, defense: 16, speed: 14, xp: 70, gold: { min: 20, max: 60 },
-    attributes: { might: 12, agility: 14, intellect: 18, spirit: 16, luck: 16 },
     resistances: { dark: 0.75, fire: 0.25, holy: -0.75 },
     loot: 'loot.night_drop',
     abilities: [
@@ -1182,7 +1169,6 @@ export const DEFAULT_ENEMIES: EnemyDef[] = [
     id: 'enemy.incubus', name: 'Incubus', icon: '😈', color: '#a29bfe',
     description: 'The male counterpart to the Succubus. Sows panic and feeds on despair.',
     hp: 95, attack: 20, defense: 16, speed: 13, xp: 72, gold: { min: 20, max: 60 },
-    attributes: { might: 14, agility: 13, intellect: 17, spirit: 15 },
     resistances: { dark: 0.75, holy: -0.75 },
     loot: 'loot.night_drop',
     abilities: [
@@ -1195,7 +1181,6 @@ export const DEFAULT_ENEMIES: EnemyDef[] = [
     id: 'enemy.naga', name: 'Naga', icon: '🐍', color: '#2ecc71',
     description: 'A serpentine demon of ancient power. Poisons all it strikes.',
     hp: 110, attack: 22, defense: 17, speed: 12, xp: 80, gold: { min: 18, max: 55 },
-    attributes: { might: 18, agility: 12, endurance: 18, intellect: 14 },
     resistances: { poison: 1.0, lightning: -0.25 },
     loot: 'loot.beast_drop',
     abilities: [
@@ -1208,7 +1193,6 @@ export const DEFAULT_ENEMIES: EnemyDef[] = [
     id: 'enemy.archangel', name: 'Archangel', icon: '👼', color: '#f9ca24',
     description: 'A mighty holy warrior bearing celestial arms and the will to smite evil.',
     hp: 100, attack: 22, defense: 20, speed: 14, xp: 88, gold: { min: 20, max: 60 },
-    attributes: { might: 18, agility: 14, intellect: 16, spirit: 22 },
     resistances: { holy: 1.0, dark: -0.75, fire: 0.25 },
     loot: 'loot.divine_drop',
     abilities: [
@@ -1221,7 +1205,6 @@ export const DEFAULT_ENEMIES: EnemyDef[] = [
     id: 'enemy.loup_garou', name: 'Loup-Garou', icon: '🐺', color: '#636e72',
     description: 'A werewolf of French legend. Rends flesh with supernatural fury under the moon.',
     hp: 120, attack: 26, defense: 16, speed: 16, xp: 90, gold: { min: 15, max: 50 },
-    attributes: { might: 22, agility: 16, endurance: 18 },
     resistances: { physical: 0.25, fire: -0.25 },
     loot: 'loot.beast_drop',
     abilities: [
@@ -1233,7 +1216,6 @@ export const DEFAULT_ENEMIES: EnemyDef[] = [
     id: 'enemy.lich', name: 'Lich', icon: '💀', color: '#6c5ce7',
     description: 'An undead archmage who transcended death through dark ritual. A master of death magic.',
     hp: 140, attack: 24, defense: 20, speed: 9, xp: 120, gold: { min: 30, max: 90 },
-    attributes: { might: 12, agility: 9, intellect: 26, spirit: 24, endurance: 16 },
     resistances: { dark: 0.75, poison: 1.0, holy: -0.75, fire: 0.25 },
     loot: 'loot.strong_demon',
     abilities: [
@@ -1248,7 +1230,6 @@ export const DEFAULT_ENEMIES: EnemyDef[] = [
     id: 'enemy.troll', name: 'Troll', icon: '🧌', color: '#27ae60',
     description: 'A monstrous cave troll that regenerates rapidly. Must be burned or frozen to stop regeneration.',
     hp: 200, attack: 28, defense: 22, speed: 7, xp: 200, gold: { min: 50, max: 120 },
-    attributes: { might: 24, agility: 7, endurance: 26 },
     resistances: { physical: 0.5, fire: -0.5, ice: -0.5 },
     size: 2,
     loot: 'loot.boss_drop',
@@ -1262,7 +1243,6 @@ export const DEFAULT_ENEMIES: EnemyDef[] = [
     id: 'enemy.baphomet', name: 'Baphomet', icon: '🐐', color: '#2d3436',
     description: 'The Sabbatic Goat. A demonic idol of chaos worshipped by cultists. Commands all elements.',
     hp: 220, attack: 30, defense: 24, speed: 12, xp: 250, gold: { min: 60, max: 150 },
-    attributes: { might: 20, agility: 12, intellect: 24, spirit: 22, endurance: 18 },
     resistances: { dark: 0.75, fire: 0.5, ice: 0.5, lightning: 0.5, holy: -0.75 },
     size: 2,
     loot: 'loot.boss_drop',
@@ -1277,7 +1257,6 @@ export const DEFAULT_ENEMIES: EnemyDef[] = [
     id: 'enemy.minotaur', name: 'Minotaur', icon: '🐂', color: '#b07d4a',
     description: 'The bull-headed guardian of the labyrinth. Unstoppable in the confines of its maze.',
     hp: 350, attack: 36, defense: 28, speed: 10, xp: 500, gold: { min: 100, max: 250 },
-    attributes: { might: 30, agility: 10, endurance: 28 },
     resistances: { physical: 0.25, lightning: -0.25 },
     size: 2,
     loot: 'loot.boss_drop',
@@ -1291,7 +1270,6 @@ export const DEFAULT_ENEMIES: EnemyDef[] = [
     id: 'enemy.medusa', name: 'Medusa', icon: '🐍', color: '#a29bfe',
     description: 'The gorgon whose petrifying gaze turns the unwary to stone. Her serpent hair drips venom.',
     hp: 300, attack: 28, defense: 26, speed: 14, xp: 450, gold: { min: 80, max: 200 },
-    attributes: { might: 20, agility: 14, intellect: 22, spirit: 18, luck: 16 },
     resistances: { poison: 1.0, dark: 0.5, holy: -0.5 },
     size: 2,
     loot: 'loot.boss_drop',

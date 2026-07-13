@@ -2133,6 +2133,8 @@ export function DungeonMapper({
             setMaps(prev => prev.map((m, i) => i === idx ? { ...m, theme: themeId } : m))
           }
           tracks={ruleset.audioTracks}
+          formulas={ruleset.formulas}
+          onFormulasChange={patch => setRuleset(r => ({ ...r, formulas: { ...r.formulas, ...patch } }))}
           onMusicChange={(idx, musicId) =>
             setMaps(prev => prev.map((m, i) => i === idx ? { ...m, musicId } : m))
           }

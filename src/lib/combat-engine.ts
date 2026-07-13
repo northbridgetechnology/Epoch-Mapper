@@ -77,6 +77,10 @@ export interface CombatState {
    *  inventory by consumeCombatItems() when combat ends — used items stay
    *  used even on flee or defeat. */
   itemsUsed: Record<string, number>
+  /** Charges spent from equipped items (wands/staves) this battle, keyed
+   *  `${memberIdx}:${slot}` — applied to party equipment by
+   *  applyCombatOutcome(), spent even on flee or defeat. */
+  equipChargesUsed?: Record<string, number>
   /** Seeded PRNG stream state — battles are deterministic given the same
    *  initial seed and action sequence (callers may still inject an rng). */
   rngState: number
@@ -921,11 +925,16 @@ export function resolvePlayerUseItem(
   targetActorIdxs: number[],
   ruleset: Ruleset,
   rng?: () => number,
+  /** When set, the use is a charge from the actor's equipped item in this
+   *  slot (wand/staff) rather than a consumable from the shared inventory. */
+  opts?: { equipSlot?: string },
 ): CombatState {
   const user = state.actors[state.turnIdx]
   if (!user || !user.alive) return state
   const def = ruleset.items.find(i => i.id === itemId)
-  if (!def || def.kind !== 'consumable' || !def.onUse?.length) return state
+  if (!def || !def.onUse?.length) return state
+  const fromEquip = opts?.equipSlot
+  if (fromEquip ? !def.charges : def.kind !== 'consumable') return state
 
   const box = { s: state.rngState }
   const rand = rng ?? (() => nextRand(box))
@@ -933,10 +942,16 @@ export function resolvePlayerUseItem(
   const { actors, log, events } = resolveCombatEffects(
     def.onUse, state.turnIdx, targetActorIdxs, state.actors, ruleset, rand,
   )
-  const itemsUsed = { ...state.itemsUsed, [itemId]: (state.itemsUsed[itemId] ?? 0) + 1 }
+  const chargeKey = fromEquip ? `${user.idx}:${fromEquip}` : null
+  const equipChargesUsed = chargeKey
+    ? { ...(state.equipChargesUsed ?? {}), [chargeKey]: ((state.equipChargesUsed ?? {})[chargeKey] ?? 0) + 1 }
+    : state.equipChargesUsed
+  const itemsUsed = chargeKey
+    ? state.itemsUsed
+    : { ...state.itemsUsed, [itemId]: (state.itemsUsed[itemId] ?? 0) + 1 }
   return finishAction(
     proceedAfterAction(
-      withDowned({ ...state, actors, itemsUsed, log: [...state.log, useEntry, ...log] }, events),
+      withDowned({ ...state, actors, itemsUsed, equipChargesUsed, log: [...state.log, useEntry, ...log] }, events),
       ruleset,
       rand,
       { weak: events.some(e => e.kind === 'weak'), crit: events.some(e => e.kind === 'crit') },
@@ -1076,7 +1091,19 @@ export function applyCombatOutcome(
   let updated = party.map((char, i) => {
     const actor = state.actors.find(a => a.kind === 'party' && a.idx === i)
     if (!actor) return char
-    return { ...char, hp: actor.hp, alive: actor.alive && actor.hp > 0, mp: actor.mp, statuses: actor.statuses }
+    let next: Character = { ...char, hp: actor.hp, alive: actor.alive && actor.hp > 0, mp: actor.mp, statuses: actor.statuses }
+    // Spend equipped-item charges (wands/staves used this battle). The item
+    // stays equipped at 0 charges — inert until the author refills it.
+    for (const [key, used] of Object.entries(state.equipChargesUsed ?? {})) {
+      const [idxStr, slot] = key.split(':')
+      if (Number(idxStr) !== i || !used) continue
+      const inst = next.equipment[slot as keyof typeof next.equipment]
+      if (!inst) continue
+      const def = ruleset.items.find(it => it.id === inst.def)
+      const remaining = Math.max(0, (inst.charges ?? def?.charges ?? 0) - used)
+      next = { ...next, equipment: { ...next.equipment, [slot]: { ...inst, charges: remaining } } }
+    }
+    return next
   })
 
   const levelUps: string[] = []
@@ -1088,7 +1115,7 @@ export function applyCombatOutcome(
     updated = updated.map(char => {
       if (!char.alive || char.hp <= 0 || xpEach === 0) return char
       const newXp = char.xp + xpEach
-      const threshold = xpToNextLevel(char.level)
+      const threshold = xpToNextLevel(char.level, ruleset.formulas?.xpToNext)
       if (newXp >= threshold) {
         const cls = ruleset.classes.find(c => c.id === char.classId)
         if (!cls) return { ...char, xp: newXp }

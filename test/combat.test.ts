@@ -524,4 +524,24 @@ test('spell power scales with the school key attribute', () => {
   assert.equal(cast(20), 285)
 })
 
+
+test('equipped wand charges: use fires effects, spends a charge, survives combat end', () => {
+  const rules = makeDefaultRuleset()
+  const caster = {
+    ...heroWith({ weapon: { def: 'item.staff_fire', qty: 1 } }, { might: 10, agility: 20, endurance: 10 }),
+    id: 'wz', name: 'Wizzo',
+  } as Character
+  const s0 = initCombat([caster], modeEnc('enemy.tank'), { ruleset: rules, seed: 2 })
+  const enemyIdx = s0.actors.findIndex(a => a.kind === 'enemy')
+  const s1 = resolvePlayerUseItem(s0, 'item.staff_fire', [enemyIdx], rules, () => 0.5, { equipSlot: 'weapon' })
+  assert.ok(s1.actors[enemyIdx].hp < 300)                       // fire damage landed
+  assert.equal(s1.equipChargesUsed?.['0:weapon'], 1)            // charge recorded
+  assert.equal(s1.itemsUsed['item.staff_fire'], undefined)      // inventory untouched
+  // Non-equip path still refuses non-consumables
+  assert.equal(resolvePlayerUseItem(s0, 'item.staff_fire', [enemyIdx], rules, () => 0.5), s0)
+  // Combat end applies the spend to the equipped instance (12 → 11)
+  const { party: after } = applyCombatOutcome([caster], { ...s1, phase: 'victory', xpReward: 0 }, rules)
+  assert.equal(after[0].equipment.weapon?.charges, 11)
+})
+
 console.log(`\n${passed} passed`)

@@ -7,6 +7,8 @@
  * L3 = Runtime save state (mutated while playing, never written into .epochmap)
  */
 
+import { evalFormula } from './formula'
+
 // ── Branded ref ────────────────────────────────────────────────────────────────
 
 /** A stable string id referencing a definition in a specific table. */
@@ -232,7 +234,6 @@ export interface EnemyAbility {
 
 export interface EnemyDef extends Definition {
   hp: number
-  attributes: Partial<Record<string, number>>
   attack: number
   defense: number
   speed: number
@@ -647,7 +648,14 @@ export function deriveMaxMp(character: Pick<Character, 'level' | 'attributes'>, 
   return cls.spellDie * character.level + Math.max(int, spi)
 }
 
-export function xpToNextLevel(level: number): number {
+/** XP required to advance from `level`. Authors may override the curve with
+ *  Ruleset.formulas.xpToNext (variable: `level`, e.g. "50 * level ^ 1.5");
+ *  invalid formulas fall back to the built-in curve. */
+export function xpToNextLevel(level: number, formula?: string): number {
+  if (formula) {
+    const v = evalFormula(formula, { level })
+    if (v !== undefined && v > 0) return Math.round(v)
+  }
   return Math.round(50 * Math.pow(level, 1.5))
 }
 
