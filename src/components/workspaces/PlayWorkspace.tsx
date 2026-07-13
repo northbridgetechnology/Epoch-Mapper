@@ -940,6 +940,7 @@ function FirstPersonView({ map, facing, isCellRevealed, revealedBoundaries, flag
       const isActive = battle.activeIdx === pl.actorIdx
       const isSelected = battle.selectedIdx === pl.actorIdx
       const isTargetable = battle.targetableIdxs.includes(pl.actorIdx)
+      const isDowned = battle.downedIdxs?.includes(pl.actorIdx) ?? false
 
       // Ground shadow + state rings
       nodes.push(
@@ -967,6 +968,16 @@ function FirstPersonView({ map, facing, isCellRevealed, revealedBoundaries, flag
             <animate attributeName="y"
               values={`${floorY - size * 1.22};${floorY - size * 1.10};${floorY - size * 1.22}`}
               dur="0.8s" repeatCount="indefinite" />
+          </text>,
+        )
+      }
+
+      if (isDowned) {
+        nodes.push(
+          <text key={`ben_down_${pl.actorIdx}`} x={exX} y={floorY - size * 0.95}
+            textAnchor="middle" fontSize={size * 0.32} style={{ userSelect: 'none' }}>
+            💫
+            <animate attributeName="opacity" values="1;0.4;1" dur="0.9s" repeatCount="indefinite" />
           </text>,
         )
       }

@@ -98,6 +98,10 @@ export interface CombatState {
    *  icons; `blink` are half/bonus icons earned by weakness & crits. The phase
    *  ends when both reach zero. */
   icons?: { full: number; blink: number }
+  /** pressTurn mode: enemy actor indices knocked down by a weakness/crit this
+   *  party phase. When every living enemy is down, the party may All-Out Attack.
+   *  Enemies stand back up (cleared) when the enemy phase begins. */
+  downed?: number[]
 }
 
 // ── Seeded RNG (mulberry32) ───────────────────────────────────────────────────
@@ -504,6 +508,8 @@ function advancePressTurn(state: CombatState, ruleset: Ruleset, rng: () => numbe
     const base: CombatState = {
       ...state, activeSide: nextSide, icons: pool, turnIdx: nextIdx, phase, round,
       actors: tickedActors, log: [...state.log, ...pressLog, ...tickLog],
+      // Enemies stand back up when their side takes over.
+      downed: target === 'switch' && nextSide === 'enemy' ? [] : state.downed,
     }
     // A stunned/frozen actor forfeits — that costs the side a normal icon.
     if (blocked) return advancePressTurn(base, ruleset, rng, 'normal')
@@ -511,6 +517,25 @@ function advancePressTurn(state: CombatState, ruleset: Ruleset, rng: () => numbe
   }
 
   return ended ? settle('switch') : settle('same')
+}
+
+/** pressTurn: record enemies knocked down by a weakness/crit this action. */
+function withDowned(state: CombatState, events: CombatEvent[]): CombatState {
+  if (state.mode !== 'pressTurn') return state
+  const add = events
+    .filter(e => (e.kind === 'weak' || e.kind === 'crit') && state.actors[e.target]?.kind === 'enemy')
+    .map(e => e.target)
+  if (add.length === 0) return state
+  return { ...state, downed: Array.from(new Set([...(state.downed ?? []), ...add])) }
+}
+
+/** Whether the party may launch an All-Out Attack right now (pressTurn only). */
+export function canAllOutAttack(state: CombatState): boolean {
+  if (state.mode !== 'pressTurn' || state.activeSide !== 'party' || state.phase !== 'player_action') return false
+  const living = state.actors.map((a, i) => ({ a, i })).filter(({ a }) => a.kind === 'enemy' && a.alive)
+  if (living.length === 0) return false
+  const down = new Set(state.downed ?? [])
+  return living.every(({ i }) => down.has(i))
 }
 
 /** Dispatch turn advancement by the battle's combat mode. */
@@ -722,7 +747,7 @@ export function resolvePlayerAttack(
   } else if (!result.miss && result.resisted) {
     events.push({ target: targetActorIdx, kind: 'resist' })
   }
-  return finishAction(proceedAfterAction({ ...state, actors: newActors, log: newLog }, ruleset, rand, { weak: result.weak, crit: result.crit, miss: result.miss }), box, events, state)
+  return finishAction(proceedAfterAction(withDowned({ ...state, actors: newActors, log: newLog }, events), ruleset, rand, { weak: result.weak, crit: result.crit, miss: result.miss }), box, events, state)
 }
 
 // ── Player: cast spell ────────────────────────────────────────────────────────
@@ -769,7 +794,7 @@ export function resolvePlayerCast(
 
   return finishAction(
     proceedAfterAction(
-      { ...state, actors: newActors, log: [...state.log, castEntry, ...effectLog] },
+      withDowned({ ...state, actors: newActors, log: [...state.log, castEntry, ...effectLog] }, events),
       ruleset,
       rand,
       { weak: events.some(e => e.kind === 'weak'), crit: events.some(e => e.kind === 'crit') },
@@ -832,6 +857,46 @@ export function resolvePlayerDefend(
   return finishAction(proceedAfterAction({ ...state, actors, log: [...state.log, entry] }, ruleset, rand, {}), box, [], state)
 }
 
+// ── Player: press-turn helpers (free member selection + all-out attack) ───────
+
+/** pressTurn: switch which living party member is the active actor. */
+export function resolveSelectActor(state: CombatState, idx: number): CombatState {
+  if (state.mode !== 'pressTurn' || state.phase !== 'player_action' || state.activeSide !== 'party') return state
+  const a = state.actors[idx]
+  if (!a || a.kind !== 'party' || !a.alive || idx === state.turnIdx) return state
+  return { ...state, turnIdx: idx }
+}
+
+/** pressTurn: unleash an All-Out Attack when every living enemy is knocked down.
+ *  Heavy party-wide burst, then the party phase ends. */
+export function resolveAllOutAttack(state: CombatState, ruleset: Ruleset, rng?: () => number): CombatState {
+  if (!canAllOutAttack(state)) return state
+  const box = { s: state.rngState }
+  const rand = rng ?? (() => nextRand(box))
+  const t = tuning(ruleset)
+
+  const partyAtk = state.actors.filter(a => a.kind === 'party' && a.alive).reduce((s, a) => s + a.attack, 0)
+  const targets = state.actors.map((a, i) => ({ a, i })).filter(({ a }) => a.kind === 'enemy' && a.alive)
+
+  const events: CombatEvent[] = []
+  const actors = state.actors.map(a => ({ ...a }))
+  for (const { i } of targets) {
+    const base = Math.max(1, Math.round(partyAtk * 1.5))
+    const dmg = Math.max(1, Math.round(base * (1 + rand() * t.variance)))
+    const newHp = Math.max(0, actors[i].hp - dmg)
+    actors[i] = { ...actors[i], hp: newHp, alive: newHp > 0 }
+    events.push({ target: i, kind: 'crit', amount: dmg })
+  }
+
+  const log: CombatLogEntry[] = [{ text: 'All-Out Attack!', kind: 'crit' }]
+  const felled = targets.filter(({ i }) => !actors[i].alive).length
+  if (felled > 0) log.push({ text: `${felled} ${felled === 1 ? 'foe is' : 'foes are'} wiped out!`, kind: 'crit' })
+
+  // The barrage exhausts the party's presses — hand over to the enemy (or end).
+  const spent: CombatState = { ...state, actors, downed: [], icons: { full: 0, blink: 0 }, log: [...state.log, ...log] }
+  return finishAction(advancePressTurn(spent, ruleset, rand, 'normal'), box, events, state)
+}
+
 // ── Player: use item ──────────────────────────────────────────────────────────
 
 export function resolvePlayerUseItem(
@@ -855,7 +920,7 @@ export function resolvePlayerUseItem(
   const itemsUsed = { ...state.itemsUsed, [itemId]: (state.itemsUsed[itemId] ?? 0) + 1 }
   return finishAction(
     proceedAfterAction(
-      { ...state, actors, itemsUsed, log: [...state.log, useEntry, ...log] },
+      withDowned({ ...state, actors, itemsUsed, log: [...state.log, useEntry, ...log] }, events),
       ruleset,
       rand,
       { weak: events.some(e => e.kind === 'weak'), crit: events.some(e => e.kind === 'crit') },
@@ -966,7 +1031,7 @@ export function resolveEnemyTurn(
       : { target: targetIdx, kind: result.crit ? 'crit' : 'damage', amount: result.damage },
   ]
   if (!result.miss && result.weak) events.push({ target: targetIdx, kind: 'weak' })
-  return finishAction(proceedAfterAction({ ...state, actors: newActors, log: newLog }, ruleset, rand, { weak: result.weak, crit: result.crit, miss: result.miss }), box, events, state)
+  return finishAction(proceedAfterAction(withDowned({ ...state, actors: newActors, log: newLog }, events), ruleset, rand, { weak: result.weak, crit: result.crit, miss: result.miss }), box, events, state)
 }
 
 // ── Turn preview ──────────────────────────────────────────────────────────────

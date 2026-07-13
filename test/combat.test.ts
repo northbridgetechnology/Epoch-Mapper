@@ -10,6 +10,9 @@ import {
   resolvePlayerDefend,
   resolvePlayerUseItem,
   resolveEnemyTurn,
+  resolveAllOutAttack,
+  resolveSelectActor,
+  canAllOutAttack,
   consumeCombatItems,
   upcomingTurns,
   type CombatState,
@@ -432,6 +435,44 @@ test('pressTurn mode: a plain hit spends one full icon', () => {
   const enemyIdx = s.actors.findIndex(a => a.kind === 'enemy')
   const after = resolvePlayerAttack(s, enemyIdx, modeRules, fastRng)
   assert.deepEqual(after.icons, { full: 1, blink: 0 })
+})
+
+test('pressTurn mode: a weakness knocks the enemy down, enabling All-Out', () => {
+  const s = initCombat(twoFastHeroes(), modeEnc('enemy.weakling'), { ruleset: modeRules, combatMode: 'pressTurn', seed: 1 })
+  const enemyIdx = s.actors.findIndex(a => a.kind === 'enemy')
+  assert.equal(canAllOutAttack(s), false)
+  const after = resolvePlayerAttack(s, enemyIdx, modeRules, fastRng)
+  assert.deepEqual(after.downed, [enemyIdx])
+  assert.equal(canAllOutAttack(after), true)
+})
+
+test('pressTurn mode: All-Out Attack damages all enemies and ends the party phase', () => {
+  const s0 = initCombat(twoFastHeroes(), modeEnc('enemy.weakling'), { ruleset: modeRules, combatMode: 'pressTurn', seed: 1 })
+  const enemyIdx = s0.actors.findIndex(a => a.kind === 'enemy')
+  const s1 = resolvePlayerAttack(s0, enemyIdx, modeRules, fastRng)
+  const hpBefore = s1.actors[enemyIdx].hp
+  const s2 = resolveAllOutAttack(s1, modeRules, fastRng)
+  assert.ok(s2.actors[enemyIdx].hp < hpBefore)
+  assert.deepEqual(s2.downed, [])
+  assert.equal(s2.activeSide, 'enemy')
+  assert.equal(s2.phase, 'enemy_turn')
+  assert.ok(s2.log.some(l => l.text === 'All-Out Attack!'))
+})
+
+test('pressTurn mode: All-Out is rejected when enemies are not all down', () => {
+  const s = initCombat(twoFastHeroes(), modeEnc('enemy.tank'), { ruleset: modeRules, combatMode: 'pressTurn', seed: 1 })
+  assert.equal(canAllOutAttack(s), false)
+  assert.equal(resolveAllOutAttack(s, modeRules, fastRng), s) // no-op
+})
+
+test('pressTurn mode: resolveSelectActor switches to another living party member', () => {
+  const s = initCombat(twoFastHeroes(), modeEnc('enemy.tank'), { ruleset: modeRules, combatMode: 'pressTurn', seed: 1 })
+  const other = s.turnIdx === 0 ? 1 : 0
+  const after = resolveSelectActor(s, other)
+  assert.equal(after.turnIdx, other)
+  // classic mode ignores member selection
+  const classic = initCombat(twoFastHeroes(), modeEnc('enemy.tank'), { ruleset: modeRules, combatMode: 'classic', seed: 1 })
+  assert.equal(resolveSelectActor(classic, other).turnIdx, classic.turnIdx)
 })
 
 console.log(`\n${passed} passed`)

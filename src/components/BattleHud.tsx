@@ -23,6 +23,9 @@ import {
   resolvePlayerDefend,
   resolvePlayerUseItem,
   resolveEnemyTurn,
+  resolveAllOutAttack,
+  resolveSelectActor,
+  canAllOutAttack,
   upcomingTurns,
 } from '@/lib/combat-engine'
 import { buildBattlePlacements, type BattleViewState } from '@/lib/battle-scene'
@@ -58,6 +61,12 @@ export interface BattleHudProps {
   onConfirmTarget: () => void
   onFlee: () => void
   onBack: () => void
+  /** pressTurn: living party members the player may switch to this phase. */
+  selectableParty: { idx: number; name: string; icon?: string }[]
+  onSelectActor: (actorIdx: number) => void
+  /** pressTurn: All-Out Attack is available (every living enemy is down). */
+  canAllOut: boolean
+  onAllOut: () => void
 }
 
 export function useBattleController({ combat, ruleset, party, inventory, onAction }: {
@@ -231,6 +240,7 @@ export function useBattleController({ combat, ruleset, party, inventory, onActio
     selectedIdx: mode.k === 'targets' ? sel : null,
     events: combat.events,
     eventSeq: combat.eventSeq,
+    downedIdxs: combat.downed,
     onSelectTarget: selectTarget,
   }
 
@@ -251,6 +261,12 @@ export function useBattleController({ combat, ruleset, party, inventory, onActio
     onConfirmTarget: () => confirmTarget(),
     onFlee: () => { const cur = combatRef.current; if (cur) onAction(resolvePlayerFlee(cur, ruleset)) },
     onBack: () => { backOut(); setSel(null) },
+    selectableParty: combat.mode === 'pressTurn' && combat.phase === 'player_action' && combat.activeSide === 'party'
+      ? combat.actors.map((a, i) => ({ a, i })).filter(({ a }) => a.kind === 'party' && a.alive).map(({ a, i }) => ({ idx: i, name: a.name, icon: a.icon }))
+      : [],
+    onSelectActor: (idx) => { const cur = combatRef.current; if (cur) onAction(resolveSelectActor(cur, idx)) },
+    canAllOut: canAllOutAttack(combat),
+    onAllOut: () => { const cur = combatRef.current; if (cur) onAction(resolveAllOutAttack(cur, ruleset)) },
   }
 
   return { view, hud }
@@ -285,6 +301,7 @@ export function BattleHud({
   combat, mode, currentActor, castableSpells, usableItems, selectedIdx,
   onAttack, onOpenSpells, onChooseSpell, onOpenItems, onChooseItem, onDefend,
   onAllyTarget, onConfirmTarget, onFlee, onBack,
+  selectableParty, onSelectActor, canAllOut, onAllOut,
 }: BattleHudProps) {
   const logEndRef = useRef<HTMLDivElement>(null)
   useEffect(() => { logEndRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [combat.log.length])
@@ -326,6 +343,19 @@ export function BattleHud({
           {combat.icons.full + combat.icons.blink === 0 && <span className="text-[10px] text-white/30">—</span>}
         </div>
       )}
+      {isPlayerTurn && selectableParty.length > 1 && mode.k === 'menu' && (
+        <div className="flex items-center gap-1 mb-1.5">
+          <span className="text-[9px] uppercase tracking-wide text-white/30 mr-1">Act with</span>
+          {selectableParty.map(m => (
+            <button key={m.idx} onClick={() => onSelectActor(m.idx)} title={m.name}
+              className={cn(
+                'w-6 h-6 grid place-items-center rounded border text-sm leading-none',
+                m.idx === combat.turnIdx ? 'border-amber-400/80 bg-amber-950/40' : 'border-white/10 bg-zinc-900/70 opacity-70 hover:opacity-100',
+              )}
+            >{m.icon ?? '🧑'}</button>
+          ))}
+        </div>
+      )}
       <div className="flex items-stretch gap-3 w-full min-h-[92px]">
       {/* Command menu */}
       <div className="w-44 flex-shrink-0 rounded-lg border border-amber-500/25 bg-zinc-900/80 p-1.5">
@@ -338,6 +368,12 @@ export function BattleHud({
             <div className="px-2 pb-0.5 text-[10px] uppercase tracking-wide text-amber-300/70">
               {currentActor?.name}
             </div>
+            {canAllOut && (
+              <button onClick={onAllOut}
+                className="flex items-center gap-2 w-full px-2.5 py-1 rounded text-xs font-bold text-left text-amber-200 bg-amber-500/20 hover:bg-amber-500/30 animate-pulse mb-0.5">
+                <Swords className="w-3.5 h-3.5" /> All-Out Attack!
+              </button>
+            )}
             <MenuButton icon={<Swords className="w-3.5 h-3.5" />} label="Attack" onClick={onAttack} />
             <MenuButton icon={<Wand2 className="w-3.5 h-3.5" />} label="Spell"
               onClick={onOpenSpells} disabled={castableSpells.length === 0}
