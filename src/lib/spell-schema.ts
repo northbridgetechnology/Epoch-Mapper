@@ -1,4 +1,4 @@
-import type { SpellDef, StatusEffectDef, FieldSchema } from './engine-types'
+import type { SpellDef, SpellSchoolDef, StatusEffectDef, FieldSchema } from './engine-types'
 
 const SPELL_TARGETS = [
   { value: 'enemy',      label: 'Enemy (single)' },
@@ -23,7 +23,7 @@ export const SPELL_SCHEMA: FieldSchema[] = [
   { key: 'icon',         label: 'Icon',                type: 'icon',    optional: true },
   { key: 'color',        label: 'Color',               type: 'color',   optional: true },
   { key: 'description',  label: 'Description',         type: 'textarea', optional: true },
-  { key: 'school',       label: 'School',              type: 'text' },
+  { key: 'school',       label: 'School',              type: { kind: 'ref', table: 'spellSchools' } },
   { key: 'level',        label: 'Min Level',           type: 'number',  min: 1, max: 99 },
   { key: 'mpCost',       label: 'MP Cost',             type: 'number',  min: 0, max: 999 },
   { key: 'target',       label: 'Target',              type: { kind: 'enum', options: SPELL_TARGETS } },
@@ -31,6 +31,18 @@ export const SPELL_SCHEMA: FieldSchema[] = [
   { key: 'outOfCombat',  label: 'Usable Exploring',    type: 'boolean' },
   { key: 'effects',      label: 'Effects',             type: 'effects' },
 ]
+
+export const SPELL_SCHOOL_SCHEMA: FieldSchema[] = [
+  { key: 'id',          label: 'ID',          type: 'text',    placeholder: 'school.short_name' },
+  { key: 'name',        label: 'Name',         type: 'text' },
+  { key: 'icon',        label: 'Icon',         type: 'icon',    optional: true },
+  { key: 'color',       label: 'Color',        type: 'color',   optional: true },
+  { key: 'description', label: 'Description',  type: 'textarea', optional: true },
+]
+
+export function blankSpellSchool(id: string): SpellSchoolDef {
+  return { id, name: 'New School', icon: '✨', color: '#8888aa', description: '' }
+}
 
 export const STATUS_SCHEMA: FieldSchema[] = [
   { key: 'name',          label: 'Name',                          type: 'text' },

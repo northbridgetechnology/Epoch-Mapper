@@ -106,7 +106,8 @@ export interface AttributeDef extends Definition {
 export interface ClassDef extends Definition {
   hitDie: number
   spellDie: number
-  spellSchools: string[]
+  /** Schools this class may learn/cast from (SpellSchoolDef ids). Empty = all. */
+  spellSchools: DefRef<SpellSchoolDef>[]
   allowedEquip: ItemSlot[]
   /** Weapon types this class is proficient with (WeaponTypeDef ids).
    *  Empty = no per-type restriction (any weapon type). */
@@ -186,8 +187,16 @@ export interface ItemDef extends Definition {
   cursed?: boolean
 }
 
+/** A school of magic (arcane, divine…). Spells belong to a school; classes
+ *  list the schools they may learn/cast from. */
+export interface SpellSchoolDef extends Definition {
+  /** Attribute id whose value scales this school's spell damage/healing
+   *  (+1 power per 2 points above 10). Absent = flat dice (no scaling). */
+  keyAttribute?: string
+}
+
 export interface SpellDef extends Definition {
-  school: string
+  school: DefRef<SpellSchoolDef>
   level: number
   mpCost: number
   target: SpellTarget
@@ -417,6 +426,7 @@ export interface Ruleset {
   races: RaceDef[]
   weaponTypes: WeaponTypeDef[]
   armorTypes: ArmorTypeDef[]
+  spellSchools: SpellSchoolDef[]
   audioTracks: AudioTrackDef[]
   items: ItemDef[]
   spells: SpellDef[]

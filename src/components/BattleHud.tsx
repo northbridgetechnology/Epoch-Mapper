@@ -118,9 +118,11 @@ export function useBattleController({ combat, ruleset, party, inventory, onActio
     if (combat.antiMagic) return []   // anti-magic zone: Spell command is dead
     const char = party[currentActor.idx]
     if (!char) return []
+    const schoolOrder = (id: string) => { const i = (ruleset.spellSchools ?? []).findIndex(s => s.id === id); return i < 0 ? 999 : i }
     return (char.knownSpells ?? [])
       .map(id => ruleset.spells.find(s => s.id === id))
       .filter((s): s is SpellDef => !!s && s.inCombat)
+      .sort((a, b) => schoolOrder(a.school) - schoolOrder(b.school))
   }, [combat, currentActor, party, ruleset])
 
   // Consumables with onUse effects the party still holds (net of this battle's usage)

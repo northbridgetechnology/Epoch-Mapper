@@ -141,4 +141,23 @@ test('normalizeRuleset leaves a modern ruleset untouched', () => {
   assert.equal(n.items, modern.items)
 })
 
+
+test('normalizeRuleset seeds spell schools and keeps custom school strings', () => {
+  const legacy = {
+    ...makeDefaultRuleset(),
+    spellSchools: undefined,
+    spells: [
+      { id: 'sp.a', name: 'Agi', school: 'element', level: 1, mpCost: 3, target: 'enemy', inCombat: true, outOfCombat: false, effects: [] },
+      { id: 'sp.x', name: 'Bone Chill', school: 'necromancy', level: 1, mpCost: 3, target: 'enemy', inCombat: true, outOfCombat: false, effects: [] },
+    ],
+  } as unknown as Ruleset
+  const n = normalizeRuleset(legacy)
+  assert.ok(n.spellSchools.some(s => s.id === 'element' && s.keyAttribute === 'attr.intellect'))
+  const necro = n.spellSchools.find(s => s.id === 'necromancy')
+  assert.equal(necro?.name, 'Necromancy')     // custom string became a bare def
+  // modern ruleset untouched
+  const modern = makeDefaultRuleset()
+  assert.equal(normalizeRuleset(modern).spellSchools, modern.spellSchools)
+})
+
 console.log(`\n${passed} equipment tests passed`)

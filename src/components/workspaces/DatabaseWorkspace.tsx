@@ -1,10 +1,10 @@
 'use client'
 
 import { Fragment, useEffect, useRef, useState } from 'react'
-import { Plus, Trash2, Package, List, Skull, Swords, Sparkles, Zap, Store, Puzzle, ScrollText, Shield, Sword, Shirt, Music, Upload, Play, Square } from 'lucide-react'
+import { Plus, Trash2, Package, List, Skull, Swords, Sparkles, Zap, Store, Puzzle, ScrollText, Shield, Sword, Shirt, Music, BookOpen, Upload, Play, Square } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
-import type { ClassDef, ItemSlot, DamageType, WeaponTypeDef, ArmorTypeDef, AudioTrackDef, Effect, EnemyDef, EncounterTableDef, EventDef, ItemDef, LootTableDef, QuestDef, ShopDef, SpellDef, StatusEffectDef, Ruleset } from '@/lib/engine-types'
+import type { ClassDef, ItemSlot, DamageType, WeaponTypeDef, ArmorTypeDef, AudioTrackDef, SpellSchoolDef, Effect, EnemyDef, EncounterTableDef, EventDef, ItemDef, LootTableDef, QuestDef, ShopDef, SpellDef, StatusEffectDef, Ruleset } from '@/lib/engine-types'
 import { CLASS_SCHEMA, blankClass } from '@/lib/class-schema'
 import { WEAPON_TYPE_SCHEMA, ARMOR_TYPE_SCHEMA, DAMAGE_TYPE_OPTIONS, blankWeaponType, blankArmorType } from '@/lib/type-schema'
 import { blankAudioTrack } from '@/lib/music'
@@ -17,10 +17,10 @@ import { SchemaForm } from '../forms/SchemaForm'
 import { EffectBuilder } from '../forms/EffectBuilder'
 import { ITEM_SCHEMA, LOOT_TABLE_SCHEMA, blankItem } from '@/lib/item-schema'
 import { ENEMY_SCHEMA, ENCOUNTER_TABLE_SCHEMA, blankEnemy } from '@/lib/enemy-schema'
-import { SPELL_SCHEMA, STATUS_SCHEMA, blankSpell, blankStatusEffect } from '@/lib/spell-schema'
+import { SPELL_SCHEMA, STATUS_SCHEMA, SPELL_SCHOOL_SCHEMA, blankSpell, blankStatusEffect, blankSpellSchool } from '@/lib/spell-schema'
 import { SHOP_SCHEMA, blankShop } from '@/lib/shop-schema'
 
-type Category = 'items' | 'weapon_types' | 'armor_types' | 'audio' | 'loot_tables' | 'bestiary' | 'encounters' | 'spells' | 'status_effects' | 'shops' | 'classes' | 'events' | 'quests'
+type Category = 'items' | 'weapon_types' | 'armor_types' | 'spell_schools' | 'audio' | 'loot_tables' | 'bestiary' | 'encounters' | 'spells' | 'status_effects' | 'shops' | 'classes' | 'events' | 'quests'
 
 const CATEGORIES: { id: Category; icon: React.ReactNode; label: string }[] = [
   { id: 'items',          icon: <Package className="w-4 h-4" />,  label: 'Items' },
@@ -33,6 +33,7 @@ const CATEGORIES: { id: Category; icon: React.ReactNode; label: string }[] = [
   { id: 'encounters',     icon: <Swords className="w-4 h-4" />,   label: 'Encounter Tables' },
   { id: 'spells',         icon: <Sparkles className="w-4 h-4" />, label: 'Spells' },
   { id: 'status_effects', icon: <Zap className="w-4 h-4" />,      label: 'Status Effects' },
+  { id: 'spell_schools',  icon: <BookOpen className="w-4 h-4" />, label: 'Spell Schools' },
   { id: 'shops',          icon: <Store className="w-4 h-4" />,    label: 'Shops' },
   { id: 'events',         icon: <Puzzle className="w-4 h-4" />,     label: 'Events' },
   { id: 'quests',         icon: <ScrollText className="w-4 h-4" />, label: 'Quests' },
@@ -927,6 +928,7 @@ let _classSeq = 1
 let _wtypeSeq = 1
 let _atypeSeq = 1
 let _audioSeq = 1
+let _schoolSeq = 1
 
 // ── Generic def list (NPCs / Events / Quests) ─────────────────────────────────
 
@@ -1084,52 +1086,12 @@ function Chip({ active, label, onClick }: { active: boolean; label: string; onCl
   )
 }
 
-function TagRow({ label, tags, suggestions, onChange, placeholder }: {
-  label: string
-  tags: string[]
-  suggestions?: string[]
-  onChange: (next: string[]) => void
-  placeholder?: string
-}) {
-  const [draft, setDraft] = useState('')
-  const toggle = (t: string) => onChange(tags.includes(t) ? tags.filter(x => x !== t) : [...tags, t])
-  const add = () => {
-    const v = draft.trim().toLowerCase()
-    if (v && !tags.includes(v)) onChange([...tags, v])
-    setDraft('')
-  }
-  const extra = tags.filter(t => !(suggestions ?? []).includes(t))
-  return (
-    <div>
-      <div className="text-xs font-medium text-white/60 mb-1">{label}</div>
-      <div className="flex flex-wrap gap-1 mb-1.5">
-        {(suggestions ?? []).map(s => <Chip key={s} active={tags.includes(s)} label={s} onClick={() => toggle(s)} />)}
-        {extra.map(t => (
-          <button key={t} type="button" onClick={() => toggle(t)}
-            className="px-2 py-0.5 rounded text-xs border bg-amber-600/25 border-amber-500/50 text-amber-200 capitalize">
-            {t} ✕
-          </button>
-        ))}
-      </div>
-      <div className="flex gap-1">
-        <input value={draft} placeholder={placeholder ?? 'add custom…'}
-          onChange={e => setDraft(e.target.value)}
-          onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); add() } }}
-          className="flex-1 px-2 py-0.5 rounded bg-zinc-900 border border-white/10 text-xs text-white/85 focus:outline-none focus:border-amber-500/40" />
-        <button type="button" onClick={add}
-          className="px-2 py-0.5 rounded text-xs bg-amber-600/20 text-amber-300/80 hover:text-amber-200">Add</button>
-      </div>
-    </div>
-  )
-}
-
 function ClassEditor({ cls, ruleset, onChange }: {
   cls: ClassDef
   ruleset: Ruleset
   onChange: (c: ClassDef) => void
 }) {
   const raw = cls as unknown as Record<string, unknown>
-  const spellSchoolSuggestions = Array.from(new Set(ruleset.spells.map(s => s.school).filter(Boolean)))
 
   function toggleSlot(slot: ItemSlot) {
     const has = cls.allowedEquip.includes(slot)
@@ -1222,9 +1184,21 @@ function ClassEditor({ cls, ruleset, onChange }: {
 
       {/* Spell schools */}
       <div className="pt-2 border-t border-white/10">
-        <TagRow label="Spell Schools" tags={cls.spellSchools}
-          suggestions={spellSchoolSuggestions} placeholder="add school…"
-          onChange={next => onChange({ ...cls, spellSchools: next })} />
+        <div className="text-xs font-medium text-white/60 mb-1">
+          Spell Schools <span className="text-white/30">(none selected = any)</span>
+        </div>
+        {ruleset.spellSchools.length === 0 ? (
+          <div className="text-xs text-white/25">No schools defined — add some in the Spell Schools tab.</div>
+        ) : (
+          <div className="flex flex-wrap gap-1">
+            {ruleset.spellSchools.map(sc => (
+              <Chip key={sc.id} active={cls.spellSchools.includes(sc.id)}
+                label={`${sc.icon ?? '✨'} ${sc.name}`}
+                onClick={() => onChange({ ...cls, spellSchools: cls.spellSchools.includes(sc.id)
+                  ? cls.spellSchools.filter(s => s !== sc.id) : [...cls.spellSchools, sc.id] })} />
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Attribute modifiers & growth */}
@@ -1315,6 +1289,35 @@ function ArmorTypeEditor({ atype, onChange }: {
     <div className="p-4 space-y-4 overflow-y-auto h-full">
       <TypeEditorHeader def={atype} fallback="🛡️" />
       <SchemaForm schema={ARMOR_TYPE_SCHEMA} value={raw} onChange={handle} />
+    </div>
+  )
+}
+
+// ── Spell school editor ───────────────────────────────────────────────────────
+
+function SpellSchoolEditor({ school, ruleset, onChange }: {
+  school: SpellSchoolDef
+  ruleset: Ruleset
+  onChange: (s: SpellSchoolDef) => void
+}) {
+  const raw = school as unknown as Record<string, unknown>
+  const spellCount = ruleset.spells.filter(sp => sp.school === school.id).length
+  return (
+    <div className="p-4 space-y-4 overflow-y-auto h-full">
+      <TypeEditorHeader def={school} fallback="✨" />
+      <SchemaForm schema={SPELL_SCHOOL_SCHEMA} value={raw} onChange={u => onChange(u as unknown as SpellSchoolDef)} />
+      <div>
+        <label className="block text-xs font-medium text-white/60 mb-0.5">
+          Scaling Attribute <span className="text-white/30">(spell power: +1 per 2 points above 10; none = flat dice)</span>
+        </label>
+        <select value={school.keyAttribute ?? ''}
+          onChange={e => onChange({ ...school, keyAttribute: e.target.value || undefined })}
+          className="w-full px-2 py-1.5 rounded bg-zinc-800 border border-white/10 text-xs text-white/85 focus:outline-none focus:border-amber-500/50">
+          <option value="">— no scaling —</option>
+          {ruleset.attributes.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+        </select>
+      </div>
+      <div className="text-[11px] text-white/35">{spellCount} spell{spellCount === 1 ? '' : 's'} in this school.</div>
     </div>
   )
 }
@@ -1690,6 +1693,24 @@ export function DatabaseWorkspace({ ruleset, onRulesetChange }: DatabaseWorkspac
     if (selectedId === id) setSelectedId(next[0]?.id ?? null)
   }
 
+  // ── spell schools ──
+
+  const selectedSchool = ruleset.spellSchools.find(s => s.id === selectedId) ?? null
+
+  function addSchool() {
+    const id = `school.school_${_schoolSeq++}`
+    onRulesetChange({ ...ruleset, spellSchools: [...ruleset.spellSchools, blankSpellSchool(id)] })
+    setSelectedId(id); setCategory('spell_schools')
+  }
+  function updateSchool(s: SpellSchoolDef) {
+    onRulesetChange({ ...ruleset, spellSchools: ruleset.spellSchools.map(x => x.id === s.id ? s : x) })
+  }
+  function deleteSchool(id: string) {
+    const next = ruleset.spellSchools.filter(s => s.id !== id)
+    onRulesetChange({ ...ruleset, spellSchools: next })
+    if (selectedId === id) setSelectedId(next[0]?.id ?? null)
+  }
+
   // ── classes ──
 
   const selectedClass = ruleset.classes.find(c => c.id === selectedId) ?? null
@@ -1754,6 +1775,7 @@ export function DatabaseWorkspace({ ruleset, onRulesetChange }: DatabaseWorkspac
     if (cat === 'weapon_types')   setSelectedId(ruleset.weaponTypes[0]?.id ?? null)
     if (cat === 'armor_types')    setSelectedId(ruleset.armorTypes[0]?.id ?? null)
     if (cat === 'audio')          setSelectedId(ruleset.audioTracks[0]?.id ?? null)
+    if (cat === 'spell_schools')  setSelectedId(ruleset.spellSchools[0]?.id ?? null)
     if (cat === 'classes')        setSelectedId(ruleset.classes[0]?.id ?? null)
     if (cat === 'events')         setSelectedId((ruleset.events ?? [])[0]?.id ?? null)
     if (cat === 'quests')         setSelectedId((ruleset.quests ?? [])[0]?.id ?? null)
@@ -1811,6 +1833,10 @@ export function DatabaseWorkspace({ ruleset, onRulesetChange }: DatabaseWorkspac
           <GenericDefList label="Armor Types" entries={ruleset.armorTypes.map(a => ({ id: a.id, icon: a.icon ?? '🛡️', name: `${a.name} · ${a.weight}` }))}
             selectedId={selectedId} onSelect={setSelectedId} onAdd={addArmorType} onDelete={deleteArmorType} />
         )}
+        {category === 'spell_schools' && (
+          <GenericDefList label="Spell Schools" entries={ruleset.spellSchools.map(s => ({ id: s.id, icon: s.icon ?? '✨', name: s.name }))}
+            selectedId={selectedId} onSelect={setSelectedId} onAdd={addSchool} onDelete={deleteSchool} />
+        )}
         {category === 'audio' && (
           <GenericDefList label="Music" entries={ruleset.audioTracks.map(t => ({ id: t.id, icon: t.icon ?? '🎵', name: t.name }))}
             selectedId={selectedId} onSelect={setSelectedId} onAdd={addTrack} onDelete={deleteTrackDef} />
@@ -1849,6 +1875,8 @@ export function DatabaseWorkspace({ ruleset, onRulesetChange }: DatabaseWorkspac
           <WeaponTypeEditor wtype={selectedWeaponType} ruleset={ruleset} onChange={updateWeaponType} />
         ) : category === 'armor_types' && selectedArmorType ? (
           <ArmorTypeEditor atype={selectedArmorType} onChange={updateArmorType} />
+        ) : category === 'spell_schools' && selectedSchool ? (
+          <SpellSchoolEditor school={selectedSchool} ruleset={ruleset} onChange={updateSchool} />
         ) : category === 'audio' && selectedTrack ? (
           <AudioTrackEditor track={selectedTrack} onChange={updateTrack} />
         ) : category === 'classes' && selectedClass ? (

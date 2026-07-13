@@ -182,7 +182,7 @@ export { CharacterBuilder } from './components/CharacterBuilder'
 export { OpeningStoryOverlay } from './components/OpeningStory'
 
 // Spell + status-effect schema helpers (Phase E5)
-export { SPELL_SCHEMA, STATUS_SCHEMA, blankSpell, blankStatusEffect } from './lib/spell-schema'
+export { SPELL_SCHEMA, STATUS_SCHEMA, blankSpell, blankStatusEffect, SPELL_SCHOOL_SCHEMA, blankSpellSchool } from './lib/spell-schema'
 
 // Out-of-combat effect resolver
 export { applyEffectToChar, applyConsumable } from './lib/apply-effects'

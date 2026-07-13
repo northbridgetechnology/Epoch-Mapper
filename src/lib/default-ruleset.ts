@@ -5,7 +5,7 @@
 
 import type {
   AttributeDef, ClassDef, RaceDef, SpellDef, StatusEffectDef,
-  ItemDef, WeaponTypeDef, ArmorTypeDef, EnemyDef, EncounterTableDef, LootTableDef, ShopDef,
+  ItemDef, WeaponTypeDef, ArmorTypeDef, SpellSchoolDef, EnemyDef, EncounterTableDef, LootTableDef, ShopDef,
   Ruleset,
 } from './engine-types'
 
@@ -107,6 +107,17 @@ export const DEFAULT_ARMOR_TYPES: ArmorTypeDef[] = [
   { id: 'atype.robe',    name: 'Robe',         icon: '👘', color: '#6c5ce7', description: "A spellcaster's vestments — no burden on the arcane.",         weight: 'light' },
   { id: 'atype.buckler', name: 'Buckler',      icon: '🛡️', color: '#b07d4a', description: 'A small light shield strapped to the forearm.',                weight: 'light' },
   { id: 'atype.shield',  name: 'Shield',       icon: '🛡️', color: '#b2bec3', description: 'A full shield — sturdy cover that slows the guard.',            weight: 'medium', speedMod: -1 },
+]
+
+// ── Spell schools ───────────────────────────────────────────────────────────────
+// Ids are the historical school strings, so legacy spells/classes (which stored
+// the raw string) reference these defs with zero remapping.
+
+export const DEFAULT_SPELL_SCHOOLS: SpellSchoolDef[] = [
+  { id: 'arcane',  name: 'Arcane',    icon: '🔮', color: '#8e44ad', description: 'Raw magical force and mind-bending trickery. Scales with Intellect.', keyAttribute: 'attr.intellect' },
+  { id: 'element', name: 'Elemental', icon: '🔥', color: '#e17055', description: "Fire, ice, and storm bent to the caster's will. Scales with Intellect.", keyAttribute: 'attr.intellect' },
+  { id: 'divine',  name: 'Divine',    icon: '✨', color: '#f39c12', description: 'Healing light and protective blessings. Scales with Spirit.', keyAttribute: 'attr.spirit' },
+  { id: 'holy',    name: 'Holy',      icon: '✝️', color: '#f9ca24', description: 'Consecrated wrath against the unholy. Scales with Spirit.', keyAttribute: 'attr.spirit' },
 ]
 
 // ── Races ──────────────────────────────────────────────────────────────────────
@@ -1666,11 +1677,23 @@ export function normalizeRuleset(r: Ruleset): Ruleset {
   const legacy = !(r.weaponTypes && r.weaponTypes.length)
   const migrated = legacy ? migrateLegacyWeaponArmor(r) : { items: r.items ?? [], classes: r.classes ?? [] }
 
+  // Spell schools: legacy rulesets stored schools as raw strings on spells and
+  // classes. Default school ids ARE those strings, so seeding the table is the
+  // whole migration — plus bare defs for any custom strings the author used.
+  let spellSchools = r.spellSchools
+  if (!spellSchools?.length) {
+    const known = new Set(DEFAULT_SPELL_SCHOOLS.map(s => s.id))
+    const extras = Array.from(new Set((r.spells ?? []).map(s => s.school).filter(s => s && !known.has(s))))
+      .map(id => ({ id, name: id.charAt(0).toUpperCase() + id.slice(1), icon: '✨' }))
+    spellSchools = [...DEFAULT_SPELL_SCHOOLS, ...extras]
+  }
+
   return {
     ...r,
     classes: migrated.classes,
     weaponTypes: r.weaponTypes?.length ? r.weaponTypes : DEFAULT_WEAPON_TYPES,
     armorTypes: r.armorTypes?.length ? r.armorTypes : DEFAULT_ARMOR_TYPES,
+    spellSchools,
     audioTracks: r.audioTracks ?? [],
     items: migrated.items,
     spells: r.spells ?? [],
@@ -1702,6 +1725,7 @@ export function makeDefaultRuleset(startMapId = 'map1'): Ruleset {
     races: DEFAULT_RACES,
     weaponTypes: DEFAULT_WEAPON_TYPES,
     armorTypes: DEFAULT_ARMOR_TYPES,
+    spellSchools: DEFAULT_SPELL_SCHOOLS,
     audioTracks: [],
     items: DEFAULT_ITEMS,
     spells: DEFAULT_SPELLS,

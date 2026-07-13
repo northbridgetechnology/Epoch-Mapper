@@ -47,6 +47,9 @@ export interface CombatActor {
   /** Reach of this actor's basic attack. Ranged attacks ignore back-rank
    *  penalties. Absent = 'melee'. */
   weaponRange?: 'melee' | 'ranged'
+  /** Party only: post-equipment attribute snapshot — drives spell-school
+   *  power scaling (SpellSchoolDef.keyAttribute). */
+  attrs?: Record<string, number>
 }
 
 /** A discrete thing that happened during one action — drives view feedback
@@ -221,6 +224,7 @@ function partyActorFromChar(
     resistances: ruleset?.races.find(r => r.id === char.raceId)?.resistances,
     weaponDamageType,
     weaponRange,
+    attrs,
   }
 }
 
@@ -233,6 +237,8 @@ function resolveCombatEffects(
   actors: CombatActor[],
   ruleset: Ruleset,
   rng: () => number,
+  /** Flat power added to damage/heal rolls (spell-school attribute scaling). */
+  powerBonus = 0,
 ): { actors: CombatActor[]; log: CombatLogEntry[]; events: CombatEvent[] } {
   let cur = [...actors]
   const log: CombatLogEntry[] = []
@@ -249,7 +255,7 @@ function resolveCombatEffects(
 
       if (eff.t === 'damage') {
         if (!target.alive) continue
-        const base = rollDice(eff.amount, rng)
+        const base = rollDice(eff.amount, rng) + powerBonus
         const crit = eff.canCrit !== false && rng() < t.critChance
         const raw = Math.max(1, Math.round(base * (crit ? t.critMult : 1)))
         // Resistance is the fraction blocked; negative values are weaknesses
@@ -279,7 +285,7 @@ function resolveCombatEffects(
 
       } else if (eff.t === 'heal') {
         if (!target.alive) continue
-        const amount = rollDice(eff.amount, rng)
+        const amount = rollDice(eff.amount, rng) + powerBonus
         const newHp = Math.min(target.maxHp, target.hp + amount)
         const gained = newHp - target.hp
         cur = cur.map((a, i) => i === tIdx ? { ...a, hp: newHp } : a)
@@ -783,6 +789,15 @@ export function resolvePlayerCast(
 
   const castEntry: CombatLogEntry = { text: `${caster.name} casts ${spell.name}!`, kind: 'spell' }
 
+  // Spell-school scaling: the school's key attribute adds +1 power per 2
+  // points above 10 (schools without a keyAttribute stay flat dice).
+  const school = ruleset.spellSchools?.find(s => s.id === spell.school)
+  const keyAttr = school?.keyAttribute
+  const attrVal = keyAttr && caster.attrs
+    ? (caster.attrs[keyAttr] ?? caster.attrs[keyAttr.replace('attr.', '')] ?? 10)
+    : 10
+  const powerBonus = Math.max(0, Math.floor((attrVal - 10) / 2))
+
   const { actors: newActors, log: effectLog, events } = resolveCombatEffects(
     spell.effects,
     state.turnIdx,
@@ -790,6 +805,7 @@ export function resolvePlayerCast(
     actorsAfterMp,
     ruleset,
     rand,
+    powerBonus,
   )
 
   return finishAction(

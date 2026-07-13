@@ -495,8 +495,10 @@ function MagicScreen({ ruleset, party, onExit, onApply, onDesc }: {
   const [cCur, setCCur, cStep] = useCursor(casterIdxs.length)
   const caster = casterIdxs[cCur]?.c
   const casterIdx = casterIdxs[cCur]?.i ?? -1
+  const schoolOrder = (id: string) => { const i = (ruleset.spellSchools ?? []).findIndex(s => s.id === id); return i < 0 ? 999 : i }
   const spells = (caster?.knownSpells ?? []).map(id => ruleset.spells.find(s => s.id === id))
     .filter((s): s is SpellDef => !!s && s.outOfCombat)
+    .sort((a, b) => schoolOrder(a.school) - schoolOrder(b.school))
   const [sCur, setSCur, sStep] = useCursor(spells.length)
   const [tCur, , tStep] = useCursor(party.length)
   const [aCur, , aStep] = useCursor(1)   // just "Cast" for now (room for Skills later)
@@ -552,14 +554,18 @@ function MagicScreen({ ruleset, party, onExit, onApply, onDesc }: {
         ) : (
           <>
             {spells.length === 0 && <div className="text-sm text-white/30 italic">No field spells.</div>}
-            {spells.map((s, i) => (
-              <Row key={s.id} sel={i === sCur} disabled={(caster?.mp ?? 0) < s.mpCost}
-                onHover={() => mode === 'spell' && setSCur(i)}
-                onClick={() => { setSCur(i); setMode('action') }}>
-                <span>{s.icon ?? '✨'}</span><span className="flex-1">{s.name}</span>
-                <span className="text-xs text-sky-300 font-mono">{s.mpCost} MP</span>
-              </Row>
-            ))}
+            {spells.map((s, i) => {
+              const sc = ruleset.spellSchools?.find(x => x.id === s.school)
+              return (
+                <Row key={s.id} sel={i === sCur} disabled={(caster?.mp ?? 0) < s.mpCost}
+                  onHover={() => mode === 'spell' && setSCur(i)}
+                  onClick={() => { setSCur(i); setMode('action') }}>
+                  <span>{s.icon ?? '✨'}</span><span className="flex-1">{s.name}</span>
+                  {sc && <span className="text-[10px] px-1 rounded" style={{ color: sc.color ?? '#aaa', background: `${sc.color ?? '#888'}22` }}>{sc.icon} {sc.name}</span>}
+                  <span className="text-xs text-sky-300 font-mono">{s.mpCost} MP</span>
+                </Row>
+              )
+            })}
           </>
         )}
       </div>

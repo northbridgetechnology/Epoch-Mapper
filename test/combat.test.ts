@@ -7,6 +7,7 @@ import assert from 'node:assert/strict'
 import {
   initCombat,
   resolvePlayerAttack,
+  resolvePlayerCast,
   resolvePlayerDefend,
   resolvePlayerUseItem,
   resolveEnemyTurn,
@@ -499,6 +500,28 @@ test('level-up applies class attrGrowth, banks levelPoints, clamps at attr max',
   assert.equal(after[0].unspentPoints, 2)                  // fighter levelPoints
   // deriveMaxHp now reads full-id keys: hitDie 10×2 + END 30×2 = 80
   assert.equal(after[0].maxHp, 80)
+})
+
+
+test('spell power scales with the school key attribute', () => {
+  const rules = {
+    ...makeDefaultRuleset(),
+    spellSchools: [{ id: 'arcane', name: 'Arcane', keyAttribute: 'attr.intellect' }],
+    spells: [{ id: 'sp.bolt', name: 'Bolt', school: 'arcane', level: 1, mpCost: 0, target: 'enemy', inCombat: true, outOfCombat: false, effects: [{ t: 'damage', dmgType: 'physical', amount: 10, canCrit: false }] }],
+  } as unknown as Ruleset
+  const mage = (int: number) => ({
+    id: 'm', name: 'M', classId: 'class.mage', raceId: 'race.human', level: 1, hp: 30, maxHp: 30, mp: 10, maxMp: 10,
+    alive: true, statuses: [], knownSpells: ['sp.bolt'], equipment: {},
+    attributes: { 'attr.intellect': int, 'attr.agility': 20 },
+  }) as unknown as Character
+  const cast = (int: number) => {
+    const s = initCombat([mage(int)], modeEnc('enemy.tank'), { ruleset: rules, seed: 1 })
+    const enemyIdx = s.actors.findIndex(a => a.kind === 'enemy')
+    return resolvePlayerCast(s, 'sp.bolt', [enemyIdx], rules, () => 0.99).actors[enemyIdx].hp
+  }
+  // INT 10 → +0 bonus → 300-10; INT 20 → +5 → 300-15
+  assert.equal(cast(10), 290)
+  assert.equal(cast(20), 285)
 })
 
 console.log(`\n${passed} passed`)
