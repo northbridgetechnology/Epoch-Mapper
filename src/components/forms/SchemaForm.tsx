@@ -2,9 +2,10 @@
 
 import { useRef, useState } from 'react'
 import { cn } from '@/lib/utils'
-import type { FieldSchema, FieldType } from '@/lib/engine-types'
+import type { Effect, FieldSchema, FieldType, Ruleset, StatModifier } from '@/lib/engine-types'
 import { pixelSprite, hasPixelSprite, isBitmapSprite, bitmapFrames, spriteKinds } from '@/lib/pixel-sprites'
 import { fileToSpriteDataUri, downloadSpriteTemplate, SPRITE_ACCEPT_ATTR } from '@/lib/sprite-upload'
+import { EffectBuilder } from './EffectBuilder'
 
 interface SchemaFormProps {
   schema: FieldSchema[]
@@ -12,6 +13,8 @@ interface SchemaFormProps {
   onChange: (updated: Record<string, unknown>) => void
   className?: string
   compact?: boolean
+  /** Needed to render `ref` dropdowns and `effects` builders. */
+  ruleset?: Ruleset
 }
 
 function set(obj: Record<string, unknown>, key: string, val: unknown): Record<string, unknown> {
@@ -295,13 +298,116 @@ function SpriteField({
   )
 }
 
+/** `{kind:'ref', table}` → a dropdown of that ruleset table's entries. */
+function RefField({ field, table, value, onChange, ruleset, compact }: {
+  field: FieldSchema; table: keyof Ruleset; value: unknown
+  onChange: (v: unknown) => void; ruleset: Ruleset; compact?: boolean
+}) {
+  const entries = (ruleset[table] as unknown as { id: string; name: string }[] | undefined) ?? []
+  return (
+    <div>
+      {!compact && <FieldLabel label={field.label} optional={field.optional} />}
+      <select
+        value={typeof value === 'string' ? value : ''}
+        onChange={e => onChange(e.target.value || undefined)}
+        className="w-full px-2 py-1.5 rounded bg-zinc-800 border border-white/10 text-sm text-white/85 focus:outline-none focus:border-amber-500/50"
+      >
+        <option value="">{field.optional ? '— none —' : '— select —'}</option>
+        {entries.map(e => <option key={e.id} value={e.id}>{e.name} · {e.id}</option>)}
+      </select>
+    </div>
+  )
+}
+
+/** `'effects'` → the shared visual EffectBuilder. */
+function EffectsField({ field, value, onChange, ruleset }: {
+  field: FieldSchema; value: unknown; onChange: (v: unknown) => void; ruleset: Ruleset
+}) {
+  const effects = (Array.isArray(value) ? value : []) as Effect[]
+  return (
+    <EffectBuilder
+      label={field.label}
+      effects={effects}
+      ruleset={ruleset}
+      onChange={next => onChange(next.length ? next : undefined)}
+    />
+  )
+}
+
+/** `'modifiers'` → editable rows of StatModifier (target/key/op/amount). */
+function ModifiersField({ field, value, onChange, compact }: {
+  field: FieldSchema; value: unknown; onChange: (v: unknown) => void; compact?: boolean
+}) {
+  const mods = (Array.isArray(value) ? value : []) as StatModifier[]
+  const set = (next: StatModifier[]) => onChange(next.length ? next : undefined)
+  const update = (i: number, patch: Partial<StatModifier>) => set(mods.map((m, j) => j === i ? { ...m, ...patch } : m))
+  return (
+    <div>
+      {!compact && <FieldLabel label={field.label} optional={field.optional} />}
+      <div className="space-y-1">
+        {mods.map((m, i) => (
+          <div key={i} className="flex items-center gap-1">
+            <select value={m.target} onChange={e => update(i, { target: e.target.value as StatModifier['target'] })}
+              className="px-1.5 py-1 rounded bg-zinc-800 border border-white/10 text-xs text-white/80">
+              <option value="attribute">attribute</option>
+              <option value="derived">derived</option>
+            </select>
+            <input value={m.key} placeholder="key" onChange={e => update(i, { key: e.target.value })}
+              className="w-24 px-1.5 py-1 rounded bg-zinc-800 border border-white/10 text-xs text-white/80" />
+            <select value={m.op} onChange={e => update(i, { op: e.target.value as StatModifier['op'] })}
+              className="px-1.5 py-1 rounded bg-zinc-800 border border-white/10 text-xs text-white/80">
+              <option value="add">add</option>
+              <option value="mul">mul</option>
+            </select>
+            <input type="number" value={m.amount} onChange={e => update(i, { amount: parseFloat(e.target.value) || 0 })}
+              className="w-16 px-1.5 py-1 rounded bg-zinc-800 border border-white/10 text-xs text-white/80" />
+            <button type="button" onClick={() => set(mods.filter((_, j) => j !== i))}
+              className="px-1.5 text-white/30 hover:text-red-400">✕</button>
+          </div>
+        ))}
+        <button type="button" onClick={() => set([...mods, { target: 'attribute', key: '', op: 'add', amount: 0 }])}
+          className="text-xs text-amber-300/80 hover:text-amber-200">+ modifier</button>
+      </div>
+    </div>
+  )
+}
+
+/** `{kind:'list', itemSchema}` → repeatable nested sub-forms. */
+function ListField({ field, itemSchema, value, onChange, ruleset }: {
+  field: FieldSchema; itemSchema: FieldSchema[]; value: unknown
+  onChange: (v: unknown) => void; ruleset?: Ruleset
+}) {
+  const items = (Array.isArray(value) ? value : []) as Record<string, unknown>[]
+  const set = (next: Record<string, unknown>[]) => onChange(next.length ? next : undefined)
+  return (
+    <div>
+      <FieldLabel label={field.label} optional={field.optional} />
+      <div className="space-y-2">
+        {items.map((item, i) => (
+          <div key={i} className="rounded border border-white/10 bg-zinc-900/60 p-2">
+            <div className="flex justify-end mb-1">
+              <button type="button" onClick={() => set(items.filter((_, j) => j !== i))}
+                className="text-[11px] text-white/30 hover:text-red-400">Remove</button>
+            </div>
+            <SchemaForm schema={itemSchema} value={item} ruleset={ruleset}
+              onChange={updated => set(items.map((x, j) => j === i ? updated : x))} />
+          </div>
+        ))}
+        <button type="button" onClick={() => set([...items, {}])}
+          className="text-xs text-amber-300/80 hover:text-amber-200">+ add</button>
+      </div>
+    </div>
+  )
+}
+
 function FieldRenderer({
-  field, value, onChange, compact,
+  field, value, onChange, compact, ruleset,
 }: {
   field: FieldSchema
   value: unknown
   onChange: (v: unknown) => void
   compact?: boolean
+  ruleset?: Ruleset
 }) {
   const t = field.type
 
@@ -329,7 +435,19 @@ function FieldRenderer({
   if (typeof t === 'object' && t.kind === 'enum') {
     return <EnumField field={field} type={t} value={value} onChange={onChange} compact={compact} />
   }
-  // 'ref', 'list', 'effects', 'modifiers' — rendered as JSON stubs for Phase E1
+  if (typeof t === 'object' && t.kind === 'ref' && ruleset) {
+    return <RefField field={field} table={t.table} value={value} onChange={onChange} ruleset={ruleset} compact={compact} />
+  }
+  if (t === 'effects' && ruleset) {
+    return <EffectsField field={field} value={value} onChange={onChange} ruleset={ruleset} />
+  }
+  if (t === 'modifiers') {
+    return <ModifiersField field={field} value={value} onChange={onChange} compact={compact} />
+  }
+  if (typeof t === 'object' && t.kind === 'list') {
+    return <ListField field={field} itemSchema={t.itemSchema} value={value} onChange={onChange} ruleset={ruleset} />
+  }
+  // Last-resort JSON editor (e.g. a ref/effects field without a ruleset in scope)
   return (
     <div>
       {!compact && <FieldLabel label={field.label} optional={field.optional} />}
@@ -349,17 +467,17 @@ function FieldRenderer({
  * Renders a typed editor form from a FieldSchema array.
  * `value` is a plain object; `onChange` receives the full updated object.
  */
-export function SchemaForm({ schema, value, onChange, className, compact }: SchemaFormProps) {
+export function SchemaForm({ schema, value, onChange, className, compact, ruleset }: SchemaFormProps) {
   return (
     <div className={cn('space-y-3', className)}>
       {schema.map(field => (
         <div key={field.key}>
-          {field.type === 'boolean' ? null : compact ? null : null}
           <FieldRenderer
             field={field}
             value={value[field.key]}
             onChange={v => onChange(set(value, field.key, v))}
             compact={compact}
+            ruleset={ruleset}
           />
         </div>
       ))}

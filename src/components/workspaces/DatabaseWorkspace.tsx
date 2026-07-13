@@ -404,7 +404,7 @@ function EnemyList({
 
 // ── Enemy editor ───────────────────────────────────────────────────────────────
 
-function EnemyEditor({ enemy, onChange }: { enemy: EnemyDef; onChange: (e: EnemyDef) => void }) {
+function EnemyEditor({ enemy, ruleset, onChange }: { enemy: EnemyDef; ruleset: Ruleset; onChange: (e: EnemyDef) => void }) {
   const raw = enemy as unknown as Record<string, unknown>
 
   return (
@@ -420,6 +420,7 @@ function EnemyEditor({ enemy, onChange }: { enemy: EnemyDef; onChange: (e: Enemy
       <SchemaForm
         schema={ENEMY_SCHEMA}
         value={raw}
+        ruleset={ruleset}
         onChange={v => onChange({ ...enemy, ...(v as Partial<EnemyDef>) })}
       />
 
@@ -670,7 +671,7 @@ function SpellList({
 
 // ── Spell editor ──────────────────────────────────────────────────────────────
 
-function SpellEditor({ spell, onChange }: { spell: SpellDef; onChange: (s: SpellDef) => void }) {
+function SpellEditor({ spell, ruleset, onChange }: { spell: SpellDef; ruleset: Ruleset; onChange: (s: SpellDef) => void }) {
   return (
     <div className="p-4 space-y-4 overflow-y-auto h-full">
       <div className="flex items-center gap-2 mb-1">
@@ -683,6 +684,7 @@ function SpellEditor({ spell, onChange }: { spell: SpellDef; onChange: (s: Spell
       <SchemaForm
         schema={SPELL_SCHEMA}
         value={spell as unknown as Record<string, unknown>}
+        ruleset={ruleset}
         onChange={v => onChange({ ...spell, ...(v as Partial<SpellDef>) })}
       />
     </div>
@@ -1833,11 +1835,11 @@ export function DatabaseWorkspace({ ruleset, onRulesetChange }: DatabaseWorkspac
         ) : category === 'loot_tables' && selectedTable ? (
           <LootTableEditor table={selectedTable} ruleset={ruleset} onChange={updateLootTable} />
         ) : category === 'bestiary' && selectedEnemy ? (
-          <EnemyEditor enemy={selectedEnemy} onChange={updateEnemy} />
+          <EnemyEditor enemy={selectedEnemy} ruleset={ruleset} onChange={updateEnemy} />
         ) : category === 'encounters' && selectedEncTable ? (
           <EncounterTableEditor table={selectedEncTable} ruleset={ruleset} onChange={updateEncounterTable} />
         ) : category === 'spells' && selectedSpell ? (
-          <SpellEditor spell={selectedSpell} onChange={updateSpell} />
+          <SpellEditor spell={selectedSpell} ruleset={ruleset} onChange={updateSpell} />
         ) : category === 'status_effects' && selectedStatus ? (
           <StatusEditor status={selectedStatus} onChange={updateStatus} />
         ) : category === 'shops' && selectedShop ? (
