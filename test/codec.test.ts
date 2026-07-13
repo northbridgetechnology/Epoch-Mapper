@@ -136,11 +136,13 @@ test('per-level musicId and baked audio blobs round-trip', () => {
       cells: { '0,0': { base: 1, overlays: [] } },
       revealedChunks: ['0,0'],
       musicId: 'trk.cave_theme',
+      combatMode: 'pressTurn',
     }],
     audioBlobs: { 'trk.cave_theme': 'QUJDRA==' }, // base64 of "ABCD"
   }
   const back = parseDotEpochmap(serializeDotEpochmap(file))
   assert.equal(back.maps[0].musicId, 'trk.cave_theme')
+  assert.equal(back.maps[0].combatMode, 'pressTurn')
   assert.equal(back.audioBlobs?.['trk.cave_theme'], 'QUJDRA==')
 })
 

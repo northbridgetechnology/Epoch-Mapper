@@ -26,6 +26,15 @@ export type ItemSlot = 'weapon' | 'offhand' | 'head' | 'body' | 'hands' | 'feet'
 export type ItemKind = 'weapon' | 'armor' | 'consumable' | 'key' | 'quest' | 'misc'
 /** Equip weight tier for weapons and armor (FF-style class proficiency). */
 export type EquipWeight = 'heavy' | 'medium' | 'light'
+
+/** Combat turn system for a map:
+ *  - 'classic'   = speed-ordered round-robin, one action per actor per round.
+ *  - 'oneMore'   = Persona-style: landing a weakness or crit grants the acting
+ *                  actor one bonus action (no turn-icon accounting).
+ *  - 'pressTurn' = SMT-style side phases with a turn-icon economy: weakness/crit
+ *                  spend a half-icon (a bonus press), miss/null/repel burn extra
+ *                  icons, and the side acts until its icons run out. */
+export type CombatMode = 'classic' | 'oneMore' | 'pressTurn'
 export type SpellTarget =
   | 'self' | 'ally' | 'allAllies'
   | 'enemy' | 'allEnemies' | 'enemyRow'

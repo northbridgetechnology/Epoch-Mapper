@@ -793,6 +793,7 @@ export function DungeonMapper({
           pendingFoeKillRef.current = foeFlagKey(activeMap.id, contact.cellKey, 'dead')
           setCombatState(initCombat(party, enc, {
             formation, ruleset,
+            combatMode: activeMap?.combatMode,
             antiMagic: cellHasTrick(cell, 'antiMagic'),
           }))
           setWorkspace('play')
@@ -1234,6 +1235,7 @@ export function DungeonMapper({
           }
           setCombatState(initCombat(party, enc, {
             formation, ruleset,
+            combatMode: activeMap?.combatMode,
             antiMagic: cellHasTrick(cell, 'antiMagic'),
           }))
           setWorkspace('play')
@@ -2103,6 +2105,9 @@ export function DungeonMapper({
           onMusicChange={(idx, musicId) =>
             setMaps(prev => prev.map((m, i) => i === idx ? { ...m, musicId } : m))
           }
+          onCombatModeChange={(idx, mode) =>
+            setMaps(prev => prev.map((m, i) => i === idx ? { ...m, combatMode: mode === 'classic' ? undefined : mode } : m))
+          }
         />
       )}
 
@@ -2639,6 +2644,7 @@ export function DungeonMapper({
           onFight={() => {
             setCombatState(initCombat(party, activeEncounter, {
               formation, ruleset,
+              combatMode: activeMap?.combatMode,
               antiMagic: activeMap ? cellHasTrick(activeMap.cells[`${activeMap.playerX},${activeMap.playerY}`], 'antiMagic') : false,
             }))
             setActiveEncounter(null)

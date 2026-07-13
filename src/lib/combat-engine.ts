@@ -3,7 +3,7 @@
  * No DOM, no React. All mutations return new state objects.
  */
 
-import type { Character, ActiveStatus, CombatTuning, EnemyAbility, Effect, Formation, ItemInstance, Ruleset } from './engine-types'
+import type { Character, ActiveStatus, CombatMode, CombatTuning, EnemyAbility, Effect, Formation, ItemInstance, Ruleset } from './engine-types'
 import { resolveLootTable } from './event-engine'
 import { deriveMaxHp, deriveMaxMp, xpToNextLevel } from './engine-types'
 import type { ResolvedEncounter } from './engine-types'
@@ -87,6 +87,17 @@ export interface CombatState {
   round: number
   /** Battle takes place in an anti-magic zone: party casting is disabled. */
   antiMagic?: boolean
+  /** Turn system in effect (from the map). Absent = 'classic'. */
+  mode?: CombatMode
+  /** oneMore mode: consecutive bonus actions the current actor has taken this
+   *  turn (capped to prevent runaway chains). */
+  oneMoreStreak?: number
+  /** pressTurn mode: which side is currently acting. */
+  activeSide?: 'party' | 'enemy'
+  /** pressTurn mode: the acting side's remaining turn icons. `full` are whole
+   *  icons; `blink` are half/bonus icons earned by weakness & crits. The phase
+   *  ends when both reach zero. */
+  icons?: { full: number; blink: number }
 }
 
 // ── Seeded RNG (mulberry32) ───────────────────────────────────────────────────
@@ -424,7 +435,105 @@ function advanceTurn(state: CombatState, ruleset: Ruleset, rng: () => number): C
     return advanceTurn({ ...state, actors: tickedActors, log: [...newLog, blockedEntry], turnIdx: nextIdx, phase, round }, ruleset, rng)
   }
 
-  return { ...state, actors: tickedActors, log: newLog, turnIdx: nextIdx, phase, round }
+  // A fresh actor is up — any oneMore bonus streak resets here.
+  return { ...state, actors: tickedActors, log: newLog, turnIdx: nextIdx, phase, round, oneMoreStreak: 0 }
+}
+
+// ── Turn advancement by mode (classic / oneMore / pressTurn) ──────────────────
+
+/** What an action's result costs the acting side in press-turn / earns in
+ *  oneMore. Derived once per action from its hit result or effect events. */
+interface ActionOutcome { weak?: boolean; crit?: boolean; miss?: boolean }
+
+const ONE_MORE_CAP = 8 // safety bound on runaway 1-More chains
+
+type IconCost = 'normal' | 'half' | 'double'
+
+function aliveOnSide(actors: CombatActor[], side: 'party' | 'enemy'): number {
+  return actors.filter(a => a.alive && a.kind === side).length
+}
+function firstAliveOnSide(actors: CombatActor[], side: 'party' | 'enemy'): number {
+  return actors.findIndex(a => a.alive && a.kind === side)
+}
+function nextAliveOnSide(actors: CombatActor[], fromIdx: number, side: 'party' | 'enemy'): number {
+  const n = actors.length
+  for (let i = 1; i <= n; i++) {
+    const idx = (fromIdx + i) % n
+    if (actors[idx].alive && actors[idx].kind === side) return idx
+  }
+  return fromIdx
+}
+
+/** Spend from a side's icon pool. Weakness/crit ('half') turns a full icon into
+ *  a blinking bonus icon (or consumes a blink); miss/null ('double') burns two;
+ *  everything else spends one. Returns whether the side is now out of icons. */
+function spendIcons(icons: { full: number; blink: number }, cost: IconCost): { icons: { full: number; blink: number }; ended: boolean } {
+  let { full, blink } = icons
+  if (cost === 'half') {
+    if (blink > 0) blink -= 1
+    else if (full > 0) { full -= 1; blink += 1 }
+  } else {
+    let rem = cost === 'double' ? 2 : 1
+    while (rem > 0 && (blink > 0 || full > 0)) {
+      if (blink > 0) blink -= 1; else full -= 1
+      rem -= 1
+    }
+  }
+  return { icons: { full, blink }, ended: full + blink <= 0 }
+}
+
+/** Press-turn advancement: spend icons, keep the side acting while it has any,
+ *  otherwise hand control (and a fresh pool) to the other side. */
+function advancePressTurn(state: CombatState, ruleset: Ruleset, rng: () => number, cost: IconCost): CombatState {
+  if (checkEndConditions(state.actors)) return advanceTurn(state, ruleset, rng)
+  const side = state.activeSide ?? 'party'
+  const { icons, ended } = spendIcons(state.icons ?? { full: 0, blink: 0 }, cost)
+  const pressLog: CombatLogEntry[] = cost === 'half' ? [{ text: 'Press turn!', kind: 'info' }] : []
+
+  const settle = (target: 'same' | 'switch'): CombatState => {
+    const nextSide = target === 'same' ? side : (side === 'party' ? 'enemy' : 'party')
+    if (target === 'switch' && aliveOnSide(state.actors, nextSide) === 0) return advanceTurn(state, ruleset, rng)
+    const nextIdx = target === 'same'
+      ? nextAliveOnSide(state.actors, state.turnIdx, side)
+      : firstAliveOnSide(state.actors, nextSide)
+    const phase: CombatPhase = nextSide === 'party' ? 'player_action' : 'enemy_turn'
+    const round = target === 'switch' && nextSide === 'party' ? state.round + 1 : state.round
+    const pool = target === 'same' ? icons : { full: aliveOnSide(state.actors, nextSide), blink: 0 }
+    const { actors: ticked, log: tickLog, blocked } = tickStatuses(nextIdx, state.actors, ruleset, rng)
+    const tickedActors = ticked.map((a, i) => (i === nextIdx && a.defending ? { ...a, defending: false } : a))
+    const base: CombatState = {
+      ...state, activeSide: nextSide, icons: pool, turnIdx: nextIdx, phase, round,
+      actors: tickedActors, log: [...state.log, ...pressLog, ...tickLog],
+    }
+    // A stunned/frozen actor forfeits — that costs the side a normal icon.
+    if (blocked) return advancePressTurn(base, ruleset, rng, 'normal')
+    return base
+  }
+
+  return ended ? settle('switch') : settle('same')
+}
+
+/** Dispatch turn advancement by the battle's combat mode. */
+function proceedAfterAction(state: CombatState, ruleset: Ruleset, rng: () => number, outcome: ActionOutcome): CombatState {
+  const mode = state.mode ?? 'classic'
+  if (mode === 'classic') return advanceTurn(state, ruleset, rng)
+  // A lethal blow ends the battle regardless of any pending bonus.
+  if (checkEndConditions(state.actors)) return advanceTurn(state, ruleset, rng)
+
+  if (mode === 'oneMore') {
+    const earned = !outcome.miss && (outcome.weak || outcome.crit)
+    const streak = state.oneMoreStreak ?? 0
+    const actor = state.actors[state.turnIdx]
+    if (earned && streak < ONE_MORE_CAP && actor?.alive) {
+      const phase: CombatPhase = actor.kind === 'party' ? 'player_action' : 'enemy_turn'
+      return { ...state, phase, oneMoreStreak: streak + 1, log: [...state.log, { text: 'One More!', kind: 'info' }] }
+    }
+    return advanceTurn(state, ruleset, rng)
+  }
+
+  // pressTurn
+  const cost: IconCost = outcome.miss ? 'double' : (outcome.weak || outcome.crit) ? 'half' : 'normal'
+  return advancePressTurn(state, ruleset, rng, cost)
 }
 
 /** Stamp an action's results onto the outgoing state: advance the RNG stream,
@@ -480,6 +589,8 @@ export interface InitCombatOpts {
   ruleset?: Ruleset
   /** The encounter cell is an anti-magic zone: spells cannot be cast. */
   antiMagic?: boolean
+  /** Turn system for this battle (from the map). Default 'classic'. */
+  combatMode?: CombatMode
 }
 
 export function initCombat(
@@ -543,10 +654,18 @@ export function initCombat(
   const firstIdx = actors.findIndex(a => a.alive)
   const firstPhase: CombatPhase = actors[firstIdx]?.kind === 'party' ? 'player_action' : 'enemy_turn'
 
+  const mode: CombatMode = opts?.combatMode ?? 'classic'
+  const activeSide = actors[Math.max(0, firstIdx)]?.kind === 'enemy' ? 'enemy' : 'party'
+
   return {
     actors,
     turnIdx: Math.max(0, firstIdx),
     phase: firstPhase,
+    mode,
+    oneMoreStreak: 0,
+    ...(mode === 'pressTurn'
+      ? { activeSide, icons: { full: aliveOnSide(actors, activeSide), blink: 0 } }
+      : {}),
     log: [{ text: `A wild encounter with ${encounter.tableName}!`, kind: 'info' }],
     fleeAttempts: 0,
     xpReward: encounter.xpReward,
@@ -603,7 +722,7 @@ export function resolvePlayerAttack(
   } else if (!result.miss && result.resisted) {
     events.push({ target: targetActorIdx, kind: 'resist' })
   }
-  return finishAction(advanceTurn({ ...state, actors: newActors, log: newLog }, ruleset, rand), box, events, state)
+  return finishAction(proceedAfterAction({ ...state, actors: newActors, log: newLog }, ruleset, rand, { weak: result.weak, crit: result.crit, miss: result.miss }), box, events, state)
 }
 
 // ── Player: cast spell ────────────────────────────────────────────────────────
@@ -649,10 +768,11 @@ export function resolvePlayerCast(
   )
 
   return finishAction(
-    advanceTurn(
+    proceedAfterAction(
       { ...state, actors: newActors, log: [...state.log, castEntry, ...effectLog] },
       ruleset,
       rand,
+      { weak: events.some(e => e.kind === 'weak'), crit: events.some(e => e.kind === 'crit') },
     ),
     box, events, state,
   )
@@ -689,7 +809,7 @@ export function resolvePlayerFlee(
   }
   const failEntry: CombatLogEntry = { text: 'Failed to escape!', kind: 'flee_fail' }
   return finishAction(
-    advanceTurn({ ...state, fleeAttempts: attempts, log: [...state.log, failEntry] }, ruleset, rand),
+    proceedAfterAction({ ...state, fleeAttempts: attempts, log: [...state.log, failEntry] }, ruleset, rand, {}),
     box, [], state,
   )
 }
@@ -709,7 +829,7 @@ export function resolvePlayerDefend(
     i === state.turnIdx ? { ...a, defending: true } : a,
   )
   const entry: CombatLogEntry = { text: `${actor.name} defends.`, kind: 'info' }
-  return finishAction(advanceTurn({ ...state, actors, log: [...state.log, entry] }, ruleset, rand), box, [], state)
+  return finishAction(proceedAfterAction({ ...state, actors, log: [...state.log, entry] }, ruleset, rand, {}), box, [], state)
 }
 
 // ── Player: use item ──────────────────────────────────────────────────────────
@@ -734,10 +854,11 @@ export function resolvePlayerUseItem(
   )
   const itemsUsed = { ...state.itemsUsed, [itemId]: (state.itemsUsed[itemId] ?? 0) + 1 }
   return finishAction(
-    advanceTurn(
+    proceedAfterAction(
       { ...state, actors, itemsUsed, log: [...state.log, useEntry, ...log] },
       ruleset,
       rand,
+      { weak: events.some(e => e.kind === 'weak'), crit: events.some(e => e.kind === 'crit') },
     ),
     box, events, state,
   )
@@ -764,7 +885,7 @@ export function resolveEnemyTurn(
   const rand = rng ?? (() => nextRand(box))
   const enemy = state.actors[state.turnIdx]
   if (!enemy || enemy.kind !== 'enemy' || !enemy.alive) {
-    return finishAction(advanceTurn(state, ruleset, rand), box, [], state)
+    return finishAction(proceedAfterAction(state, ruleset, rand, {}), box, [], state)
   }
 
   const partyTargets = state.actors.map((a, i) => ({ a, i })).filter(({ a }) => a.kind === 'party' && a.alive)
@@ -809,9 +930,10 @@ export function resolveEnemyTurn(
       chosen.effects, state.turnIdx, targetIdxs, state.actors, ruleset, rand,
     )
     return finishAction(
-      advanceTurn(
+      proceedAfterAction(
         { ...state, actors: newActors, log: [...state.log, abilityEntry, ...effectLog] },
         ruleset, rand,
+        { weak: events.some(e => e.kind === 'weak'), crit: events.some(e => e.kind === 'crit') },
       ),
       box, events, state,
     )
@@ -844,7 +966,7 @@ export function resolveEnemyTurn(
       : { target: targetIdx, kind: result.crit ? 'crit' : 'damage', amount: result.damage },
   ]
   if (!result.miss && result.weak) events.push({ target: targetIdx, kind: 'weak' })
-  return finishAction(advanceTurn({ ...state, actors: newActors, log: newLog }, ruleset, rand), box, events, state)
+  return finishAction(proceedAfterAction({ ...state, actors: newActors, log: newLog }, ruleset, rand, { weak: result.weak, crit: result.crit, miss: result.miss }), box, events, state)
 }
 
 // ── Turn preview ──────────────────────────────────────────────────────────────

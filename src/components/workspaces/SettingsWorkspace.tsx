@@ -21,7 +21,14 @@ interface SettingsWorkspaceProps {
   /** Audio tracks (from the ruleset) for the music pickers. */
   tracks?: AudioTrackDef[]
   onMusicChange?: (mapIdx: number, musicId: string | undefined) => void
+  onCombatModeChange?: (mapIdx: number, mode: 'classic' | 'oneMore' | 'pressTurn') => void
 }
+
+const COMBAT_MODES: { id: 'classic' | 'oneMore' | 'pressTurn'; label: string; hint: string }[] = [
+  { id: 'classic',   label: 'Classic',    hint: 'Speed-ordered round-robin.' },
+  { id: 'oneMore',   label: '1-More',     hint: 'Persona-style: weakness or crit grants a bonus action.' },
+  { id: 'pressTurn', label: 'Press-Turn', hint: 'SMT-style turn icons: weakness/crit press on, miss/null lose turns.' },
+]
 
 const MUSIC_SELECT = 'px-2 py-1 rounded bg-zinc-800 border border-white/10 text-xs text-white/80 focus:outline-none focus:border-amber-500/40'
 
@@ -274,7 +281,7 @@ function OpeningSlideRow({ slide, index, count, onText, onImage, onMove, onRemov
   )
 }
 
-export function SettingsWorkspace({ maps, onThemeChange, onDarkChange, meta, onMetaChange, tracks = [], onMusicChange }: SettingsWorkspaceProps) {
+export function SettingsWorkspace({ maps, onThemeChange, onDarkChange, meta, onMetaChange, tracks = [], onMusicChange, onCombatModeChange }: SettingsWorkspaceProps) {
   if (maps.length === 0) {
     return (
       <div className="flex-1 flex items-center justify-center text-white/20 text-sm">
@@ -372,6 +379,25 @@ export function SettingsWorkspace({ maps, onThemeChange, onDarkChange, meta, onM
                     noneLabel={meta?.defaultMusicId ? '— use default —' : '— none —'} />
                   <span className="text-[10px] text-white/30">Loops while exploring this level.</span>
                 </label>
+              )}
+
+              {onCombatModeChange && (
+                <div className="flex items-center gap-2.5 rounded-lg border border-white/8 bg-white/4 px-3 py-2">
+                  <span className="text-xs text-white/70">⚔️ Combat</span>
+                  <div className="flex gap-1">
+                    {COMBAT_MODES.map(m => {
+                      const active = (map.combatMode ?? 'classic') === m.id
+                      return (
+                        <button key={m.id} onClick={() => onCombatModeChange(idx, m.id)} title={m.hint}
+                          className={cn('px-2 py-0.5 rounded text-xs border transition-colors',
+                            active ? 'bg-amber-600/25 border-amber-500/50 text-amber-200' : 'bg-zinc-800 border-white/10 text-white/45 hover:text-white/70')}>
+                          {m.label}
+                        </button>
+                      )
+                    })}
+                  </div>
+                  <span className="text-[10px] text-white/30">{COMBAT_MODES.find(m => m.id === (map.combatMode ?? 'classic'))?.hint}</span>
+                </div>
               )}
             </div>
           )

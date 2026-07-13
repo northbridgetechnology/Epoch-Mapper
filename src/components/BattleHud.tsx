@@ -100,7 +100,7 @@ export function useBattleController({ combat, ruleset, party, inventory, onActio
     }, 750)
     return () => clearTimeout(timer)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [combat?.phase, combat?.turnIdx])
+  }, [combat?.phase, combat?.turnIdx, combat?.eventSeq])
 
   const currentActor = combat ? combat.actors[combat.turnIdx] : undefined
 
@@ -310,6 +310,20 @@ export function BattleHud({
               >{a?.icon ?? (a?.kind === 'enemy' ? '👾' : '🧑')}</div>
             )
           })}
+        </div>
+      )}
+      {combat.mode === 'pressTurn' && combat.icons && !isTerminal && (
+        <div className="flex items-center gap-1 mb-1.5">
+          <span className="text-[9px] uppercase tracking-wide text-white/30 mr-1">
+            {combat.activeSide === 'party' ? 'Your presses' : 'Enemy presses'}
+          </span>
+          {Array.from({ length: combat.icons.full }).map((_, i) => (
+            <span key={`f${i}`} className="w-2.5 h-2.5 rounded-full bg-amber-400" title="Turn icon" />
+          ))}
+          {Array.from({ length: combat.icons.blink }).map((_, i) => (
+            <span key={`b${i}`} className="w-2.5 h-2.5 rounded-full border border-amber-300 bg-amber-400/40 animate-pulse" title="Bonus (blinking) icon" />
+          ))}
+          {combat.icons.full + combat.icons.blink === 0 && <span className="text-[10px] text-white/30">—</span>}
         </div>
       )}
       <div className="flex items-stretch gap-3 w-full min-h-[92px]">

@@ -362,4 +362,76 @@ test('a fire weapon strikes a fire-weak enemy for extra damage', () => {
   assert.ok(after.events.some(e => e.kind === 'weak'), 'fire attack should register as a weakness hit')
 })
 
+// ── Combat modes: classic / oneMore / pressTurn ──────────────────────────────
+
+const modeRules = {
+  ...typeRules,
+  enemies: [
+    ...typeRules.enemies.filter(e => e.id !== 'enemy.weakling' && e.id !== 'enemy.tank'),
+    { id: 'enemy.weakling', name: 'Weakling', hp: 300, attack: 1, defense: 0, speed: 1, xp: 1, gold: { min: 0, max: 0 }, attributes: {}, resistances: { physical: -0.5 } },
+    { id: 'enemy.tank',     name: 'Tank',     hp: 300, attack: 1, defense: 0, speed: 1, xp: 1, gold: { min: 0, max: 0 }, attributes: {} },
+  ],
+} as unknown as Ruleset
+
+function modeEnc(defId: string): ResolvedEncounter {
+  return { tableId: 't', tableName: 't', goldReward: 0, xpReward: 0,
+    enemies: [{ defId, name: defId, hp: 300, maxHp: 300, attack: 1, defense: 0, speed: 1, xp: 1, gold: 0 }] }
+}
+function twoFastHeroes(): Character[] {
+  const mk = (id: string) => ({ ...heroWith({}, { might: 16, agility: 20, endurance: 10 }), id }) as Character
+  return [mk('h1'), mk('h2')]
+}
+const fastRng = () => 0.5 // no miss (>=0.05), no crit (>=0.1)
+
+test('classic mode: a weakness hit does not grant a bonus turn', () => {
+  const s = initCombat(twoFastHeroes(), modeEnc('enemy.weakling'), { ruleset: modeRules, combatMode: 'classic', seed: 1 })
+  const enemyIdx = s.actors.findIndex(a => a.kind === 'enemy')
+  const after = resolvePlayerAttack(s, enemyIdx, modeRules, fastRng)
+  assert.notEqual(after.turnIdx, s.turnIdx)                       // turn advanced
+  assert.ok(!after.log.some(l => l.text === 'One More!'))
+  assert.equal(after.icons, undefined)                            // no icon economy
+})
+
+test('oneMore mode: a weakness hit lets the same actor act again', () => {
+  const s = initCombat(twoFastHeroes(), modeEnc('enemy.weakling'), { ruleset: modeRules, combatMode: 'oneMore', seed: 1 })
+  assert.equal(s.actors[s.turnIdx].kind, 'party')
+  const enemyIdx = s.actors.findIndex(a => a.kind === 'enemy')
+  const after = resolvePlayerAttack(s, enemyIdx, modeRules, fastRng)
+  assert.equal(after.turnIdx, s.turnIdx)                          // same actor
+  assert.equal(after.phase, 'player_action')
+  assert.ok(after.log.some(l => l.text === 'One More!'))
+  assert.equal(after.oneMoreStreak, 1)
+})
+
+test('oneMore mode: a plain hit passes the turn normally', () => {
+  const s = initCombat(twoFastHeroes(), modeEnc('enemy.tank'), { ruleset: modeRules, combatMode: 'oneMore', seed: 1 })
+  const enemyIdx = s.actors.findIndex(a => a.kind === 'enemy')
+  const after = resolvePlayerAttack(s, enemyIdx, modeRules, fastRng)
+  assert.notEqual(after.turnIdx, s.turnIdx)
+  assert.ok(!after.log.some(l => l.text === 'One More!'))
+})
+
+test('pressTurn mode: initialises the acting side with one icon per member', () => {
+  const s = initCombat(twoFastHeroes(), modeEnc('enemy.tank'), { ruleset: modeRules, combatMode: 'pressTurn', seed: 1 })
+  assert.equal(s.activeSide, 'party')
+  assert.deepEqual(s.icons, { full: 2, blink: 0 })
+})
+
+test('pressTurn mode: a weakness hit converts a full icon into a bonus (blink)', () => {
+  const s = initCombat(twoFastHeroes(), modeEnc('enemy.weakling'), { ruleset: modeRules, combatMode: 'pressTurn', seed: 1 })
+  const enemyIdx = s.actors.findIndex(a => a.kind === 'enemy')
+  const after = resolvePlayerAttack(s, enemyIdx, modeRules, fastRng)
+  assert.deepEqual(after.icons, { full: 1, blink: 1 })           // total presses preserved (a bonus)
+  assert.equal(after.activeSide, 'party')
+  assert.equal(after.actors[after.turnIdx].kind, 'party')
+  assert.ok(after.log.some(l => l.text === 'Press turn!'))
+})
+
+test('pressTurn mode: a plain hit spends one full icon', () => {
+  const s = initCombat(twoFastHeroes(), modeEnc('enemy.tank'), { ruleset: modeRules, combatMode: 'pressTurn', seed: 1 })
+  const enemyIdx = s.actors.findIndex(a => a.kind === 'enemy')
+  const after = resolvePlayerAttack(s, enemyIdx, modeRules, fastRng)
+  assert.deepEqual(after.icons, { full: 1, blink: 0 })
+})
+
 console.log(`\n${passed} passed`)

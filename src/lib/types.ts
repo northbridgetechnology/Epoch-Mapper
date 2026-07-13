@@ -90,6 +90,9 @@ export interface MapData {
   /** Looping background track for this level (AudioTrackDef id). Absent = fall
    *  back to the game's default track (GameMeta.defaultMusicId). */
   musicId?: string
+  /** Turn system for battles on this level. Absent/'classic' = the default
+   *  speed-ordered round-robin; 'pressTurn' = weakness/crit grants bonus turns. */
+  combatMode?: import('./engine-types').CombatMode
 }
 
 /** A user-defined cell type or overlay icon. IDs are 128–255. */
