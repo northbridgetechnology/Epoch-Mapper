@@ -7,8 +7,8 @@
 
 import assert from 'node:assert/strict'
 import { canEquip } from '../src/lib/equipment'
-import { makeDefaultRuleset } from '../src/lib/default-ruleset'
-import type { ClassDef, ItemDef } from '../src/lib/engine-types'
+import { makeDefaultRuleset, normalizeRuleset } from '../src/lib/default-ruleset'
+import type { ClassDef, ItemDef, Ruleset } from '../src/lib/engine-types'
 
 let passed = 0
 function test(name: string, fn: () => void) {
@@ -102,6 +102,43 @@ test('default mage wears robes but not plate', () => {
   const plate = byId(ruleset.items, 'item.plate_armor')
   assert.equal(canEquip(mage, robe, ruleset).ok, true)
   assert.equal(canEquip(mage, plate, ruleset).ok, false)
+})
+
+// ── Legacy weapon/armor migration (normalizeRuleset) ─────────────────────────
+
+test('normalizeRuleset seeds default types and remaps a legacy ruleset', () => {
+  const legacy = {
+    ...makeDefaultRuleset(),
+    weaponTypes: [], armorTypes: [],
+    items: [
+      { id: 'i.sword', name: 'Old Sword', kind: 'weapon', slot: 'weapon', weaponKind: 'blade', weight: 'heavy', value: 10, stackable: false },
+      { id: 'i.dagger', name: 'Old Dirk', kind: 'weapon', slot: 'weapon', weaponKind: 'dagger', weight: 'light', value: 5, stackable: false },
+      { id: 'i.plate', name: 'Old Plate', kind: 'armor', slot: 'body', weight: 'heavy', value: 20, stackable: false },
+      { id: 'i.buckler', name: 'Old Buckler', kind: 'armor', slot: 'offhand', weight: 'light', value: 8, stackable: false },
+    ],
+    classes: [
+      { id: 'c.knight', name: 'Knight', hitDie: 10, spellDie: 0, spellSchools: [], allowedEquip: ['weapon', 'body'], weaponKinds: ['blade'], armorWeights: ['light'], attrGrowth: {}, attrModifiers: {} },
+    ],
+  } as unknown as Ruleset
+
+  const n = normalizeRuleset(legacy)
+  assert.ok(n.weaponTypes.length > 0 && n.armorTypes.length > 0)          // seeded
+  const sword = n.items.find(i => i.id === 'i.sword')!
+  assert.equal(sword.weaponType, 'wtype.greatsword')                      // heavy blade
+  assert.equal((sword as unknown as { weaponKind?: string }).weaponKind, undefined) // dead field dropped
+  assert.equal(n.items.find(i => i.id === 'i.dagger')!.weaponType, 'wtype.dagger')
+  assert.equal(n.items.find(i => i.id === 'i.plate')!.armorType, 'atype.heavy')
+  assert.equal(n.items.find(i => i.id === 'i.buckler')!.armorType, 'atype.buckler')
+  const knight = n.classes.find(c => c.id === 'c.knight')!
+  assert.deepEqual([...knight.weaponTypes].sort(), ['wtype.greatsword', 'wtype.katana', 'wtype.sword'])
+  assert.ok(knight.armorTypes!.includes('atype.robe'))
+})
+
+test('normalizeRuleset leaves a modern ruleset untouched', () => {
+  const modern = makeDefaultRuleset()
+  const n = normalizeRuleset(modern)
+  assert.equal(n.weaponTypes, modern.weaponTypes) // same ref — not reseeded
+  assert.equal(n.items, modern.items)
 })
 
 console.log(`\n${passed} equipment tests passed`)

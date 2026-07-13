@@ -1566,17 +1566,108 @@ export const DEFAULT_SHOPS: ShopDef[] = [
 
 // ── Ruleset ────────────────────────────────────────────────────────────────────
 
+// ── Legacy weapon/armor-model migration ───────────────────────────────────────
+// The weapon/armor "kind + weight" model was replaced by WeaponTypeDef /
+// ArmorTypeDef tables. Rulesets saved before that (drafts, old .epochmap files)
+// still carry the old fields, so we heal them on load.
+
+/** Old weaponKind → single new WeaponTypeDef id (weight nudges the fan-outs). */
+function weaponTypeFromLegacy(kind: string | undefined, weight: string | undefined): string | undefined {
+  switch (kind) {
+    case 'blade': return weight === 'heavy' ? 'wtype.greatsword' : 'wtype.sword'
+    case 'gun':   return weight === 'heavy' ? 'wtype.heavy_gun' : 'wtype.gun'
+    case 'axe':    return 'wtype.axe'
+    case 'mace':   return 'wtype.mace'
+    case 'hammer': return 'wtype.hammer'
+    case 'dagger': return 'wtype.dagger'
+    case 'staff':  return 'wtype.staff'
+    case 'wand':   return 'wtype.rod'
+    case 'spear':  return 'wtype.spear'
+    case 'bow':    return 'wtype.bow'
+    default:       return undefined
+  }
+}
+
+/** Old weaponKind → the set of new types a class of that proficiency should get. */
+function classWeaponTypesFromLegacy(kind: string): string[] {
+  switch (kind) {
+    case 'blade': return ['wtype.sword', 'wtype.katana', 'wtype.greatsword']
+    case 'gun':   return ['wtype.gun', 'wtype.heavy_gun']
+    case 'axe':    return ['wtype.axe']
+    case 'mace':   return ['wtype.mace']
+    case 'hammer': return ['wtype.hammer']
+    case 'dagger': return ['wtype.dagger']
+    case 'staff':  return ['wtype.staff']
+    case 'wand':   return ['wtype.rod']
+    case 'spear':  return ['wtype.spear']
+    case 'bow':    return ['wtype.bow']
+    default:       return []
+  }
+}
+
+/** Old armor weight + slot → new ArmorTypeDef id. */
+function armorTypeFromLegacy(weight: string | undefined, slot: string | undefined): string {
+  if (slot === 'offhand') return weight === 'medium' || weight === 'heavy' ? 'atype.shield' : 'atype.buckler'
+  if (weight === 'heavy') return 'atype.heavy'
+  if (weight === 'medium') return 'atype.medium'
+  return 'atype.light'
+}
+
+/** Old class armorWeights → the set of new armor types to allow. */
+function classArmorTypesFromLegacy(weight: string): string[] {
+  switch (weight) {
+    case 'light':  return ['atype.light', 'atype.robe', 'atype.buckler']
+    case 'medium': return ['atype.medium', 'atype.shield']
+    case 'heavy':  return ['atype.heavy']
+    default:       return []
+  }
+}
+
+function stripKeys<T extends object>(obj: T, keys: string[]): T {
+  const clone = { ...(obj as Record<string, unknown>) }
+  for (const k of keys) delete clone[k]
+  return clone as unknown as T
+}
+
+function migrateLegacyWeaponArmor(r: Ruleset): Pick<Ruleset, 'items' | 'classes'> {
+  const items = (r.items ?? []).map(it => {
+    const legacy = it as unknown as { weaponKind?: string; weight?: string }
+    if (it.kind === 'weapon' && !it.weaponType && legacy.weaponKind) {
+      return { ...stripKeys(it, ['weaponKind', 'weight']), weaponType: weaponTypeFromLegacy(legacy.weaponKind, legacy.weight) }
+    }
+    if (it.kind === 'armor' && !it.armorType) {
+      return { ...stripKeys(it, ['weight']), armorType: armorTypeFromLegacy(legacy.weight, it.slot) }
+    }
+    return it
+  })
+  const classes = (r.classes ?? []).map(cls => {
+    const legacy = cls as unknown as { weaponKinds?: string[]; armorWeights?: string[] }
+    const base = stripKeys(cls, ['weaponKinds', 'weaponWeights', 'armorWeights'])
+    const weaponTypes = cls.weaponTypes ?? Array.from(new Set((legacy.weaponKinds ?? []).flatMap(classWeaponTypesFromLegacy)))
+    const armorTypes = cls.armorTypes ?? Array.from(new Set((legacy.armorWeights ?? []).flatMap(classArmorTypesFromLegacy)))
+    return { ...base, weaponTypes, armorTypes }
+  })
+  return { items, classes }
+}
+
 /**
  * Backfill collections added after a ruleset was saved — drafts and imports
- * from older versions lack newer tables (events/npcs/quests, etc.).
+ * from older versions lack newer tables (events/npcs/quests, etc.) — and heal
+ * the legacy weapon/armor model when the type tables are missing/empty.
  */
 export function normalizeRuleset(r: Ruleset): Ruleset {
+  // An absent-or-empty weaponTypes table means a pre-type-system ruleset: seed
+  // the default types and remap the old kind/weight fields on items & classes.
+  const legacy = !(r.weaponTypes && r.weaponTypes.length)
+  const migrated = legacy ? migrateLegacyWeaponArmor(r) : { items: r.items ?? [], classes: r.classes ?? [] }
+
   return {
     ...r,
-    weaponTypes: r.weaponTypes ?? [],
-    armorTypes: r.armorTypes ?? [],
+    classes: migrated.classes,
+    weaponTypes: r.weaponTypes?.length ? r.weaponTypes : DEFAULT_WEAPON_TYPES,
+    armorTypes: r.armorTypes?.length ? r.armorTypes : DEFAULT_ARMOR_TYPES,
     audioTracks: r.audioTracks ?? [],
-    items: r.items ?? [],
+    items: migrated.items,
     spells: r.spells ?? [],
     statusEffects: r.statusEffects ?? [],
     enemies: r.enemies ?? [],

@@ -23,7 +23,7 @@ export function canEquip(cls: ClassDef | undefined, def: ItemDef | undefined, ru
   }
 
   // Weapon-type proficiency (e.g. a Mage isn't trained with greatswords).
-  if (def.kind === 'weapon' && def.weaponType && cls.weaponTypes.length > 0 && !cls.weaponTypes.includes(def.weaponType)) {
+  if (def.kind === 'weapon' && def.weaponType && cls.weaponTypes && cls.weaponTypes.length > 0 && !cls.weaponTypes.includes(def.weaponType)) {
     const typeName = ruleset?.weaponTypes.find(t => t.id === def.weaponType)?.name ?? 'that weapon'
     return { ok: false, reason: `${cls.name} can't wield ${typeName}` }
   }
