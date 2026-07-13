@@ -634,7 +634,13 @@ function PartyScreen({ party, reserve, formation, ruleset, onRosterChange, onExi
     }
     onRosterChange(party, nf, reserve)
   }
-  const bench = (idx: number) => { const c = party[idx]; if (c) onRosterChange(party.filter((_, i) => i !== idx), remap(formation, idx), [...reserve, c]) }
+  const bench = (idx: number) => {
+    const c = party[idx]
+    if (!c) return
+    if (c.isMc) { toast('The hero must lead the party.'); return }
+    if (party.length <= 1) { toast('At least one member must stay in the field.'); return }
+    onRosterChange(party.filter((_, i) => i !== idx), remap(formation, idx), [...reserve, c])
+  }
   const field = (rIdx: number) => {
     const c = reserve[rIdx]; if (!c) return
     if (party.length >= cap) { toast('The party is full.'); return }
@@ -663,7 +669,11 @@ function PartyScreen({ party, reserve, formation, ruleset, onRosterChange, onExi
               className={cn('text-[10px] px-1.5 py-0.5 rounded font-mono', inFront(i) ? 'bg-amber-500/20 text-amber-200' : 'bg-sky-500/20 text-sky-200')}>
               {inFront(i) ? 'FRONT' : 'BACK'}</button>
             <HpMp char={c} />
-            <span className="text-[10px] text-sky-300/70">bench ⏎</span>
+            {c.isMc
+              ? <span className="text-[10px] text-amber-300/70">👑 leader</span>
+              : party.length > 1
+                ? <span className="text-[10px] text-sky-300/70">bench ⏎</span>
+                : <span className="text-[10px] text-white/25">—</span>}
           </Row>
         ))}
       </div>
