@@ -248,3 +248,10 @@ parked here, roughly by value:
 - QoL: a one-time "ruleset migrated" toast when `normalizeRuleset` heals a
   legacy draft; a level-up summary popup (stat gains + spells learned) instead
   of a name toast; Journal shows steps walked / playtime.
+- Skills follow-ups (from the FF seeding pass): **Jump-style windup** (charge
+  this turn, auto-release a stored ×2 attack next turn, untargetable mid-air);
+  **Steal/Mug** (new `steal` effect: chance-based mid-battle roll of the enemy
+  loot table, once per enemy); **Cover** (redirect damage from an ally),
+  **Provoke** (taunt targeting override), **Drain/Lancet** (damage + self-heal
+  effect). The Charge empower-next mechanic (StatusEffectDef.boostScope/
+  boostMult) is live and reusable for all of these.

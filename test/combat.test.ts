@@ -620,4 +620,59 @@ test('level-up auto-learns class skills (fighter → Cleave at 4)', () => {
   assert.ok(after[0].knownSkills?.includes('skill.cleave'))
 })
 
+
+// ── Charge (empower-next) + status stat modifiers ─────────────────────────────
+
+test('Charge doubles the next physical attack and is consumed', () => {
+  const rules = makeDefaultRuleset()
+  const mk = () => ({ ...heroWith({}, { might: 14, agility: 20, endurance: 10 }), id: 'ch', name: 'Charger' }) as Character
+  const plain = (() => {
+    const s = initCombat([mk()], modeEnc('enemy.tank'), { ruleset: rules, seed: 5 })
+    const e = s.actors.findIndex(a => a.kind === 'enemy')
+    return 300 - resolvePlayerAttack(s, e, rules, () => 0.5).actors[e].hp
+  })()
+  const s0 = initCombat([mk()], modeEnc('enemy.tank'), { ruleset: rules, seed: 5 })
+  const e = s0.actors.findIndex(a => a.kind === 'enemy')
+  const charged = { ...s0, actors: s0.actors.map((a, i) => i === s0.turnIdx ? { ...a, statuses: [{ def: 'status.charged', remaining: 3 }] } : a) }
+  const after = resolvePlayerAttack(charged, e, rules, () => 0.5)
+  assert.equal(300 - after.actors[e].hp, plain * 2)                    // doubled
+  assert.ok(!after.actors.some(a => a.statuses.some(st => st.def === 'status.charged')))  // consumed
+})
+
+test('physical Charge does not boost spells; Concentrate does', () => {
+  const rules = {
+    ...makeDefaultRuleset(),
+    spellSchools: [{ id: 'arcane', name: 'Arcane' }],  // no keyAttribute → flat
+    spells: [{ id: 'sp.bolt', name: 'Bolt', school: 'arcane', level: 1, mpCost: 0, target: 'enemy', inCombat: true, outOfCombat: false, effects: [{ t: 'damage', dmgType: 'physical', amount: 10, canCrit: false }] }],
+  } as unknown as Ruleset
+  const mk = (statusId: string) => {
+    const s0 = initCombat([{ ...heroWith({}, { agility: 20 }), knownSpells: ['sp.bolt'], mp: 10, maxMp: 10 } as unknown as Character],
+      modeEnc('enemy.tank'), { ruleset: rules, seed: 1 })
+    return { ...s0, actors: s0.actors.map((a, i) => i === s0.turnIdx ? { ...a, statuses: [{ def: statusId, remaining: 3 }] } : a) }
+  }
+  const e = 1
+  const withPhys = resolvePlayerCast(mk('status.charged'), 'sp.bolt', [e], rules, () => 0.99)
+  assert.equal(300 - withPhys.actors[e].hp, 10)   // untouched by physical charge
+  const withMag = resolvePlayerCast(mk('status.concentrated'), 'sp.bolt', [e], rules, () => 0.99)
+  assert.equal(300 - withMag.actors[e].hp, 20)    // doubled by Concentrate
+})
+
+test('status modifiers now shape combat stats (Armor Broken → more damage)', () => {
+  const rules = makeDefaultRuleset()
+  const armored = {
+    ...modeEnc('enemy.tank'),
+    enemies: [{ ...modeEnc('enemy.tank').enemies[0], defense: 10 }],
+  }
+  const mk = () => ({ ...heroWith({}, { might: 14, agility: 20 }), id: 'ab' }) as Character
+  const run = (broken: boolean) => {
+    const s0 = initCombat([mk()], armored, { ruleset: rules, seed: 7 })
+    const e = s0.actors.findIndex(a => a.kind === 'enemy')
+    const s = broken
+      ? { ...s0, actors: s0.actors.map((a, i) => i === e ? { ...a, statuses: [{ def: 'status.armor_break', remaining: 3 }] } : a) }
+      : s0
+    return 300 - resolvePlayerAttack(s, e, rules, () => 0.5).actors[e].hp
+  }
+  assert.ok(run(true) > run(false))   // -6 defense bites
+})
+
 console.log(`\n${passed} passed`)

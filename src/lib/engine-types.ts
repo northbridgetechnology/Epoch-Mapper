@@ -235,6 +235,12 @@ export interface StatusEffectDef extends Definition {
   persistsExploring?: boolean
   /** Steps between exploration ticks when persistsExploring (default 1). */
   exploreStepInterval?: number
+  /** Charge mechanic (FF Focus / SMT Charge): while this status is active, the
+   *  bearer's next matching damage action is multiplied by boostMult and the
+   *  status is consumed. Scope 'physical' = attacks & skills, 'magical' =
+   *  spells, 'any' = both. */
+  boostScope?: 'physical' | 'magical' | 'any'
+  boostMult?: number
 }
 
 export interface EnemyAbility {

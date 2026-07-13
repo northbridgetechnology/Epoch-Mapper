@@ -164,6 +164,46 @@ function readAttr(attrs: Record<string, number>, attrId: string, fallback: numbe
   return attrs[attrId] ?? attrs[attrId.replace('attr.', '')] ?? fallback
 }
 
+
+/** Effective combat stat: the actor's base plus active status modifiers.
+ *  Derived keys (attack/defense/speed) apply directly; attribute keys map to
+ *  their derived stat (might→attack, agility→speed, endurance→defense at the
+ *  same ratio the derive formulas use). */
+function effStat(actor: CombatActor, ruleset: Ruleset, key: 'attack' | 'defense' | 'speed'): number {
+  let v = actor[key]
+  const ATTR_MAP: Record<string, { key: 'attack' | 'defense' | 'speed'; scale: number }> = {
+    might: { key: 'attack', scale: 1 }, agility: { key: 'speed', scale: 1 }, endurance: { key: 'defense', scale: 0.5 },
+  }
+  for (const st of actor.statuses) {
+    const def = ruleset.statusEffects.find(s => s.id === st.def)
+    for (const m of def?.modifiers ?? []) {
+      if (m.target === 'derived' && m.key === key) {
+        v = m.op === 'mul' ? v * m.amount : v + m.amount
+      } else if (m.target === 'attribute') {
+        const map = ATTR_MAP[m.key.replace('attr.', '')]
+        if (map?.key === key && m.op === 'add') v += m.amount * map.scale
+      }
+    }
+  }
+  return Math.max(0, Math.round(v))
+}
+
+/** Charge mechanic: the first active status granting a boost for this action
+ *  scope. The caller multiplies its damage and strips the status (consumed). */
+function findBoost(actor: CombatActor, ruleset: Ruleset, scope: 'physical' | 'magical'): { mult: number; statusId: string } | null {
+  for (const st of actor.statuses) {
+    const def = ruleset.statusEffects.find(s => s.id === st.def)
+    if (def?.boostMult && def.boostScope && (def.boostScope === 'any' || def.boostScope === scope)) {
+      return { mult: def.boostMult, statusId: def.id }
+    }
+  }
+  return null
+}
+
+function stripStatus(actors: CombatActor[], idx: number, statusId: string): CombatActor[] {
+  return actors.map((a, i) => i === idx ? { ...a, statuses: a.statuses.filter(s => s.def !== statusId) } : a)
+}
+
 function partyActorFromChar(
   char: Character,
   originalIdx: number,
@@ -245,6 +285,8 @@ function resolveCombatEffects(
   rng: () => number,
   /** Flat power added to damage/heal rolls (spell-school attribute scaling). */
   powerBonus = 0,
+  /** Damage multiplier (charge mechanic). Applies to damage only, not heals. */
+  damageMult = 1,
 ): { actors: CombatActor[]; log: CombatLogEntry[]; events: CombatEvent[] } {
   let cur = [...actors]
   const log: CombatLogEntry[] = []
@@ -261,7 +303,7 @@ function resolveCombatEffects(
 
       if (eff.t === 'damage') {
         if (!target.alive) continue
-        const base = rollDice(eff.amount, rng) + powerBonus
+        const base = Math.round((rollDice(eff.amount, rng) + powerBonus) * damageMult)
         const crit = eff.canCrit !== false && rng() < t.critChance
         const raw = Math.max(1, Math.round(base * (crit ? t.critMult : 1)))
         // Resistance is the fraction blocked; negative values are weaknesses
@@ -593,11 +635,15 @@ function calcHit(
   defender: CombatActor,
   rng: () => number,
   t: Required<CombatTuning>,
+  ruleset?: Ruleset,
 ): HitResult {
-  const missChance = defender.defense > attacker.attack * 1.5 ? t.outmatchedMissChance : t.baseMissChance
+  // Status buffs/debuffs (Attack Up, Armor Broken…) shape the effective stats.
+  const atk = ruleset ? effStat(attacker, ruleset, 'attack') : attacker.attack
+  const dfn = ruleset ? effStat(defender, ruleset, 'defense') : defender.defense
+  const missChance = dfn > atk * 1.5 ? t.outmatchedMissChance : t.baseMissChance
   if (rng() < missChance) return { damage: 0, crit: false, miss: true }
   const crit = rng() < t.critChance
-  const base = Math.max(1, attacker.attack - Math.floor(defender.defense / 2))
+  const base = Math.max(1, atk - Math.floor(dfn / 2))
   const variance = rng() * t.variance
   let raw = Math.max(1, Math.round(base * (1 + variance) * (crit ? t.critMult : 1)))
   // Row rules: melee dealt from the back rank and melee taken in the back rank
@@ -731,13 +777,18 @@ export function resolvePlayerAttack(
 
   const box = { s: state.rngState }
   const rand = rng ?? (() => nextRand(box))
-  const result = calcHit(attacker, defender, rand, tuning(ruleset))
-  const newHp = Math.max(0, defender.hp - result.damage)
+  const result = calcHit(attacker, defender, rand, tuning(ruleset), ruleset)
+  // Charge (empower-next): a stored physical boost doubles this hit, consumed.
+  const boost = findBoost(attacker, ruleset, 'physical')
+  const dmg = !result.miss && boost ? Math.round(result.damage * boost.mult) : result.damage
+  const newHp = Math.max(0, defender.hp - dmg)
   const died = newHp === 0
 
-  const newActors = state.actors.map((a, i) =>
+  let newActors = state.actors.map((a, i) =>
     i === targetActorIdx ? { ...a, hp: newHp, alive: !died } : a,
   )
+  if (!result.miss && boost) newActors = stripStatus(newActors, state.turnIdx, boost.statusId)
+  result.damage = dmg
 
   const entry: CombatLogEntry = result.miss
     ? { text: `${attacker.name} missed ${defender.name}!`, kind: 'miss' }
@@ -804,14 +855,17 @@ export function resolvePlayerCast(
     : 10
   const powerBonus = Math.max(0, Math.floor((attrVal - 10) / 2))
 
+  const boost = spell.effects.some(e => e.t === 'damage') ? findBoost(caster, ruleset, 'magical') : null
+  const baseActors = boost ? stripStatus(actorsAfterMp, state.turnIdx, boost.statusId) : actorsAfterMp
   const { actors: newActors, log: effectLog, events } = resolveCombatEffects(
     spell.effects,
     state.turnIdx,
     targetActorIdxs,
-    actorsAfterMp,
+    baseActors,
     ruleset,
     rand,
     powerBonus,
+    boost?.mult ?? 1,
   )
 
   return finishAction(
@@ -951,8 +1005,10 @@ export function resolvePlayerUseSkill(
     i === state.turnIdx ? { ...a, hp: a.hp - hpCost, mp: a.mp - (skill.mpCost ?? 0) } : a,
   )
   const entry: CombatLogEntry = { text: `${user.name} uses ${skill.name}!`, kind: 'spell' }
+  const boost = skill.effects.some(e => e.t === 'damage') ? findBoost(user, ruleset, 'physical') : null
+  const baseActors = boost ? stripStatus(actorsAfterCost, state.turnIdx, boost.statusId) : actorsAfterCost
   const { actors, log, events } = resolveCombatEffects(
-    skill.effects, state.turnIdx, targetActorIdxs, actorsAfterCost, ruleset, rand,
+    skill.effects, state.turnIdx, targetActorIdxs, baseActors, ruleset, rand, 0, boost?.mult ?? 1,
   )
   const skillCooldowns = skill.cooldown
     ? { ...(state.skillCooldowns ?? {}), [`${state.turnIdx}:${skill.id}`]: state.round + skill.cooldown }
@@ -1080,8 +1136,10 @@ export function resolveEnemyTurn(
     }
 
     const abilityEntry: CombatLogEntry = { text: `${enemy.name} uses an ability!`, kind: 'spell' }
+    const aBoost = chosen.effects.some(e => e.t === 'damage') ? findBoost(enemy, ruleset, 'magical') : null
+    const aBase = aBoost ? stripStatus(state.actors, state.turnIdx, aBoost.statusId) : state.actors
     const { actors: newActors, log: effectLog, events } = resolveCombatEffects(
-      chosen.effects, state.turnIdx, targetIdxs, state.actors, ruleset, rand,
+      chosen.effects, state.turnIdx, targetIdxs, aBase, ruleset, rand, 0, aBoost?.mult ?? 1,
     )
     return finishAction(
       proceedAfterAction(
@@ -1100,13 +1158,17 @@ export function resolveEnemyTurn(
   const { a: defender, i: targetIdx } = enemyDef?.targeting === 'weakest'
     ? pool.reduce((m, t) => (t.a.hp < m.a.hp ? t : m), pool[0])
     : pool[Math.floor(rand() * pool.length)]
-  const result = calcHit(enemy, defender, rand, tuning(ruleset))
-  const newHp = Math.max(0, defender.hp - result.damage)
+  const result = calcHit(enemy, defender, rand, tuning(ruleset), ruleset)
+  const boost = findBoost(enemy, ruleset, 'physical')
+  const dmg = !result.miss && boost ? Math.round(result.damage * boost.mult) : result.damage
+  const newHp = Math.max(0, defender.hp - dmg)
   const died = newHp === 0
 
-  const newActors = state.actors.map((a, i) =>
+  let newActors = state.actors.map((a, i) =>
     i === targetIdx ? { ...a, hp: newHp, alive: !died } : a,
   )
+  if (!result.miss && boost) newActors = stripStatus(newActors, state.turnIdx, boost.statusId)
+  result.damage = dmg
 
   const entry: CombatLogEntry = result.miss
     ? { text: `${enemy.name} misses ${defender.name}!`, kind: 'miss' }

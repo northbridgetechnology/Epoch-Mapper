@@ -763,7 +763,11 @@ function StatusEditor({ status, ruleset, onChange }: { status: StatusEffectDef; 
         schema={STATUS_SCHEMA}
         value={status as unknown as Record<string, unknown>}
         ruleset={ruleset}
-        onChange={v => onChange({ ...status, ...(v as Partial<StatusEffectDef>) })}
+        onChange={v => {
+          const patch = { ...(v as Partial<StatusEffectDef>) }
+          if ((v as Record<string, unknown>).boostScope === '') patch.boostScope = undefined
+          onChange({ ...status, ...patch } as StatusEffectDef)
+        }}
       />
     </div>
   )

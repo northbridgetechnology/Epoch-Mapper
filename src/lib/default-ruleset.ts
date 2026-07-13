@@ -162,6 +162,72 @@ export const DEFAULT_SKILLS: SkillDef[] = [
     effects: [{ t: 'damage', dmgType: 'holy', amount: '1d8+4', canCrit: false }],
     learn: [{ classId: 'class.cleric', level: 2 }],
   },
+  {
+    id: 'skill.war_cry', name: 'War Cry', icon: '📣', color: '#e17055',
+    description: 'A rallying shout that stirs the whole party to fury.',
+    cooldown: 3, target: 'allAllies',
+    effects: [{ t: 'status', status: 'status.tarukaja' }],
+    learn: [{ classId: 'class.fighter', level: 2 }],
+  },
+  {
+    id: 'skill.armor_crush', name: 'Armor Crush', icon: '🔨', color: '#d63031',
+    description: 'A brutal blow aimed at straps and plate — leaves them exposed.',
+    hpCostPct: 0.05, target: 'enemy',
+    effects: [
+      { t: 'damage', dmgType: 'physical', amount: '1d6+2', canCrit: false },
+      { t: 'status', status: 'status.armor_break', chance: 0.8 },
+    ],
+    learn: [{ classId: 'class.fighter', level: 5 }],
+  },
+  {
+    id: 'skill.charge', name: 'Charge!', icon: '💢', color: '#e17055',
+    description: 'Gather your strength — the next physical blow lands twice as hard.',
+    target: 'self',
+    effects: [{ t: 'status', status: 'status.charged' }],
+    learn: [{ classId: 'class.fighter', level: 6 }],
+  },
+  {
+    id: 'skill.flash_powder', name: 'Flash Powder', icon: '💨', color: '#ffeaa7',
+    description: 'A blinding burst that leaves every foe stumbling.',
+    cooldown: 2, target: 'allEnemies',
+    effects: [{ t: 'status', status: 'status.sukunda', chance: 0.7 }],
+    learn: [{ classId: 'class.rogue', level: 3 }],
+  },
+  {
+    id: 'skill.pray', name: 'Pray', icon: '🙏', color: '#ffeaa7',
+    description: "A whispered plea that knits the party's wounds. Costs nothing but time.",
+    cooldown: 3, target: 'allAllies',
+    effects: [{ t: 'heal', amount: '1d6+2' }],
+    learn: [{ classId: 'class.cleric', level: 3 }],
+  },
+  {
+    id: 'skill.guardians_chant', name: "Guardian's Chant", icon: '🛡️', color: '#0984e3',
+    description: 'A protective litany laid over every ally.',
+    mpCost: 5, cooldown: 3, target: 'allAllies',
+    effects: [{ t: 'status', status: 'status.rakukaja' }],
+    learn: [{ classId: 'class.cleric', level: 5 }],
+  },
+  {
+    id: 'skill.scattershot', name: 'Scattershot', icon: '💥', color: '#2980b9',
+    description: 'One wide, ragged volley across the enemy line.',
+    hpCostPct: 0.08, target: 'allEnemies',
+    effects: [{ t: 'damage', dmgType: 'physical', amount: '1d6+2', canCrit: false }],
+    learn: [{ classId: 'class.gunslinger', level: 4 }],
+  },
+  {
+    id: 'skill.focus_aim', name: 'Focus Aim', icon: '🎯', color: '#2980b9',
+    description: 'Slow the breath, line the shot — the next hit strikes true and hard.',
+    target: 'self',
+    effects: [{ t: 'status', status: 'status.charged' }],
+    learn: [{ classId: 'class.gunslinger', level: 5 }],
+  },
+  {
+    id: 'skill.concentrate', name: 'Concentrate', icon: '🌀', color: '#6c5ce7',
+    description: 'Still the mind — the next damaging spell strikes for double.',
+    target: 'self',
+    effects: [{ t: 'status', status: 'status.concentrated' }],
+    learn: [{ classId: 'class.mage', level: 5 }],
+  },
 ]
 
 // ── Races ──────────────────────────────────────────────────────────────────────
@@ -272,6 +338,24 @@ export const DEFAULT_STATUS_EFFECTS: StatusEffectDef[] = [
     description: 'Agility lowered. Harder to hit or evade.',
     kind: 'debuff', durationTurns: 3, blocksAction: false,
     modifiers: [{ target: 'attribute', key: 'agility', op: 'add', amount: -5 }],
+  },
+  {
+    id: 'status.charged', name: 'Charged!', icon: '💢', color: '#e17055',
+    description: 'Power gathered — the next physical attack or skill hits for double.',
+    kind: 'buff', durationTurns: 3, blocksAction: false,
+    boostScope: 'physical', boostMult: 2,
+  },
+  {
+    id: 'status.concentrated', name: 'Concentrated', icon: '🌀', color: '#6c5ce7',
+    description: 'Mind honed to a point — the next damaging spell hits for double.',
+    kind: 'buff', durationTurns: 3, blocksAction: false,
+    boostScope: 'magical', boostMult: 2,
+  },
+  {
+    id: 'status.armor_break', name: 'Armor Broken', icon: '🛡️', color: '#d63031',
+    description: 'Defenses shattered. Takes far more physical punishment.',
+    kind: 'debuff', durationTurns: 3, blocksAction: false,
+    modifiers: [{ target: 'derived', key: 'defense', op: 'add', amount: -6 }],
   },
 ]
 

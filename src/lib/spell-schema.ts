@@ -54,6 +54,13 @@ export const STATUS_SCHEMA: FieldSchema[] = [
   { key: 'blocksAction',  label: 'Blocks Action (stun/sleep)',    type: 'boolean' },
   { key: 'modifiers',     label: 'Stat Modifiers (while active — buffs/debuffs)', type: 'modifiers', optional: true },
   { key: 'tickEffects',   label: 'Tick Effects (each turn)',      type: 'effects' },
+  { key: 'boostScope',    label: 'Charge: boosts next…', type: { kind: 'enum', options: [
+    { value: '', label: '— no charge effect —' },
+    { value: 'physical', label: 'Physical (attacks & skills)' },
+    { value: 'magical',  label: 'Magical (spells)' },
+    { value: 'any',      label: 'Any damage' },
+  ] }, optional: true },
+  { key: 'boostMult',     label: 'Charge multiplier (e.g. 2 = double)', type: 'number', min: 1, max: 10, optional: true },
   { key: 'persistsExploring',   label: 'Persists while exploring (ticks per step)', type: 'boolean', optional: true },
   { key: 'exploreStepInterval', label: 'Steps between exploration ticks',           type: 'number', min: 1, max: 99, optional: true },
 ]
