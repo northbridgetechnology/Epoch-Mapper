@@ -13,6 +13,7 @@ import { newCharacter } from '@/lib/save-state'
 import { applyConsumable } from '@/lib/apply-effects'
 import { canEquip } from '@/lib/equipment'
 import { itemDisplayName } from '@/lib/item-schema'
+import { notify } from '@/lib/notify'
 import { toast } from 'sonner'
 
 interface PartyWorkspaceProps {
@@ -218,7 +219,7 @@ export function EquipmentPanel({
     if (!inst) return
     // Cursed gear welds itself on — only a Remove Curse effect frees it
     if (itemDef(ruleset, inst.def)?.cursed) {
-      toast.error('It will not come off! The item is cursed.')
+      notify('It will not come off! The item is cursed.', 'error')
       return
     }
     const newInv = addToInventory(inventory, inst.def, 1, ruleset)
@@ -230,7 +231,7 @@ export function EquipmentPanel({
     // Proficiency gate — class must be allowed this slot/type/weight
     const gate = canEquip(cls, itemDef(ruleset, itemId), ruleset, char.equipment)
     if (!gate.ok) {
-      toast.error(gate.reason ?? `${char.name} can't equip that.`)
+      notify(gate.reason ?? `${char.name} can't equip that.`, 'error')
       return
     }
     // Return currently equipped item to inventory
@@ -238,7 +239,7 @@ export function EquipmentPanel({
     const current = char.equipment[slot]
     if (current) {
       if (itemDef(ruleset, current.def)?.cursed) {
-        toast.error('It will not come off! The item is cursed.')
+        notify('It will not come off! The item is cursed.', 'error')
         return
       }
       newInv = addToInventory(newInv, current.def, 1, ruleset)
@@ -247,9 +248,9 @@ export function EquipmentPanel({
     // Equipping identifies — sometimes the hard way
     const wasUnidentified = inventory.some(i => i.def === itemId && i.unidentified)
     if (wasUnidentified && def) {
-      toast(def.cursed ? `It was ${def.name} — and it seizes hold! Cursed!` : `It was ${def.name}!`)
+      notify(def.cursed ? `It was ${def.name} — and it seizes hold! Cursed!` : `It was ${def.name}!`)
     } else if (def?.cursed) {
-      toast.error(`The ${def.name} seizes hold — cursed!`)
+      notify(`The ${def.name} seizes hold — cursed!`, 'error')
     }
     // Remove from inventory (unidentified stacks first so the reveal consumes them)
     newInv = removeFromInventory(newInv, itemId, 1)

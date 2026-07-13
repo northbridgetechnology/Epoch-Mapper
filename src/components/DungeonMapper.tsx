@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Plus, Trash2, MapPin, Eraser, X, Search, Pipette } from 'lucide-react'
 import { toast } from 'sonner'
+import { notify } from '@/lib/notify'
 import { cn, uid } from '@/lib/utils'
 import {
   BASE, BASE_PALETTE, BASE_TYPES, CHUNK_SIZE, DEFAULT_CELL, EDGE, EDGE_PALETTE, EDGE_TYPES, OVERLAY,
@@ -1140,7 +1141,7 @@ export function DungeonMapper({
     if (idx >= 0) setActiveIdx(idx)
     setStepsTaken(s.stepsTaken ?? 0); stepsRef.current = s.stepsTaken ?? 0
     setCombatState(null); setActiveEncounter(null); setDialogue(null); setInscription(null); setGameOver(false)
-    toast('Game loaded.')
+    notify('Game loaded.')
   }, [maps, setMaps, setActiveIdx])
 
   // The player-built protagonist, if any — drives authored-text tokens.
@@ -1220,14 +1221,14 @@ export function DungeonMapper({
     || !!(activeMap && activeMap.cells[`${activeMap.playerX},${activeMap.playerY}`]?.overlays?.includes(OVERLAY.SAVE_POINT))
 
   const handleSaveSlot = useCallback((slot: number) => {
-    if (!canSaveHere) { toast('You can only save at a save point.'); return }
+    if (!canSaveHere) { notify('You can only save at a save point.'); return }
     saveToSlot(slot, buildSaveState())
-    toast(`Saved to slot ${slot + 1}.`)
+    notify(`Saved to slot ${slot + 1}.`)
   }, [canSaveHere, buildSaveState])
 
   const handleLoadSlot = useCallback((slot: number) => {
     const s = loadFromSlot(slot)
-    if (!s) { toast('That slot is empty.'); return }
+    if (!s) { notify('That slot is empty.'); return }
     applySaveState(s)
   }, [applySaveState])
 

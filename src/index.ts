@@ -168,6 +168,10 @@ export type { MusicContext } from './lib/music'
 export { music } from './lib/audio-controller'
 export { putTrack, getTrack, deleteTrack, hasTrack, listTrackIds, gatherAudioBlobs, restoreAudioBlobs } from './lib/audio-store'
 
+// Player notifications — FF alert window inside the Tab menu, toasts elsewhere
+export { notify, setNotifySink } from './lib/notify'
+export type { NotifyKind, NotifySink } from './lib/notify'
+
 // Enemy + encounter-table schema helpers (Phase E3)
 export { ENEMY_SCHEMA, ENCOUNTER_TABLE_SCHEMA, blankEnemy, blankEncounterTable } from './lib/enemy-schema'
 

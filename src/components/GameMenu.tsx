@@ -6,10 +6,14 @@
  * every list is driven by ↑/↓ (←/→ where noted), Enter confirms, Esc backs out
  * (nested → screen → menu), Tab closes. Mouse works everywhere too. Reuses the
  * party editor's Equip/Status panels and the out-of-combat effect resolvers.
+ *
+ * Notifications inside the menu are front-and-center FF alert windows, not
+ * corner toasts: while mounted, the menu registers itself as the notify()
+ * sink, so messages from its own screens, the reused panels, and the
+ * save/load handlers all land in the modal alert queue.
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { toast } from 'sonner'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Backpack, Sparkles, Shield, User, Users, ScrollText, Tent, Save as SaveIcon, Settings2, X,
 } from 'lucide-react'
@@ -23,6 +27,7 @@ import { questStageFlagKey, npcLineHeardFlagKey } from '@/lib/event-engine'
 import { resolveText } from '@/lib/text-tokens'
 import { listSaveSlots } from '@/lib/save-state'
 import { music } from '@/lib/audio-controller'
+import { notify, setNotifySink, type NotifyKind } from '@/lib/notify'
 import { EquipmentPanel, CharacterSheet } from '@/components/workspaces/PartyWorkspace'
 import { cn } from '@/lib/utils'
 
@@ -48,11 +53,48 @@ function isFormField(e: KeyboardEvent): boolean {
   return t === 'INPUT' || t === 'SELECT' || t === 'TEXTAREA'
 }
 
+// ── Front-and-center menu alerts (replaces corner toasts inside the menu) ────────
+
+/** While an alert window is up, the menu is modal: this holds its dismiss
+ *  action so every keydown handler feeds keys to the alert instead of its own
+ *  screen. Module scope — all handlers in this file share it. */
+const alertDismiss: { current: (() => void) | null } = { current: null }
+
+interface MenuAlertMsg { lines: string[]; kind: NotifyKind }
+
+/** FF-style message window, dead center. Enter/Space/Esc or a click confirms;
+ *  further messages queue behind it. */
+function MenuAlertBox({ alert, queued, onDismiss }: { alert: MenuAlertMsg; queued: number; onDismiss: () => void }) {
+  return (
+    <div className="fixed inset-0 z-[80] grid place-items-center bg-black/45" onClick={onDismiss}>
+      <div className="min-w-[300px] max-w-lg px-7 py-5 text-center space-y-1" style={ffWindow}>
+        {alert.lines.map((l, i) => (
+          <div key={i} className={cn('text-sm leading-relaxed', alert.kind === 'error' ? 'text-rose-200' : 'text-white/95')}>{l}</div>
+        ))}
+        <div className="pt-1.5 flex items-center justify-center gap-2 text-amber-300 text-xs">
+          <span style={{ animation: 'ffblink 0.8s steps(1,end) infinite' }}>▼</span>
+          {queued > 0 && <span className="text-[10px] text-white/40 font-mono">+{queued} more</span>}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 /** Capture-phase keydown. Return true to consume (stops the game + sibling handlers). */
 function useKeydown(handler: (e: KeyboardEvent) => boolean) {
   const ref = useRef(handler); ref.current = handler
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (ref.current(e)) { e.preventDefault(); e.stopImmediatePropagation() } }
+    const onKey = (e: KeyboardEvent) => {
+      // An open alert is modal: the first handler to see the key confirms it
+      // and swallows the event from every sibling and the game beneath.
+      const dismiss = alertDismiss.current
+      if (dismiss) {
+        if (!e.repeat && (e.key === 'Enter' || e.key === ' ' || e.key === 'Escape')) dismiss()
+        e.preventDefault(); e.stopImmediatePropagation()
+        return
+      }
+      if (ref.current(e)) { e.preventDefault(); e.stopImmediatePropagation() }
+    }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
   }, [])
@@ -112,6 +154,17 @@ export function GameMenu({
   const mc = useMemo(() => party.find(c => c.isMc) ?? null, [party])
   const exit = () => setCmd(null)
   useEffect(() => { setDesc(null) }, [cmd])   // clear the description bar on screen change
+
+  // While the menu is up, every notify() — including those fired by reused
+  // panels and the save/load handlers — becomes a queued FF alert window.
+  const [alerts, setAlerts] = useState<MenuAlertMsg[]>([])
+  useEffect(() => setNotifySink((lines, kind) => setAlerts(q => [...q, { lines, kind }])), [])
+  const dismissAlert = useCallback(() => setAlerts(q => q.slice(1)), [])
+  const alertOpen = alerts.length > 0
+  useEffect(() => {
+    alertDismiss.current = alertOpen ? dismissAlert : null
+    return () => { alertDismiss.current = null }
+  }, [alertOpen, dismissAlert])
 
   // Tab closes from anywhere; the command list drives itself when no screen is open.
   useKeydown((e) => {
@@ -199,6 +252,8 @@ export function GameMenu({
         <span className="tracking-wide">{mapName}</span>
         <span className="font-mono text-amber-200/90">{gold} <span className="text-white/50">G</span></span>
       </div>
+
+      {alerts.length > 0 && <MenuAlertBox alert={alerts[0]} queued={alerts.length - 1} onDismiss={dismissAlert} />}
     </div>
   )
 }
@@ -371,12 +426,12 @@ function ItemScreen({ ruleset, party, inventory, onExit, onApply, onDesc }: {
   // Description bar follows the focused item.
   useEffect(() => { onDesc(describeItem(selDef, ruleset)) }, [iCur, mode, inventory, selDef, ruleset, onDesc])
 
-  const doUse = (t: number) => { if (!sel) return; const r = applyConsumable(sel.def, t, party, inventory, ruleset); if (r) { r.messages.forEach(m => toast(m)); onApply(r.party, r.inventory) } setMode('list') }
+  const doUse = (t: number) => { if (!sel) return; const r = applyConsumable(sel.def, t, party, inventory, ruleset); if (r) { notify(r.messages); onApply(r.party, r.inventory) } setMode('list') }
   const doEquip = (m: number) => {
     if (!sel) return
     const r = equipFrom(party[m], sel.def, ruleset, inventory)
-    if (r.changed) { toast.success(r.message); onApply(party.map((c, i) => (i === m ? r.char : c)), r.inventory) }
-    else toast(r.message)
+    if (r.changed) { notify(r.message, 'success'); onApply(party.map((c, i) => (i === m ? r.char : c)), r.inventory) }
+    else notify(r.message)
     setMode('list')
   }
   const doDrop = () => { if (!sel) return; onApply(party, removeN(inventory, sel.def, Math.min(dropQty, sel.qty))); setMode('list') }
@@ -509,10 +564,11 @@ function MagicScreen({ ruleset, party, onExit, onApply, onDesc }: {
 
   const cast = (targetIdx: number) => {
     if (!spell || !caster) return
-    if (caster.mp < spell.mpCost) { toast('Not enough MP.'); return }
+    if (caster.mp < spell.mpCost) { notify('Not enough MP.'); return }
     let p = party.map((c, i) => (i === casterIdx ? { ...c, mp: c.mp - spell.mpCost } : c))
-    for (const eff of spell.effects as Effect[]) { const r = applyEffectToChar(eff, targetIdx, p, [], ruleset); p = r.party; r.messages.forEach(m => toast(m)) }
-    toast(`${caster.name} casts ${spell.name}.`)
+    const messages: string[] = [`${caster.name} casts ${spell.name}.`]
+    for (const eff of spell.effects as Effect[]) { const r = applyEffectToChar(eff, targetIdx, p, [], ruleset); p = r.party; messages.push(...r.messages) }
+    notify(messages)
     onApply(p); setMode('spell')
   }
 
@@ -528,7 +584,7 @@ function MagicScreen({ ruleset, party, onExit, onApply, onDesc }: {
       if (e.key === 'Escape') { setMode('caster'); return true }
     } else if (mode === 'action') {
       if (aStep(e)) return true
-      if (e.key === 'Enter' || e.key === ' ') { if (spell && caster && caster.mp >= spell.mpCost) setMode('target'); else toast('Not enough MP.'); return true }
+      if (e.key === 'Enter' || e.key === ' ') { if (spell && caster && caster.mp >= spell.mpCost) setMode('target'); else notify('Not enough MP.'); return true }
       if (e.key === 'Escape') { setMode('spell'); return true }
     } else {
       if (tStep(e)) return true
@@ -714,13 +770,13 @@ function PartyScreen({ party, reserve, formation, ruleset, onRosterChange, onExi
   const bench = (idx: number) => {
     const c = party[idx]
     if (!c) return
-    if (c.isMc) { toast('The hero must lead the party.'); return }
-    if (party.length <= 1) { toast('At least one member must stay in the field.'); return }
+    if (c.isMc) { notify('The hero must lead the party.'); return }
+    if (party.length <= 1) { notify('At least one member must stay in the field.'); return }
     onRosterChange(party.filter((_, i) => i !== idx), remap(formation, idx), [...reserve, c])
   }
   const field = (rIdx: number) => {
     const c = reserve[rIdx]; if (!c) return
-    if (party.length >= cap) { toast('The party is full.'); return }
+    if (party.length >= cap) { notify('The party is full.'); return }
     onRosterChange([...party, c], formation, reserve.filter((_, i) => i !== rIdx))
   }
 
