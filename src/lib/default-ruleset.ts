@@ -12,12 +12,12 @@ import type {
 // ── Attributes ─────────────────────────────────────────────────────────────────
 
 export const DEFAULT_ATTRIBUTES: AttributeDef[] = [
-  { id: 'attr.might',     name: 'Might',     abbr: 'MGT', min: 3, max: 18, default: 10, description: 'Physical power; increases melee damage and max HP.' },
-  { id: 'attr.agility',   name: 'Agility',   abbr: 'AGL', min: 3, max: 18, default: 10, description: 'Speed and dexterity; affects initiative, hit chance, and defense.' },
-  { id: 'attr.intellect', name: 'Intellect', abbr: 'INT', min: 3, max: 18, default: 10, description: 'Mental acuity; boosts arcane spell power and max MP.' },
-  { id: 'attr.spirit',    name: 'Spirit',    abbr: 'SPI', min: 3, max: 18, default: 10, description: 'Spiritual force; boosts divine spell power and max MP.' },
-  { id: 'attr.endurance', name: 'Endurance', abbr: 'END', min: 3, max: 18, default: 10, description: 'Resilience; primary contributor to max HP.' },
-  { id: 'attr.luck',      name: 'Luck',      abbr: 'LCK', min: 3, max: 18, default: 10, description: 'Fortune; increases critical hit chance and loot quality.' },
+  { id: 'attr.might',     name: 'Might',     abbr: 'MGT', min: 3, max: 30, default: 10, description: 'Physical power; increases melee damage and max HP.' },
+  { id: 'attr.agility',   name: 'Agility',   abbr: 'AGL', min: 3, max: 30, default: 10, description: 'Speed and dexterity; affects initiative, hit chance, and defense.' },
+  { id: 'attr.intellect', name: 'Intellect', abbr: 'INT', min: 3, max: 30, default: 10, description: 'Mental acuity; boosts arcane spell power and max MP.' },
+  { id: 'attr.spirit',    name: 'Spirit',    abbr: 'SPI', min: 3, max: 30, default: 10, description: 'Spiritual force; boosts divine spell power and max MP.' },
+  { id: 'attr.endurance', name: 'Endurance', abbr: 'END', min: 3, max: 30, default: 10, description: 'Resilience; primary contributor to max HP.' },
+  { id: 'attr.luck',      name: 'Luck',      abbr: 'LCK', min: 3, max: 30, default: 10, description: 'Fortune; increases critical hit chance and loot quality.' },
 ]
 
 // ── Classes ────────────────────────────────────────────────────────────────────
@@ -31,6 +31,7 @@ export const DEFAULT_CLASSES: ClassDef[] = [
     weaponTypes: ['wtype.sword', 'wtype.katana', 'wtype.greatsword', 'wtype.axe', 'wtype.mace', 'wtype.hammer', 'wtype.spear', 'wtype.bow'],
     armorTypes: [],
     attrGrowth: { might: 1, endurance: 1 },
+    levelPoints: 2,
     attrModifiers: { might: 2, endurance: 2 },
   },
   {
@@ -42,6 +43,7 @@ export const DEFAULT_CLASSES: ClassDef[] = [
     armorTypes: ['atype.robe', 'atype.light'],
     startingSpells: ['spell.agi', 'spell.bufu', 'spell.zio'],
     attrGrowth: { intellect: 2 },
+    levelPoints: 2,
     attrModifiers: { intellect: 3 },
   },
   {
@@ -53,6 +55,7 @@ export const DEFAULT_CLASSES: ClassDef[] = [
     armorTypes: ['atype.medium', 'atype.light', 'atype.robe', 'atype.buckler', 'atype.shield'],
     startingSpells: ['spell.dia', 'spell.hama', 'spell.cure_poison'],
     attrGrowth: { spirit: 2 },
+    levelPoints: 2,
     attrModifiers: { spirit: 3 },
   },
   {
@@ -63,6 +66,7 @@ export const DEFAULT_CLASSES: ClassDef[] = [
     weaponTypes: ['wtype.dagger', 'wtype.sword', 'wtype.bow', 'wtype.gun'],
     armorTypes: ['atype.light', 'atype.medium', 'atype.buckler'],
     attrGrowth: { agility: 2 },
+    levelPoints: 3,
     attrModifiers: { agility: 3, luck: 1 },
   },
   {
@@ -73,6 +77,7 @@ export const DEFAULT_CLASSES: ClassDef[] = [
     weaponTypes: ['wtype.gun', 'wtype.heavy_gun'],
     armorTypes: ['atype.light', 'atype.medium'],
     attrGrowth: { agility: 1, luck: 1 },
+    levelPoints: 2,
     attrModifiers: { agility: 2, luck: 2 },
   },
 ]

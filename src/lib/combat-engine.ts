@@ -1077,8 +1077,22 @@ export function applyCombatOutcome(
         const cls = ruleset.classes.find(c => c.id === char.classId)
         if (!cls) return { ...char, xp: newXp }
         const newLevel = char.level + 1
-        const newMaxHp = deriveMaxHp({ level: newLevel, attributes: char.attributes }, cls)
-        const newMaxMp = deriveMaxMp({ level: newLevel, attributes: char.attributes }, cls)
+        // Automatic class growth: attrGrowth raises attributes each level,
+        // clamped to each attribute's max. Growth and character maps may key
+        // by full id or short name — resolve both.
+        const attributes = { ...char.attributes }
+        for (const attr of ruleset.attributes) {
+          const short = attr.id.replace('attr.', '')
+          const growth = cls.attrGrowth[attr.id] ?? cls.attrGrowth[short] ?? 0
+          if (!growth) continue
+          const key = attributes[attr.id] !== undefined ? attr.id
+            : attributes[short] !== undefined ? short : attr.id
+          const cur = attributes[key] ?? attr.default
+          attributes[key] = Math.min(attr.max, cur + growth)
+        }
+        // Derive HP/MP after growth so endurance/intellect gains count now.
+        const newMaxHp = deriveMaxHp({ level: newLevel, attributes }, cls)
+        const newMaxMp = deriveMaxMp({ level: newLevel, attributes }, cls)
         levelUps.push(char.name)
         // Auto-learn spells whose learn table names this class at (or below) the new level
         const learned = ruleset.spells
@@ -1086,7 +1100,8 @@ export function applyCombatOutcome(
             && sp.learn?.some(l => l.classId === char.classId && l.level <= newLevel))
           .map(sp => sp.id)
         return {
-          ...char, level: newLevel, xp: newXp - threshold,
+          ...char, level: newLevel, xp: newXp - threshold, attributes,
+          unspentPoints: (char.unspentPoints ?? 0) + (cls.levelPoints ?? 0),
           maxHp: newMaxHp, hp: newMaxHp, maxMp: newMaxMp, mp: newMaxMp,
           knownSpells: learned.length > 0 ? [...char.knownSpells, ...learned] : char.knownSpells,
         }

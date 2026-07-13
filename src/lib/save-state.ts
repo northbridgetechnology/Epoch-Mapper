@@ -234,11 +234,15 @@ export function npcToCharacter(def: NpcDef, ruleset: Ruleset): Character {
   for (const attr of ruleset.attributes) {
     const short = attr.id.replace('attr.', '')
     const explicit = def.attributes?.[attr.id] ?? def.attributes?.[short]
+    // Recruits above level 1 get their class growth baked in, so a level-5
+    // hire matches a member leveled from 1 (explicit stats always win).
+    const growth = (cls.attrGrowth[attr.id] ?? cls.attrGrowth[short] ?? 0) * (level - 1)
     const raw = explicit !== undefined
       ? explicit
       : attr.default
         + (cls.attrModifiers[attr.id] ?? cls.attrModifiers[short] ?? 0)
         + (race.attrModifiers[attr.id] ?? race.attrModifiers[short] ?? 0)
+        + growth
     attributes[attr.id] = Math.min(attr.max, Math.max(attr.min, raw))
   }
 

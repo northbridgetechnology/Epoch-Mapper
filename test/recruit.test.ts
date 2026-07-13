@@ -78,4 +78,16 @@ test('recruit effect: de-duplicates repeated recruits of the same npc', () => {
   assert.deepEqual(res.recruits, ['npc.ally'])
 })
 
+
+test('npcToCharacter: recruits above level 1 get class growth baked in', () => {
+  const fighter = ruleset.classes.find(c => c.id === 'class.fighter')!
+  const def: NpcDef = {
+    id: 'npc.vet', name: 'Veteran', classId: fighter.id, raceId: race.id, level: 5,
+    lines: [], recruitable: true,
+  }
+  const ch = npcToCharacter(def, ruleset)
+  // default 10 + class mod 2 + human race mod 1 + growth 1×4 levels
+  assert.equal(ch.attributes['attr.might'], 17)
+})
+
 console.log(`\n${passed} passed`)

@@ -115,8 +115,13 @@ export interface ClassDef extends Definition {
    *  Absent/empty = no per-type restriction (any armor type). */
   armorTypes?: DefRef<ArmorTypeDef>[]
   startingSpells?: DefRef<SpellDef>[]
+  /** Automatic per-level attribute growth (applied on level-up, clamped to
+   *  each attribute's max). Keys may be full ids ('attr.might') or short. */
   attrGrowth: Partial<Record<string, number>>
   attrModifiers: Partial<Record<string, number>>
+  /** Player-allocated attribute points granted each level-up (banked into
+   *  Character.unspentPoints, spent in the in-game Status screen). Default 0. */
+  levelPoints?: number
 }
 
 /** A weapon archetype (sword, bow, staff…). Individual weapon items reference
@@ -580,6 +585,8 @@ export interface Character {
   bio?: string
   /** The NpcDef this party member was recruited/instantiated from (if any). */
   sourceNpc?: string
+  /** Banked level-up points awaiting allocation (ClassDef.levelPoints). */
+  unspentPoints?: number
 }
 
 export type Pronoun = 'he' | 'she' | 'they'
@@ -613,13 +620,20 @@ export interface SaveState {
 
 // ── Derived-stat helpers (formulas §6.3) ──────────────────────────────────────
 
+/** Attribute maps are keyed inconsistently across the codebase — runtime
+ *  characters use full ids ('attr.might'), some fixtures use short ('might').
+ *  Read robustly under either key. */
+export function readAttribute(attributes: Record<string, number>, shortName: string, fallback: number): number {
+  return attributes[shortName] ?? attributes[`attr.${shortName}`] ?? fallback
+}
+
 export function deriveMaxHp(character: Pick<Character, 'level' | 'attributes'>, cls: ClassDef): number {
-  return cls.hitDie * character.level + (character.attributes['endurance'] ?? 10) * 2
+  return cls.hitDie * character.level + readAttribute(character.attributes, 'endurance', 10) * 2
 }
 
 export function deriveMaxMp(character: Pick<Character, 'level' | 'attributes'>, cls: ClassDef): number {
-  const int = character.attributes['intellect'] ?? 0
-  const spi = character.attributes['spirit'] ?? 0
+  const int = readAttribute(character.attributes, 'intellect', 0)
+  const spi = readAttribute(character.attributes, 'spirit', 0)
   return cls.spellDie * character.level + Math.max(int, spi)
 }
 

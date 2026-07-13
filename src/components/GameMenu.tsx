@@ -14,6 +14,7 @@ import {
   Backpack, Sparkles, Shield, User, Users, ScrollText, Tent, Save as SaveIcon, Settings2, X,
 } from 'lucide-react'
 import type { Character, Effect, Formation, ItemDef, ItemInstance, Ruleset, SpellDef } from '@/lib/engine-types'
+import { deriveMaxHp, deriveMaxMp } from '@/lib/engine-types'
 import { Portrait } from '@/lib/portraits'
 import { applyConsumable, applyEffectToChar } from '@/lib/apply-effects'
 import { canEquip } from '@/lib/equipment'
@@ -127,6 +128,8 @@ export function GameMenu({
   const updateChar = (idx: number, c: Character) =>
     onRosterChange(party.map((x, i) => (i === idx ? c : x)), formation, reserve)
 
+  const pendingPoints = party.reduce((s, c) => s + (c.unspentPoints ?? 0), 0)
+
   return (
     <div className="fixed inset-0 z-[60] bg-black/80 backdrop-blur-sm flex flex-col p-4 sm:p-6 select-none text-white"
       style={{ fontFamily: 'ui-sans-serif, system-ui' }}>
@@ -145,6 +148,9 @@ export function GameMenu({
               className={cn('flex items-center gap-1.5 px-2 py-1.5 rounded text-sm text-left transition-colors',
                 cmd === c.id ? 'text-amber-200' : cursor === i && !cmd ? cn(ROW_SEL, 'text-white') : 'text-white/75 hover:bg-white/5')}>
               <Cursor on={cursor === i && !cmd} />{c.icon}<span className="tracking-wide">{c.label}</span>
+              {c.id === 'status' && pendingPoints > 0 && (
+                <span className="ml-auto text-[10px] px-1 rounded bg-amber-500/25 text-amber-200 font-bold">+{pendingPoints}</span>
+              )}
             </button>
           ))}
         </div>
@@ -161,8 +167,11 @@ export function GameMenu({
               onChange={c => updateChar(idx, c)} onInventoryChange={inv => onInventoryChange(inv, gold)} />
           )} />}
           {cmd === 'status' && <MemberScreen party={party} onExit={exit} render={(char, idx) => (
-            <CharacterSheet char={char} ruleset={ruleset} inventory={inventory}
-              onChange={c => updateChar(idx, c)} onInventoryChange={inv => onInventoryChange(inv, gold)} />
+            <div className="space-y-3">
+              <PointSpend char={char} ruleset={ruleset} onChange={c => updateChar(idx, c)} />
+              <CharacterSheet char={char} ruleset={ruleset} inventory={inventory}
+                onChange={c => updateChar(idx, c)} onInventoryChange={inv => onInventoryChange(inv, gold)} />
+            </div>
           )} />}
           {cmd === 'party' && <PartyScreen party={party} reserve={reserve} formation={formation} ruleset={ruleset}
             onRosterChange={onRosterChange} onExit={exit} />}
@@ -606,6 +615,68 @@ function MemberScreen({ party, onExit, render }: {
       </div>
       <div className="flex-1 min-w-0 rounded border border-white/10 bg-black/20 p-1">
         {char && render(char, party.indexOf(char))}
+      </div>
+    </div>
+  )
+}
+
+// ── Level-up point allocation (Status screen) ──────────────────────────────────
+
+/** Spend banked level-up points (+1 per click, clamped to each attribute's
+ *  max). HP/MP maxima re-derive immediately so END/INT/SPI spends feel real. */
+function PointSpend({ char, ruleset, onChange }: {
+  char: Character; ruleset: Ruleset; onChange: (c: Character) => void
+}) {
+  const points = char.unspentPoints ?? 0
+  if (points <= 0) return null
+  const cls = ruleset.classes.find(c => c.id === char.classId)
+
+  const spend = (attrId: string) => {
+    const attr = ruleset.attributes.find(a => a.id === attrId)
+    if (!attr || points <= 0) return
+    const short = attr.id.replace('attr.', '')
+    const key = char.attributes[attr.id] !== undefined ? attr.id
+      : char.attributes[short] !== undefined ? short : attr.id
+    const cur = char.attributes[key] ?? attr.default
+    if (cur >= attr.max) return
+    const attributes = { ...char.attributes, [key]: cur + 1 }
+    let next: Character = { ...char, attributes, unspentPoints: points - 1 }
+    if (cls) {
+      // Raise maxima in place; current HP/MP grows by the same delta.
+      const newMaxHp = deriveMaxHp({ level: next.level, attributes }, cls)
+      const newMaxMp = deriveMaxMp({ level: next.level, attributes }, cls)
+      next = {
+        ...next,
+        hp: next.hp + Math.max(0, newMaxHp - next.maxHp), maxHp: newMaxHp,
+        mp: next.mp + Math.max(0, newMaxMp - next.maxMp), maxMp: newMaxMp,
+      }
+    }
+    onChange(next)
+  }
+
+  return (
+    <div className="rounded border border-amber-500/30 bg-amber-950/20 p-2.5 space-y-1.5">
+      <div className="text-xs font-bold text-amber-200">
+        ✦ {points} attribute point{points === 1 ? '' : 's'} to allocate
+      </div>
+      <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+        {ruleset.attributes.map(attr => {
+          const short = attr.id.replace('attr.', '')
+          const val = char.attributes[attr.id] ?? char.attributes[short] ?? attr.default
+          const capped = val >= attr.max
+          return (
+            <div key={attr.id} className="flex items-center gap-2 text-xs">
+              <span className="flex-1 text-white/75">{attr.name}</span>
+              <span className="tabular-nums text-white/90 w-8 text-right">{val}<span className="text-white/30">/{attr.max}</span></span>
+              <button onClick={() => spend(attr.id)} disabled={capped}
+                title={capped ? `${attr.name} is at its cap` : `Raise ${attr.name}`}
+                className={cn('w-5 h-5 grid place-items-center rounded text-sm font-bold',
+                  capped ? 'bg-zinc-800 text-white/20 cursor-not-allowed' : 'bg-amber-500/25 text-amber-200 hover:bg-amber-500/40')}>
+                +
+              </button>
+            </div>
+          )
+        })}
       </div>
     </div>
   )

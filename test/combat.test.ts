@@ -14,6 +14,7 @@ import {
   resolveSelectActor,
   canAllOutAttack,
   consumeCombatItems,
+  applyCombatOutcome,
   upcomingTurns,
   type CombatState,
 } from '../src/lib/combat-engine'
@@ -473,6 +474,31 @@ test('pressTurn mode: resolveSelectActor switches to another living party member
   // classic mode ignores member selection
   const classic = initCombat(twoFastHeroes(), modeEnc('enemy.tank'), { ruleset: modeRules, combatMode: 'classic', seed: 1 })
   assert.equal(resolveSelectActor(classic, other).turnIdx, classic.turnIdx)
+})
+
+
+// ── Level-up: hybrid growth + banked points ───────────────────────────────────
+
+test('level-up applies class attrGrowth, banks levelPoints, clamps at attr max', () => {
+  const rules = makeDefaultRuleset()
+  const hero0 = {
+    id: 'lv', name: 'Climber', classId: 'class.fighter', raceId: 'race.human',
+    level: 1, xp: 49, alive: true, statuses: [], knownSpells: [], equipment: {},
+    attributes: { 'attr.might': 10, 'attr.endurance': 29, 'attr.agility': 10 },
+    hp: 20, maxHp: 30, mp: 0, maxMp: 0,
+  } as unknown as Character
+  const state = {
+    phase: 'victory', xpReward: 100, drops: [], goldReward: 0, itemsUsed: {},
+    actors: [{ kind: 'party', idx: 0, hp: 20, alive: true, mp: 0, statuses: [] }],
+  } as unknown as CombatState
+  const { party: after, levelUps } = applyCombatOutcome([hero0], state, rules)
+  assert.deepEqual(levelUps, ['Climber'])
+  assert.equal(after[0].level, 2)
+  assert.equal(after[0].attributes['attr.might'], 11)      // fighter growth +1
+  assert.equal(after[0].attributes['attr.endurance'], 30)  // clamped at max
+  assert.equal(after[0].unspentPoints, 2)                  // fighter levelPoints
+  // deriveMaxHp now reads full-id keys: hitDie 10×2 + END 30×2 = 80
+  assert.equal(after[0].maxHp, 80)
 })
 
 console.log(`\n${passed} passed`)

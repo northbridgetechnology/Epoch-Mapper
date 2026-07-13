@@ -15,6 +15,7 @@ export const CLASS_SCHEMA: FieldSchema[] = [
   { key: 'description', label: 'Description',  type: 'textarea', optional: true },
   { key: 'hitDie',      label: 'Hit Die (HP per level)',   type: 'number', min: 0 },
   { key: 'spellDie',    label: 'Spell Die (MP per level)', type: 'number', min: 0 },
+  { key: 'levelPoints', label: 'Attribute Points per Level (player-allocated)', type: 'number', min: 0, max: 20, optional: true },
 ]
 
 /** Default values for a blank new ClassDef. */
