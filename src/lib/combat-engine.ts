@@ -997,12 +997,20 @@ export function resolveEnemyTurn(
     return true
   })
 
+  // Press modes: the AI hunts weaknesses — abilities whose damage element hits
+  // a living member's weakness weigh ×3, since a weak hit earns the side a
+  // bonus press / One More.
+  const pressMode = state.mode === 'pressTurn' || state.mode === 'oneMore'
+  const hitsWeakness = (ab: EnemyAbility) => ab.effects.some(e =>
+    e.t === 'damage' && partyTargets.some(({ a }) => (a.resistances?.[e.dmgType] ?? 0) < 0))
+  const abilityWeight = (ab: EnemyAbility) => ab.weight * (pressMode && hitsWeakness(ab) ? 3 : 1)
+
   if (abilities?.length) {
-    const totalWeight = abilities.reduce((s, a) => s + a.weight, 0)
+    const totalWeight = abilities.reduce((s, a) => s + abilityWeight(a), 0)
     let pick = rand() * totalWeight
     let chosen = abilities[abilities.length - 1]
     for (const ab of abilities) {
-      pick -= ab.weight
+      pick -= abilityWeight(ab)
       if (pick <= 0) { chosen = ab; break }
     }
 
@@ -1035,10 +1043,13 @@ export function resolveEnemyTurn(
     )
   }
 
-  // Default: physical attack — targeting per EnemyDef ('weakest' hunts low HP)
+  // Default: physical attack — targeting per EnemyDef ('weakest' hunts low HP).
+  // In press modes, members weak to physical get hunted first (free presses).
+  const physWeak = pressMode ? partyTargets.filter(({ a }) => (a.resistances?.['physical'] ?? 0) < 0) : []
+  const pool = physWeak.length > 0 ? physWeak : partyTargets
   const { a: defender, i: targetIdx } = enemyDef?.targeting === 'weakest'
-    ? partyTargets.reduce((m, t) => (t.a.hp < m.a.hp ? t : m), partyTargets[0])
-    : partyTargets[Math.floor(rand() * partyTargets.length)]
+    ? pool.reduce((m, t) => (t.a.hp < m.a.hp ? t : m), pool[0])
+    : pool[Math.floor(rand() * pool.length)]
   const result = calcHit(enemy, defender, rand, tuning(ruleset))
   const newHp = Math.max(0, defender.hp - result.damage)
   const died = newHp === 0
@@ -1073,6 +1084,18 @@ export function upcomingTurns(state: CombatState, count: number): number[] {
   const out: number[] = []
   let idx = state.turnIdx
   if (state.actors[idx]?.alive) out.push(idx)
+  // pressTurn: only the active side acts until its icons run out, so preview
+  // cycles within that side (the icon row conveys how many presses remain).
+  if (state.mode === 'pressTurn' && state.activeSide) {
+    const side = state.activeSide
+    const max = Math.min(count, aliveOnSide(state.actors, side))
+    while (out.length < max) {
+      idx = nextAliveOnSide(state.actors, idx, side)
+      if (!state.actors[idx]?.alive || out.includes(idx)) break
+      out.push(idx)
+    }
+    return out
+  }
   while (out.length < count) {
     idx = nextAliveTurn(state.actors, idx)
     if (!state.actors[idx]?.alive) break

@@ -544,4 +544,38 @@ test('equipped wand charges: use fires effects, spends a charge, survives combat
   assert.equal(after[0].equipment.weapon?.charges, 11)
 })
 
+
+test('pressTurn: upcomingTurns previews only the active side', () => {
+  const s = initCombat(twoFastHeroes(), modeEnc('enemy.tank'), { ruleset: modeRules, combatMode: 'pressTurn', seed: 1 })
+  const preview = upcomingTurns(s, 6)
+  assert.ok(preview.length > 0)
+  assert.ok(preview.every(i => s.actors[i].kind === 'party'))
+  // classic still interleaves both sides
+  const c = initCombat(twoFastHeroes(), modeEnc('enemy.tank'), { ruleset: modeRules, combatMode: 'classic', seed: 1 })
+  assert.ok(upcomingTurns(c, 6).some(i => c.actors[i].kind === 'enemy'))
+})
+
+test('press modes: enemy AI overweights weakness-hitting abilities', () => {
+  const rules = {
+    ...makeDefaultRuleset(),
+    races: [{ id: 'race.human', name: 'Human', attrModifiers: {}, resistances: { fire: -0.5 } }],
+    enemies: [{ id: 'enemy.pyro', name: 'Pyro', hp: 300, attack: 6, defense: 0, speed: 1, xp: 1, gold: { min: 0, max: 0 },
+      abilities: [
+        { weight: 1, effects: [{ t: 'damage', dmgType: 'fire', amount: 5, canCrit: false }], target: 'enemy' },
+        { weight: 1, effects: [{ t: 'damage', dmgType: 'ice', amount: 5, canCrit: false }], target: 'enemy' },
+      ] }],
+  } as unknown as Ruleset
+  const enc = { tableId: 't', tableName: 't', goldReward: 0, xpReward: 0,
+    enemies: [{ defId: 'enemy.pyro', name: 'Pyro', hp: 300, maxHp: 300, attack: 6, defense: 0, speed: 99, xp: 1, gold: 0 }] } as ResolvedEncounter
+  const hero0 = heroWith({}, { might: 10, agility: 1, endurance: 10 })
+  const run = (mode: 'classic' | 'pressTurn') => {
+    const s = initCombat([hero0], enc, { ruleset: rules, combatMode: mode, seed: 1 })
+    assert.equal(s.phase, 'enemy_turn')
+    // rand 0.6: classic total=2 → pick 1.2 lands on ice; press total=4 (fire ×3) → pick 2.4 lands on fire
+    return resolveEnemyTurn(s, rules, () => 0.6)
+  }
+  assert.ok(!run('classic').events.some(e => e.kind === 'weak'))
+  assert.ok(run('pressTurn').events.some(e => e.kind === 'weak'))
+})
+
 console.log(`\n${passed} passed`)
