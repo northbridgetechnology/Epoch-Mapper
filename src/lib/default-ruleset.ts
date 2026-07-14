@@ -1256,7 +1256,7 @@ export const DEFAULT_ENEMIES: EnemyDef[] = [
     resistances: { physical: 0.25, fire: -0.5, ice: -0.5 },
     loot: 'loot.weak_demon',
     abilities: [
-      { weight: 1, effects: [{ t: 'damage', dmgType: 'physical', amount: '1d4', canCrit: false }], target: 'enemy' },
+      { weight: 1, name: 'Corrosive Touch', effects: [{ t: 'damage', dmgType: 'physical', amount: '1d4', canCrit: false }], target: 'enemy' },
     ],
   },
   {
@@ -1266,8 +1266,8 @@ export const DEFAULT_ENEMIES: EnemyDef[] = [
     resistances: { dark: 0.5 },
     loot: 'loot.fairy_drop',
     abilities: [
-      { weight: 2, effects: [{ t: 'damage', dmgType: 'physical', amount: '1d6', canCrit: true }], target: 'enemy' },
-      { weight: 1, effects: [{ t: 'heal', amount: '1d6+2' }], target: 'ally' },
+      { weight: 2, name: 'Needle Shot', effects: [{ t: 'damage', dmgType: 'physical', amount: '1d6', canCrit: true }], target: 'enemy' },
+      { weight: 1, name: 'Dia', effects: [{ t: 'heal', amount: '1d6+2' }], target: 'ally' },
     ],
   },
   {
@@ -1276,7 +1276,7 @@ export const DEFAULT_ENEMIES: EnemyDef[] = [
     hp: 40, attack: 14, defense: 6, speed: 9, xp: 20, gold: { min: 5, max: 18 },
     loot: 'loot.weak_demon',
     abilities: [
-      { weight: 3, effects: [{ t: 'damage', dmgType: 'physical', amount: '1d8+2', canCrit: true }], target: 'enemy' },
+      { weight: 3, name: 'Piggyback Crush', effects: [{ t: 'damage', dmgType: 'physical', amount: '1d8+2', canCrit: true }], target: 'enemy' },
     ],
   },
   {
@@ -1286,8 +1286,8 @@ export const DEFAULT_ENEMIES: EnemyDef[] = [
     resistances: { dark: 0.5, holy: -0.5 },
     loot: 'loot.undead_drop',
     abilities: [
-      { weight: 2, effects: [{ t: 'damage', dmgType: 'dark', amount: '1d6', canCrit: false }], target: 'enemy' },
-      { weight: 1, effects: [{ t: 'status', status: 'status.bound', chance: 0.5 }], target: 'enemy' },
+      { weight: 2, name: 'Grudge Bolt', effects: [{ t: 'damage', dmgType: 'dark', amount: '1d6', canCrit: false }], target: 'enemy' },
+      { weight: 1, name: 'Binding Curse', effects: [{ t: 'status', status: 'status.bound', chance: 0.5 }], target: 'enemy' },
     ],
   },
   {
@@ -1297,8 +1297,8 @@ export const DEFAULT_ENEMIES: EnemyDef[] = [
     resistances: { ice: 1.0, fire: -0.75 },
     loot: 'loot.fairy_drop',
     abilities: [
-      { weight: 3, effects: [{ t: 'damage', dmgType: 'ice', amount: '1d8+3', canCrit: true }], target: 'enemy' },
-      { weight: 1, effects: [{ t: 'status', status: 'status.frozen', chance: 0.35 }], target: 'enemy' },
+      { weight: 3, name: 'Bufu', effects: [{ t: 'damage', dmgType: 'ice', amount: '1d8+3', canCrit: true }], target: 'enemy' },
+      { weight: 1, name: 'Cold Snap', effects: [{ t: 'status', status: 'status.frozen', chance: 0.35 }], target: 'enemy' },
     ],
   },
   // ── Tier 2: Cave / Dungeon ────────────────────────────────────────────────────
@@ -1309,8 +1309,8 @@ export const DEFAULT_ENEMIES: EnemyDef[] = [
     resistances: { fire: 1.0, ice: -0.75 },
     loot: 'loot.fairy_drop',
     abilities: [
-      { weight: 3, effects: [{ t: 'damage', dmgType: 'fire', amount: '2d6+3', canCrit: true }], target: 'enemy' },
-      { weight: 1, effects: [{ t: 'status', status: 'status.burned', chance: 0.40 }], target: 'enemy' },
+      { weight: 3, name: 'Agi', effects: [{ t: 'damage', dmgType: 'fire', amount: '2d6+3', canCrit: true }], target: 'enemy' },
+      { weight: 1, name: 'Fire Dance', effects: [{ t: 'status', status: 'status.burned', chance: 0.40 }], target: 'enemy' },
     ],
   },
   {
@@ -1320,9 +1320,9 @@ export const DEFAULT_ENEMIES: EnemyDef[] = [
     resistances: { dark: 0.5, holy: -0.5 },
     loot: 'loot.night_drop',
     abilities: [
-      { weight: 2, effects: [{ t: 'damage', dmgType: 'dark', amount: '1d8+4', canCrit: false }], target: 'enemy' },
-      { weight: 2, effects: [{ t: 'status', status: 'status.charmed', chance: 0.55 }], target: 'enemy' },
-      { weight: 1, effects: [{ t: 'heal', amount: '1d8+4' }], target: 'ally' },
+      { weight: 2, name: 'Dark Kiss', effects: [{ t: 'damage', dmgType: 'dark', amount: '1d8+4', canCrit: false }], target: 'enemy' },
+      { weight: 2, name: 'Marin Karin', effects: [{ t: 'status', status: 'status.charmed', chance: 0.55 }], target: 'enemy' },
+      { weight: 1, name: 'Dia', effects: [{ t: 'heal', amount: '1d8+4' }], target: 'ally' },
     ],
   },
   {
@@ -1332,8 +1332,8 @@ export const DEFAULT_ENEMIES: EnemyDef[] = [
     resistances: { dark: 0.5, fire: 0.25, holy: -0.5 },
     loot: 'loot.night_drop',
     abilities: [
-      { weight: 2, effects: [{ t: 'damage', dmgType: 'fire', amount: '2d6+4', canCrit: true }], target: 'enemy' },
-      { weight: 2, effects: [{ t: 'damage', dmgType: 'dark', amount: '2d6+4', canCrit: true }], target: 'enemy' },
+      { weight: 2, name: 'Hellfire', effects: [{ t: 'damage', dmgType: 'fire', amount: '2d6+4', canCrit: true }], target: 'enemy' },
+      { weight: 2, name: 'Dark Blast', effects: [{ t: 'damage', dmgType: 'dark', amount: '2d6+4', canCrit: true }], target: 'enemy' },
     ],
   },
   {
@@ -1343,8 +1343,8 @@ export const DEFAULT_ENEMIES: EnemyDef[] = [
     resistances: { dark: 0.25 },
     loot: 'loot.beast_drop',
     abilities: [
-      { weight: 3, effects: [{ t: 'damage', dmgType: 'physical', amount: '2d8+4', canCrit: true }], target: 'enemy' },
-      { weight: 1, effects: [{ t: 'damage', dmgType: 'physical', amount: '3d6+6', canCrit: false }], target: 'allEnemies' },
+      { weight: 3, name: 'Gore', effects: [{ t: 'damage', dmgType: 'physical', amount: '2d8+4', canCrit: true }], target: 'enemy' },
+      { weight: 1, name: 'Wild Stampede', effects: [{ t: 'damage', dmgType: 'physical', amount: '3d6+6', canCrit: false }], target: 'allEnemies' },
     ],
   },
   {
@@ -1354,9 +1354,9 @@ export const DEFAULT_ENEMIES: EnemyDef[] = [
     resistances: { ice: 0.5, fire: -0.25 },
     loot: 'loot.divine_drop',
     abilities: [
-      { weight: 2, effects: [{ t: 'damage', dmgType: 'ice', amount: '2d6+4', canCrit: true }], target: 'enemy' },
-      { weight: 1, effects: [{ t: 'status', status: 'status.frozen', chance: 0.30 }], target: 'enemy' },
-      { weight: 1, effects: [{ t: 'heal', amount: '2d6+3' }], target: 'allAllies' },
+      { weight: 2, name: 'Bufu', effects: [{ t: 'damage', dmgType: 'ice', amount: '2d6+4', canCrit: true }], target: 'enemy' },
+      { weight: 1, name: 'Chilling Mist', effects: [{ t: 'status', status: 'status.frozen', chance: 0.30 }], target: 'enemy' },
+      { weight: 1, name: 'Healing Rain', effects: [{ t: 'heal', amount: '2d6+3' }], target: 'allAllies' },
     ],
   },
   {
@@ -1366,8 +1366,8 @@ export const DEFAULT_ENEMIES: EnemyDef[] = [
     resistances: { physical: 0.25, dark: 0.5, poison: 1.0, holy: -0.75, fire: -0.25 },
     loot: 'loot.undead_drop',
     abilities: [
-      { weight: 3, effects: [{ t: 'damage', dmgType: 'physical', amount: '2d6+3', canCrit: false }], target: 'enemy' },
-      { weight: 1, effects: [{ t: 'status', status: 'status.poisoned', chance: 0.40 }], target: 'enemy' },
+      { weight: 3, name: 'Rotting Bite', effects: [{ t: 'damage', dmgType: 'physical', amount: '2d6+3', canCrit: false }], target: 'enemy' },
+      { weight: 1, name: 'Infectious Claw', effects: [{ t: 'status', status: 'status.poisoned', chance: 0.40 }], target: 'enemy' },
     ],
   },
   {
@@ -1377,8 +1377,8 @@ export const DEFAULT_ENEMIES: EnemyDef[] = [
     resistances: { physical: 0.5, dark: 0.5, holy: -0.75, poison: 1.0 },
     loot: 'loot.undead_drop',
     abilities: [
-      { weight: 2, effects: [{ t: 'damage', dmgType: 'dark', amount: '1d8+3', canCrit: false }], target: 'enemy' },
-      { weight: 1, effects: [{ t: 'damage', dmgType: 'dark', amount: '2d6+2', canCrit: false }], target: 'allEnemies' },
+      { weight: 2, name: 'Life Drain', effects: [{ t: 'damage', dmgType: 'dark', amount: '1d8+3', canCrit: false }], target: 'enemy' },
+      { weight: 1, name: 'Terror Wail', effects: [{ t: 'damage', dmgType: 'dark', amount: '2d6+2', canCrit: false }], target: 'allEnemies' },
     ],
   },
   {
@@ -1388,8 +1388,8 @@ export const DEFAULT_ENEMIES: EnemyDef[] = [
     resistances: { fire: 0.5 },
     loot: 'loot.mid_demon',
     abilities: [
-      { weight: 3, effects: [{ t: 'damage', dmgType: 'physical', amount: '2d8+6', canCrit: true }], target: 'enemy' },
-      { weight: 1, effects: [{ t: 'damage', dmgType: 'fire', amount: '2d8+4', canCrit: false }], target: 'allEnemies' },
+      { weight: 3, name: 'Iron Club', effects: [{ t: 'damage', dmgType: 'physical', amount: '2d8+6', canCrit: true }], target: 'enemy' },
+      { weight: 1, name: 'Fire Breath', effects: [{ t: 'damage', dmgType: 'fire', amount: '2d8+4', canCrit: false }], target: 'allEnemies' },
     ],
   },
   {
@@ -1398,8 +1398,8 @@ export const DEFAULT_ENEMIES: EnemyDef[] = [
     hp: 100, attack: 24, defense: 12, speed: 6, xp: 55, gold: { min: 10, max: 40 },
     loot: 'loot.mid_demon',
     abilities: [
-      { weight: 4, effects: [{ t: 'damage', dmgType: 'physical', amount: '3d6+8', canCrit: true }], target: 'enemy' },
-      { weight: 1, effects: [{ t: 'damage', dmgType: 'physical', amount: '2d8+6', canCrit: false }], target: 'allEnemies' },
+      { weight: 4, name: 'Crushing Blow', effects: [{ t: 'damage', dmgType: 'physical', amount: '3d6+8', canCrit: true }], target: 'enemy' },
+      { weight: 1, name: 'Rampage', effects: [{ t: 'damage', dmgType: 'physical', amount: '2d8+6', canCrit: false }], target: 'allEnemies' },
     ],
   },
   // ── Tier 3: Deep Dungeon ──────────────────────────────────────────────────────
@@ -1410,7 +1410,7 @@ export const DEFAULT_ENEMIES: EnemyDef[] = [
     resistances: { physical: 0.25, dark: 0.5, poison: 1.0, holy: -0.5, ice: -0.25 },
     loot: 'loot.undead_drop',
     abilities: [
-      { weight: 3, effects: [{ t: 'damage', dmgType: 'physical', amount: '2d8+5', canCrit: true }], target: 'enemy' },
+      { weight: 3, name: 'Rusted Blade', effects: [{ t: 'damage', dmgType: 'physical', amount: '2d8+5', canCrit: true }], target: 'enemy' },
     ],
   },
   {
@@ -1420,9 +1420,9 @@ export const DEFAULT_ENEMIES: EnemyDef[] = [
     resistances: { dark: 0.75, fire: 0.25, holy: -0.75 },
     loot: 'loot.night_drop',
     abilities: [
-      { weight: 2, effects: [{ t: 'damage', dmgType: 'dark', amount: '2d8+6', canCrit: false }], target: 'enemy' },
-      { weight: 2, effects: [{ t: 'status', status: 'status.charmed', chance: 0.65 }], target: 'enemy' },
-      { weight: 1, effects: [{ t: 'status', status: 'status.asleep', chance: 0.50 }], target: 'enemy' },
+      { weight: 2, name: 'Soul Drain', effects: [{ t: 'damage', dmgType: 'dark', amount: '2d8+6', canCrit: false }], target: 'enemy' },
+      { weight: 2, name: 'Temptation', effects: [{ t: 'status', status: 'status.charmed', chance: 0.65 }], target: 'enemy' },
+      { weight: 1, name: 'Dormina', effects: [{ t: 'status', status: 'status.asleep', chance: 0.50 }], target: 'enemy' },
     ],
   },
   {
@@ -1432,9 +1432,9 @@ export const DEFAULT_ENEMIES: EnemyDef[] = [
     resistances: { dark: 0.75, holy: -0.75 },
     loot: 'loot.night_drop',
     abilities: [
-      { weight: 2, effects: [{ t: 'damage', dmgType: 'dark', amount: '2d8+5', canCrit: true }], target: 'enemy' },
-      { weight: 2, effects: [{ t: 'status', status: 'status.panicked', chance: 0.60 }], target: 'enemy' },
-      { weight: 1, effects: [{ t: 'damage', dmgType: 'dark', amount: '2d6+4', canCrit: false }], target: 'allEnemies' },
+      { weight: 2, name: 'Night Terror', effects: [{ t: 'damage', dmgType: 'dark', amount: '2d8+5', canCrit: true }], target: 'enemy' },
+      { weight: 2, name: 'Pulinpa', effects: [{ t: 'status', status: 'status.panicked', chance: 0.60 }], target: 'enemy' },
+      { weight: 1, name: 'Nightmare Wave', effects: [{ t: 'damage', dmgType: 'dark', amount: '2d6+4', canCrit: false }], target: 'allEnemies' },
     ],
   },
   {
@@ -1444,9 +1444,9 @@ export const DEFAULT_ENEMIES: EnemyDef[] = [
     resistances: { poison: 1.0, lightning: -0.25 },
     loot: 'loot.beast_drop',
     abilities: [
-      { weight: 3, effects: [{ t: 'damage', dmgType: 'poison', amount: '2d8+6', canCrit: true }], target: 'enemy' },
-      { weight: 2, effects: [{ t: 'status', status: 'status.poisoned', chance: 0.65 }], target: 'enemy' },
-      { weight: 1, effects: [{ t: 'damage', dmgType: 'poison', amount: '2d6+4', canCrit: false }], target: 'allEnemies' },
+      { weight: 3, name: 'Venom Strike', effects: [{ t: 'damage', dmgType: 'poison', amount: '2d8+6', canCrit: true }], target: 'enemy' },
+      { weight: 2, name: 'Toxic Spit', effects: [{ t: 'status', status: 'status.poisoned', chance: 0.65 }], target: 'enemy' },
+      { weight: 1, name: 'Poison Breath', effects: [{ t: 'damage', dmgType: 'poison', amount: '2d6+4', canCrit: false }], target: 'allEnemies' },
     ],
   },
   {
@@ -1456,9 +1456,9 @@ export const DEFAULT_ENEMIES: EnemyDef[] = [
     resistances: { holy: 1.0, dark: -0.75, fire: 0.25 },
     loot: 'loot.divine_drop',
     abilities: [
-      { weight: 2, effects: [{ t: 'damage', dmgType: 'holy', amount: '2d8+6', canCrit: true }], target: 'enemy' },
-      { weight: 1, effects: [{ t: 'damage', dmgType: 'holy', amount: '2d6+4', canCrit: false }], target: 'allEnemies' },
-      { weight: 1, effects: [{ t: 'heal', amount: '2d8+6' }], target: 'allAllies' },
+      { weight: 2, name: 'Hama Strike', effects: [{ t: 'damage', dmgType: 'holy', amount: '2d8+6', canCrit: true }], target: 'enemy' },
+      { weight: 1, name: 'Divine Light', effects: [{ t: 'damage', dmgType: 'holy', amount: '2d6+4', canCrit: false }], target: 'allEnemies' },
+      { weight: 1, name: 'Media', effects: [{ t: 'heal', amount: '2d8+6' }], target: 'allAllies' },
     ],
   },
   {
@@ -1468,8 +1468,8 @@ export const DEFAULT_ENEMIES: EnemyDef[] = [
     resistances: { physical: 0.25, fire: -0.25 },
     loot: 'loot.beast_drop',
     abilities: [
-      { weight: 3, effects: [{ t: 'damage', dmgType: 'physical', amount: '3d6+8', canCrit: true }], target: 'enemy' },
-      { weight: 1, effects: [{ t: 'damage', dmgType: 'physical', amount: '2d8+6', canCrit: false }], target: 'allEnemies' },
+      { weight: 3, name: 'Savage Claw', effects: [{ t: 'damage', dmgType: 'physical', amount: '3d6+8', canCrit: true }], target: 'enemy' },
+      { weight: 1, name: 'Moonlit Frenzy', effects: [{ t: 'damage', dmgType: 'physical', amount: '2d8+6', canCrit: false }], target: 'allEnemies' },
     ],
   },
   {
@@ -1479,10 +1479,10 @@ export const DEFAULT_ENEMIES: EnemyDef[] = [
     resistances: { dark: 0.75, poison: 1.0, holy: -0.75, fire: 0.25 },
     loot: 'loot.strong_demon',
     abilities: [
-      { weight: 2, effects: [{ t: 'damage', dmgType: 'dark', amount: '3d8+8', canCrit: true }], target: 'enemy' },
-      { weight: 2, effects: [{ t: 'damage', dmgType: 'dark', amount: '2d8+6', canCrit: false }], target: 'allEnemies' },
-      { weight: 1, effects: [{ t: 'status', status: 'status.bound', chance: 0.55 }], target: 'allEnemies' },
-      { weight: 1, effects: [{ t: 'heal', amount: '3d8+10' }], target: 'ally' },
+      { weight: 2, name: 'Mudo Bolt', effects: [{ t: 'damage', dmgType: 'dark', amount: '3d8+8', canCrit: true }], target: 'enemy' },
+      { weight: 2, name: 'Death Wave', effects: [{ t: 'damage', dmgType: 'dark', amount: '2d8+6', canCrit: false }], target: 'allEnemies' },
+      { weight: 1, name: 'Grasping Bones', effects: [{ t: 'status', status: 'status.bound', chance: 0.55 }], target: 'allEnemies' },
+      { weight: 1, name: 'Dark Mending', effects: [{ t: 'heal', amount: '3d8+10' }], target: 'ally' },
     ],
   },
   // ── Boss Tier ─────────────────────────────────────────────────────────────────
@@ -1494,9 +1494,9 @@ export const DEFAULT_ENEMIES: EnemyDef[] = [
     size: 2,
     loot: 'loot.boss_drop',
     abilities: [
-      { weight: 3, effects: [{ t: 'damage', dmgType: 'physical', amount: '4d6+10', canCrit: true }], target: 'enemy' },
-      { weight: 1, effects: [{ t: 'damage', dmgType: 'physical', amount: '3d8+8', canCrit: false }], target: 'allEnemies' },
-      { weight: 1, effects: [{ t: 'heal', amount: '2d10+8' }], target: 'ally' },
+      { weight: 3, name: 'Smash', effects: [{ t: 'damage', dmgType: 'physical', amount: '4d6+10', canCrit: true }], target: 'enemy' },
+      { weight: 1, name: 'Cave-In Swing', effects: [{ t: 'damage', dmgType: 'physical', amount: '3d8+8', canCrit: false }], target: 'allEnemies' },
+      { weight: 1, name: 'Regenerate', effects: [{ t: 'heal', amount: '2d10+8' }], target: 'ally' },
     ],
   },
   {
@@ -1507,10 +1507,10 @@ export const DEFAULT_ENEMIES: EnemyDef[] = [
     size: 2,
     loot: 'loot.boss_drop',
     abilities: [
-      { weight: 2, effects: [{ t: 'damage', dmgType: 'fire', amount: '3d8+8', canCrit: true }], target: 'enemy' },
-      { weight: 2, effects: [{ t: 'damage', dmgType: 'dark', amount: '3d8+8', canCrit: true }], target: 'enemy' },
-      { weight: 1, effects: [{ t: 'damage', dmgType: 'lightning', amount: '3d6+6', canCrit: false }], target: 'allEnemies' },
-      { weight: 1, effects: [{ t: 'status', status: 'status.charmed', chance: 0.50 }], target: 'allEnemies' },
+      { weight: 2, name: 'Agilao', effects: [{ t: 'damage', dmgType: 'fire', amount: '3d8+8', canCrit: true }], target: 'enemy' },
+      { weight: 2, name: 'Maeiha', effects: [{ t: 'damage', dmgType: 'dark', amount: '3d8+8', canCrit: true }], target: 'enemy' },
+      { weight: 1, name: 'Storm of Chaos', effects: [{ t: 'damage', dmgType: 'lightning', amount: '3d6+6', canCrit: false }], target: 'allEnemies' },
+      { weight: 1, name: 'Sabbath Call', effects: [{ t: 'status', status: 'status.charmed', chance: 0.50 }], target: 'allEnemies' },
     ],
   },
   {
@@ -1521,9 +1521,9 @@ export const DEFAULT_ENEMIES: EnemyDef[] = [
     size: 2,
     loot: 'loot.boss_drop',
     abilities: [
-      { weight: 3, effects: [{ t: 'damage', dmgType: 'physical', amount: '5d6+12', canCrit: true }], target: 'enemy' },
-      { weight: 1, effects: [{ t: 'damage', dmgType: 'physical', amount: '4d8+10', canCrit: false }], target: 'allEnemies' },
-      { weight: 1, effects: [{ t: 'status', status: 'status.bound', chance: 0.60 }], target: 'enemy' },
+      { weight: 3, name: 'Labrys Cleave', effects: [{ t: 'damage', dmgType: 'physical', amount: '5d6+12', canCrit: true }], target: 'enemy' },
+      { weight: 1, name: 'Earthshaker', effects: [{ t: 'damage', dmgType: 'physical', amount: '4d8+10', canCrit: false }], target: 'allEnemies' },
+      { weight: 1, name: 'Chains of the Maze', effects: [{ t: 'status', status: 'status.bound', chance: 0.60 }], target: 'enemy' },
     ],
   },
   {
@@ -1534,9 +1534,9 @@ export const DEFAULT_ENEMIES: EnemyDef[] = [
     size: 2,
     loot: 'loot.boss_drop',
     abilities: [
-      { weight: 2, effects: [{ t: 'damage', dmgType: 'poison', amount: '3d8+8', canCrit: true }], target: 'enemy' },
-      { weight: 2, effects: [{ t: 'status', status: 'status.frozen', chance: 0.55 }], target: 'allEnemies' },
-      { weight: 1, effects: [{ t: 'status', status: 'status.panicked', chance: 0.60 }], target: 'allEnemies' },
+      { weight: 2, name: 'Serpent Venom', effects: [{ t: 'damage', dmgType: 'poison', amount: '3d8+8', canCrit: true }], target: 'enemy' },
+      { weight: 2, name: 'Petrifying Gaze', effects: [{ t: 'status', status: 'status.frozen', chance: 0.55 }], target: 'allEnemies' },
+      { weight: 1, name: 'Dread Gaze', effects: [{ t: 'status', status: 'status.panicked', chance: 0.60 }], target: 'allEnemies' },
     ],
   },
   // ── Final Fantasy bestiary — Tier 1 ───────────────────────────────────────────
@@ -1546,8 +1546,8 @@ export const DEFAULT_ENEMIES: EnemyDef[] = [
     hp: 28, attack: 9, defense: 3, speed: 6, xp: 12, gold: { min: 3, max: 10 },
     loot: 'loot.weak_demon',
     abilities: [
-      { weight: 3, effects: [{ t: 'damage', dmgType: 'physical', amount: '1d6+1', canCrit: true }], target: 'enemy' },
-      { weight: 1, effects: [{ t: 'damage', dmgType: 'physical', amount: '2d4+2', canCrit: false }], target: 'enemy' },
+      { weight: 3, name: 'Rusty Knife', effects: [{ t: 'damage', dmgType: 'physical', amount: '1d6+1', canCrit: true }], target: 'enemy' },
+      { weight: 1, name: 'Goblin Punch', effects: [{ t: 'damage', dmgType: 'physical', amount: '2d4+2', canCrit: false }], target: 'enemy' },
     ],
   },
   {
@@ -1557,8 +1557,8 @@ export const DEFAULT_ENEMIES: EnemyDef[] = [
     resistances: { ice: 0.5, lightning: -0.5 },
     loot: 'loot.beast_drop',
     abilities: [
-      { weight: 3, effects: [{ t: 'damage', dmgType: 'physical', amount: '1d8+2', canCrit: true }], target: 'enemy' },
-      { weight: 1, effects: [{ t: 'status', status: 'status.poisoned', chance: 0.4 }], target: 'enemy' },
+      { weight: 3, name: 'Trident Thrust', effects: [{ t: 'damage', dmgType: 'physical', amount: '1d8+2', canCrit: true }], target: 'enemy' },
+      { weight: 1, name: 'Foul Water', effects: [{ t: 'status', status: 'status.poisoned', chance: 0.4 }], target: 'enemy' },
     ],
   },
   {
@@ -1568,8 +1568,8 @@ export const DEFAULT_ENEMIES: EnemyDef[] = [
     resistances: { fire: 1.0, ice: -0.75 },
     loot: 'loot.weak_demon',
     abilities: [
-      { weight: 3, effects: [{ t: 'damage', dmgType: 'fire', amount: '1d8+3', canCrit: false }], target: 'enemy' },
-      { weight: 6, when: { selfHpBelow: 0.35 },
+      { weight: 3, name: 'Fireball', effects: [{ t: 'damage', dmgType: 'fire', amount: '1d8+3', canCrit: false }], target: 'enemy' },
+      { weight: 6, name: 'Self-Destruct', when: { selfHpBelow: 0.35 },
         effects: [{ t: 'damage', dmgType: 'fire', amount: '4d6+6', canCrit: false }], target: 'allEnemies' },
     ],
   },
@@ -1581,8 +1581,8 @@ export const DEFAULT_ENEMIES: EnemyDef[] = [
     resistances: { physical: 0.5 },
     loot: 'loot.beast_drop',
     abilities: [
-      { weight: 2, effects: [{ t: 'damage', dmgType: 'physical', amount: 30, canCrit: false }], target: 'enemy' },
-      { weight: 3, effects: [{ t: 'damage', dmgType: 'physical', amount: '1d4', canCrit: false }], target: 'enemy' },
+      { weight: 2, name: '1000 Needles', effects: [{ t: 'damage', dmgType: 'physical', amount: 30, canCrit: false }], target: 'enemy' },
+      { weight: 3, name: 'Needle Flick', effects: [{ t: 'damage', dmgType: 'physical', amount: '1d4', canCrit: false }], target: 'enemy' },
     ],
   },
   {
@@ -1592,8 +1592,8 @@ export const DEFAULT_ENEMIES: EnemyDef[] = [
     resistances: { lightning: 0.5 },
     loot: 'loot.beast_drop',
     abilities: [
-      { weight: 3, effects: [{ t: 'damage', dmgType: 'physical', amount: '2d6+3', canCrit: true }], target: 'enemy' },
-      { weight: 2, effects: [
+      { weight: 3, name: 'Pounce', effects: [{ t: 'damage', dmgType: 'physical', amount: '2d6+3', canCrit: true }], target: 'enemy' },
+      { weight: 2, name: 'Blaster', effects: [
         { t: 'damage', dmgType: 'lightning', amount: '1d8+3', canCrit: false },
         { t: 'status', status: 'status.shocked', chance: 0.6 },
       ], target: 'enemy' },
@@ -1606,9 +1606,9 @@ export const DEFAULT_ENEMIES: EnemyDef[] = [
     resistances: { poison: 1.0, fire: -0.5 },
     loot: 'loot.beast_drop',
     abilities: [
-      { weight: 3, effects: [{ t: 'damage', dmgType: 'physical', amount: '2d6+4', canCrit: false }], target: 'enemy' },
-      { weight: 2, effects: [{ t: 'status', status: 'status.poisoned', chance: 0.55 }], target: 'enemy' },
-      { weight: 1, effects: [{ t: 'status', status: 'status.asleep', chance: 0.45 }], target: 'enemy' },
+      { weight: 3, name: 'Tendril Lash', effects: [{ t: 'damage', dmgType: 'physical', amount: '2d6+4', canCrit: false }], target: 'enemy' },
+      { weight: 2, name: 'Poison Spores', effects: [{ t: 'status', status: 'status.poisoned', chance: 0.55 }], target: 'enemy' },
+      { weight: 1, name: 'Sleep Spores', effects: [{ t: 'status', status: 'status.asleep', chance: 0.45 }], target: 'enemy' },
     ],
   },
   {
@@ -1617,8 +1617,8 @@ export const DEFAULT_ENEMIES: EnemyDef[] = [
     hp: 80, attack: 19, defense: 8, speed: 13, xp: 46, gold: { min: 8, max: 28 },
     loot: 'loot.beast_drop',
     abilities: [
-      { weight: 3, effects: [{ t: 'damage', dmgType: 'physical', amount: '2d8+3', canCrit: true }], target: 'enemy' },
-      { weight: 1, effects: [{ t: 'damage', dmgType: 'physical', amount: '1d8+3', canCrit: false }], target: 'allEnemies' },
+      { weight: 3, name: 'Dive Bomb', effects: [{ t: 'damage', dmgType: 'physical', amount: '2d8+3', canCrit: true }], target: 'enemy' },
+      { weight: 1, name: 'Wing Buffet', effects: [{ t: 'damage', dmgType: 'physical', amount: '1d8+3', canCrit: false }], target: 'allEnemies' },
     ],
   },
   // ── Final Fantasy bestiary — Tier 3 ───────────────────────────────────────────
@@ -1630,8 +1630,8 @@ export const DEFAULT_ENEMIES: EnemyDef[] = [
     size: 2,
     loot: 'loot.strong_demon',
     abilities: [
-      { weight: 2, effects: [{ t: 'damage', dmgType: 'poison', amount: '2d8+6', canCrit: false }], target: 'enemy' },
-      { weight: 2, effects: [
+      { weight: 2, name: 'Flailing Tentacles', effects: [{ t: 'damage', dmgType: 'poison', amount: '2d8+6', canCrit: false }], target: 'enemy' },
+      { weight: 2, name: 'Bad Breath', effects: [
         { t: 'status', status: 'status.poisoned', chance: 0.6 },
         { t: 'status', status: 'status.silenced', chance: 0.4 },
         { t: 'status', status: 'status.panicked', chance: 0.4 },
@@ -1646,8 +1646,8 @@ export const DEFAULT_ENEMIES: EnemyDef[] = [
     targeting: 'weakest',
     loot: 'loot.strong_demon',
     abilities: [
-      { weight: 3, effects: [{ t: 'damage', dmgType: 'physical', amount: '5d6+10', canCrit: true }], target: 'enemy' },
-      { weight: 1, effects: [{ t: 'damage', dmgType: 'dark', amount: '3d8+6', canCrit: false }], target: 'enemy' },
+      { weight: 3, name: "Chef's Knife", effects: [{ t: 'damage', dmgType: 'physical', amount: '5d6+10', canCrit: true }], target: 'enemy' },
+      { weight: 1, name: "Everyone's Grudge", effects: [{ t: 'damage', dmgType: 'dark', amount: '3d8+6', canCrit: false }], target: 'enemy' },
     ],
   },
   {
@@ -1657,9 +1657,9 @@ export const DEFAULT_ENEMIES: EnemyDef[] = [
     resistances: { dark: 0.5, holy: -0.5 },
     loot: 'loot.night_drop',
     abilities: [
-      { weight: 2, effects: [{ t: 'damage', dmgType: 'dark', amount: '2d8+5', canCrit: false }], target: 'enemy' },
-      { weight: 2, effects: [{ t: 'status', status: 'status.panicked', chance: 0.55 }], target: 'enemy' },
-      { weight: 1, effects: [{ t: 'status', status: 'status.sukunda', chance: 0.6 }], target: 'allEnemies' },
+      { weight: 2, name: 'Doom Gaze', effects: [{ t: 'damage', dmgType: 'dark', amount: '2d8+5', canCrit: false }], target: 'enemy' },
+      { weight: 2, name: 'Dread Gaze', effects: [{ t: 'status', status: 'status.panicked', chance: 0.55 }], target: 'enemy' },
+      { weight: 1, name: 'Unsettling Aura', effects: [{ t: 'status', status: 'status.sukunda', chance: 0.6 }], target: 'allEnemies' },
     ],
   },
   {
@@ -1670,8 +1670,8 @@ export const DEFAULT_ENEMIES: EnemyDef[] = [
     size: 2,
     loot: 'loot.strong_demon',
     abilities: [
-      { weight: 3, effects: [{ t: 'damage', dmgType: 'physical', amount: '3d8+8', canCrit: true }], target: 'enemy' },
-      { weight: 1, effects: [{ t: 'damage', dmgType: 'physical', amount: '2d8+8', canCrit: false }], target: 'allEnemies' },
+      { weight: 3, name: 'Grand Sword', effects: [{ t: 'damage', dmgType: 'physical', amount: '3d8+8', canCrit: true }], target: 'enemy' },
+      { weight: 1, name: 'Wide Slash', effects: [{ t: 'damage', dmgType: 'physical', amount: '2d8+8', canCrit: false }], target: 'allEnemies' },
     ],
   },
   {
@@ -1681,9 +1681,9 @@ export const DEFAULT_ENEMIES: EnemyDef[] = [
     resistances: { fire: 0.5, ice: 0.5 },
     loot: 'loot.strong_demon',
     abilities: [
-      { weight: 2, effects: [{ t: 'damage', dmgType: 'fire', amount: '2d8+6', canCrit: false }], target: 'allEnemies' },
-      { weight: 2, effects: [{ t: 'damage', dmgType: 'ice', amount: '2d8+6', canCrit: false }], target: 'allEnemies' },
-      { weight: 2, effects: [{ t: 'damage', dmgType: 'physical', amount: '3d6+8', canCrit: true }], target: 'enemy' },
+      { weight: 2, name: 'Blaze Breath', effects: [{ t: 'damage', dmgType: 'fire', amount: '2d8+6', canCrit: false }], target: 'allEnemies' },
+      { weight: 2, name: 'Frost Breath', effects: [{ t: 'damage', dmgType: 'ice', amount: '2d8+6', canCrit: false }], target: 'allEnemies' },
+      { weight: 2, name: 'Lion Claw', effects: [{ t: 'damage', dmgType: 'physical', amount: '3d6+8', canCrit: true }], target: 'enemy' },
     ],
   },
   {
@@ -1694,8 +1694,8 @@ export const DEFAULT_ENEMIES: EnemyDef[] = [
     size: 2,
     loot: 'loot.beast_drop',
     abilities: [
-      { weight: 3, effects: [{ t: 'damage', dmgType: 'physical', amount: '3d6+8', canCrit: false }], target: 'enemy' },
-      { weight: 1, effects: [{ t: 'status', status: 'status.rakukaja' }], target: 'ally' },
+      { weight: 3, name: 'Headbutt', effects: [{ t: 'damage', dmgType: 'physical', amount: '3d6+8', canCrit: false }], target: 'enemy' },
+      { weight: 1, name: 'Shell Guard', effects: [{ t: 'status', status: 'status.rakukaja' }], target: 'ally' },
     ],
   },
   // ── Final Fantasy bestiary — Boss Tier ────────────────────────────────────────
@@ -1707,10 +1707,10 @@ export const DEFAULT_ENEMIES: EnemyDef[] = [
     size: 2,
     loot: 'loot.boss_drop',
     abilities: [
-      { weight: 3, effects: [{ t: 'damage', dmgType: 'physical', amount: '5d6+12', canCrit: true }], target: 'enemy' },
-      { weight: 1, effects: [{ t: 'damage', dmgType: 'physical', amount: '3d8+8', canCrit: false }], target: 'allEnemies' },
-      { weight: 3, when: { roundAtLeast: 3 },
-        effects: [{ t: 'damage', dmgType: 'physical', amount: '4d8+8', canCrit: false }], target: 'allEnemies' },
+      { weight: 3, name: 'Heave', effects: [{ t: 'damage', dmgType: 'physical', amount: '5d6+12', canCrit: true }], target: 'enemy' },
+      { weight: 1, name: 'Trample', effects: [{ t: 'damage', dmgType: 'physical', amount: '3d8+8', canCrit: false }], target: 'allEnemies' },
+      // References the database spell — buff Meteor once, Behemoth follows.
+      { weight: 3, spell: 'spell.meteor', when: { roundAtLeast: 3 } },
     ],
   },
   {
@@ -1721,8 +1721,8 @@ export const DEFAULT_ENEMIES: EnemyDef[] = [
     size: 2,
     loot: 'loot.boss_drop',
     abilities: [
-      { weight: 3, effects: [{ t: 'damage', dmgType: 'physical', amount: '4d8+10', canCrit: true }], target: 'enemy' },
-      { weight: 2, effects: [
+      { weight: 3, name: 'Undead Claw', effects: [{ t: 'damage', dmgType: 'physical', amount: '4d8+10', canCrit: true }], target: 'enemy' },
+      { weight: 2, name: 'Miasma Breath', effects: [
         { t: 'damage', dmgType: 'poison', amount: '3d6+6', canCrit: false },
         { t: 'status', status: 'status.poisoned', chance: 0.5 },
       ], target: 'allEnemies' },
@@ -1736,9 +1736,9 @@ export const DEFAULT_ENEMIES: EnemyDef[] = [
     size: 2,
     loot: 'loot.boss_drop',
     abilities: [
-      { weight: 3, effects: [{ t: 'damage', dmgType: 'fire', amount: '5d8+10', canCrit: false }], target: 'allEnemies' },
-      { weight: 2, effects: [{ t: 'damage', dmgType: 'physical', amount: '6d6+12', canCrit: true }], target: 'enemy' },
-      { weight: 1, effects: [
+      { weight: 3, name: 'Wave Cannon', effects: [{ t: 'damage', dmgType: 'fire', amount: '5d8+10', canCrit: false }], target: 'allEnemies' },
+      { weight: 2, name: 'Beam Blade', effects: [{ t: 'damage', dmgType: 'physical', amount: '6d6+12', canCrit: true }], target: 'enemy' },
+      { weight: 1, name: 'Rocket Punch', effects: [
         { t: 'damage', dmgType: 'physical', amount: '3d6+6', canCrit: false },
         { t: 'status', status: 'status.panicked', chance: 0.5 },
       ], target: 'enemy' },

@@ -506,8 +506,10 @@ const ABILITY_TARGETS = [
   { value: 'self',       label: 'Self' },
 ] as const
 
-/** Structured editor for an enemy's weighted ability kit (weight + share
- *  readout, target, boss-phase gates, and the shared effect builder). */
+/** Structured editor for an enemy's weighted ability kit. Each ability draws
+ *  its substance from one source — a database spell, a database skill, or
+ *  custom inline effects — plus weight (with share readout), an optional
+ *  target override, boss-phase gates, and a battle-log name. */
 function EnemyAbilitiesEditor({ abilities, ruleset, onChange }: {
   abilities: EnemyAbility[]; ruleset: Ruleset; onChange: (a: EnemyAbility[]) => void
 }) {
@@ -524,16 +526,28 @@ function EnemyAbilitiesEditor({ abilities, ruleset, onChange }: {
     weight: 3, target: 'enemy',
     effects: [{ t: 'damage', dmgType: 'physical', amount: '1d6+2', canCrit: true }],
   }])
+  const setSource = (idx: number, src: 'spell' | 'skill' | 'custom') => {
+    const ab = abilities[idx]
+    if (src === 'spell') update(idx, { spell: ab.spell ?? ruleset.spells[0]?.id, skill: undefined, effects: undefined, target: undefined })
+    else if (src === 'skill') update(idx, { skill: ab.skill ?? (ruleset.skills ?? [])[0]?.id, spell: undefined, effects: undefined, target: undefined })
+    else update(idx, {
+      spell: undefined, skill: undefined, target: ab.target ?? 'enemy',
+      effects: ab.effects?.length ? ab.effects : [{ t: 'damage', dmgType: 'physical', amount: '1d6+2', canCrit: true }],
+    })
+  }
 
   return (
     <div className="space-y-2">
       {abilities.map((ab, i) => {
         const share = totalWeight > 0 ? Math.round(((ab.weight || 0) / totalWeight) * 100) : 0
         const hpPct = ab.when?.selfHpBelow !== undefined ? Math.round(ab.when.selfHpBelow * 100) : undefined
+        const source: 'spell' | 'skill' | 'custom' = ab.spell ? 'spell' : ab.skill ? 'skill' : 'custom'
+        const refDef = ab.spell ? ruleset.spells.find(sp => sp.id === ab.spell)
+          : ab.skill ? (ruleset.skills ?? []).find(sk => sk.id === ab.skill) : undefined
         return (
           <div key={i} className="rounded-lg border border-white/10 bg-zinc-900/60 p-2.5 space-y-2">
             <div className="flex items-center gap-2">
-              <span className="text-xs font-semibold text-white/70">Ability {i + 1}</span>
+              <span className="text-xs font-semibold text-white/70">{ab.name || refDef?.name || `Ability ${i + 1}`}</span>
               <span className="text-[10px] text-white/35">
                 ≈{share}% of turns{ab.when ? ' (once its gate opens)' : ''}
               </span>
@@ -543,21 +557,58 @@ function EnemyAbilitiesEditor({ abilities, ruleset, onChange }: {
               </button>
             </div>
             <div className="flex items-center gap-3 text-xs">
+              <label className="flex items-center gap-1.5 flex-1">
+                <span className="text-white/50">Name</span>
+                <input type="text" value={ab.name ?? ''}
+                  placeholder={refDef ? refDef.name : 'an ability'}
+                  onChange={e => update(i, { name: e.target.value || undefined })}
+                  className="flex-1 px-1.5 py-1 rounded bg-zinc-800 border border-white/10 text-white/90 focus:outline-none focus:border-amber-500/50" />
+              </label>
               <label className="flex items-center gap-1.5">
                 <span className="text-white/50">Weight</span>
                 <input type="number" min={1} value={ab.weight}
                   onChange={e => update(i, { weight: Math.max(1, e.target.valueAsNumber || 1) })}
                   className="w-14 px-1.5 py-1 rounded bg-zinc-800 border border-white/10 text-white/90 focus:outline-none focus:border-amber-500/50" />
               </label>
+            </div>
+            <div className="flex items-center gap-3 text-xs">
+              <label className="flex items-center gap-1.5">
+                <span className="text-white/50">Source</span>
+                <select value={source} onChange={e => setSource(i, e.target.value as 'spell' | 'skill' | 'custom')}
+                  className="px-1.5 py-1 rounded bg-zinc-800 border border-white/10 text-white/90 focus:outline-none">
+                  <option value="custom">Custom effects</option>
+                  <option value="spell">Spell (database)</option>
+                  <option value="skill">Skill (database)</option>
+                </select>
+              </label>
+              {source === 'spell' && (
+                <select value={ab.spell ?? ''} onChange={e => update(i, { spell: e.target.value })}
+                  className="flex-1 px-1.5 py-1 rounded bg-zinc-800 border border-white/10 text-white/90 focus:outline-none">
+                  {ruleset.spells.map(sp => <option key={sp.id} value={sp.id}>{sp.icon} {sp.name}</option>)}
+                </select>
+              )}
+              {source === 'skill' && (
+                <select value={ab.skill ?? ''} onChange={e => update(i, { skill: e.target.value })}
+                  className="flex-1 px-1.5 py-1 rounded bg-zinc-800 border border-white/10 text-white/90 focus:outline-none">
+                  {(ruleset.skills ?? []).map(sk => <option key={sk.id} value={sk.id}>{sk.icon} {sk.name}</option>)}
+                </select>
+              )}
               <label className="flex items-center gap-1.5 flex-1">
                 <span className="text-white/50">Target</span>
-                <select value={ab.target}
-                  onChange={e => update(i, { target: e.target.value as EnemyAbility['target'] })}
+                <select value={ab.target ?? ''}
+                  onChange={e => update(i, { target: (e.target.value || undefined) as EnemyAbility['target'] })}
                   className="flex-1 px-1.5 py-1 rounded bg-zinc-800 border border-white/10 text-white/90 focus:outline-none">
+                  {source !== 'custom' && <option value="">Default (from {source})</option>}
                   {ABILITY_TARGETS.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
                 </select>
               </label>
             </div>
+            {refDef && (
+              <div className="text-[10px] text-white/35 px-0.5">
+                {refDef.icon} {refDef.name}{refDef.description ? ` — ${refDef.description}` : ''} · edits to the
+                {source === 'spell' ? ' spell' : ' skill'} apply everywhere it is used.
+              </div>
+            )}
             <div className="flex items-center gap-3 text-xs">
               <label className="flex items-center gap-1.5">
                 <span className="text-white/50">Only below own HP %</span>
@@ -574,8 +625,10 @@ function EnemyAbilitiesEditor({ abilities, ruleset, onChange }: {
                   className="w-14 px-1.5 py-1 rounded bg-zinc-800 border border-white/10 text-white/90 focus:outline-none focus:border-amber-500/50" />
               </label>
             </div>
-            <EffectBuilder effects={ab.effects} ruleset={ruleset}
-              onChange={effects => update(i, { effects })} />
+            {source === 'custom' && (
+              <EffectBuilder effects={ab.effects ?? []} ruleset={ruleset}
+                onChange={effects => update(i, { effects })} />
+            )}
           </div>
         )
       })}

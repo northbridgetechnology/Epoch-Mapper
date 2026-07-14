@@ -3,7 +3,7 @@
  * No DOM, no React. All mutations return new state objects.
  */
 
-import type { Character, ActiveStatus, CombatMode, CombatTuning, EnemyAbility, Effect, Formation, ItemInstance, Ruleset, SkillDef } from './engine-types'
+import type { Character, ActiveStatus, CombatMode, CombatTuning, EnemyAbility, Effect, Formation, ItemInstance, Ruleset, SkillDef, SpellTarget } from './engine-types'
 import { resolveLootTable } from './event-engine'
 import { deriveMaxHp, deriveMaxMp, xpToNextLevel } from './engine-types'
 import type { ResolvedEncounter } from './engine-types'
@@ -1082,6 +1082,35 @@ export function consumeCombatItems(inventory: ItemInstance[], state: CombatState
 
 // ── Enemy turn (auto) ─────────────────────────────────────────────────────────
 
+/** An EnemyAbility with its substance resolved from its source. */
+export interface ResolvedAbility {
+  name: string
+  verb: 'casts' | 'uses'
+  effects: Effect[]
+  target: SpellTarget
+}
+
+/** Resolve an ability's substance from its source, in order: database spell,
+ *  database skill, custom inline effects. Returns null when nothing usable
+ *  resolves (dangling ref, empty effects) — the AI then falls back to the
+ *  basic physical attack rather than wasting the turn. */
+export function resolveEnemyAbility(ab: EnemyAbility, ruleset: Ruleset): ResolvedAbility | null {
+  if (ab.spell) {
+    const def = ruleset.spells.find(sp => sp.id === ab.spell)
+    if (!def || def.effects.length === 0) return null
+    return { name: ab.name ?? def.name, verb: 'casts', effects: def.effects, target: ab.target ?? def.target }
+  }
+  if (ab.skill) {
+    const def = (ruleset.skills ?? []).find(sk => sk.id === ab.skill)
+    if (!def || def.effects.length === 0) return null
+    return { name: ab.name ?? def.name, verb: 'uses', effects: def.effects, target: ab.target ?? def.target }
+  }
+  if (ab.effects && ab.effects.length > 0) {
+    return { name: ab.name ?? 'an ability', verb: 'uses', effects: ab.effects, target: ab.target ?? 'enemy' }
+  }
+  return null
+}
+
 export function resolveEnemyTurn(
   state: CombatState,
   ruleset: Ruleset,
@@ -1099,29 +1128,35 @@ export function resolveEnemyTurn(
 
   // Try to use an enemy ability
   const enemyDef = enemy.defId ? ruleset.enemies.find(e => e.id === enemy.defId) : null
-  // Boss phases: abilities may be gated on the caster's HP or the round number
-  const abilities: EnemyAbility[] | undefined = enemyDef?.abilities?.filter(ab => {
-    if (!ab.when) return true
-    if (ab.when.selfHpBelow !== undefined && enemy.maxHp > 0 && enemy.hp / enemy.maxHp >= ab.when.selfHpBelow) return false
-    if (ab.when.roundAtLeast !== undefined && state.round < ab.when.roundAtLeast) return false
-    return true
-  })
+  // Boss phases: abilities may be gated on the caster's HP or the round number.
+  // Each usable ability is resolved to its substance (spell/skill/custom) —
+  // unresolvable ones drop out and the enemy falls back to a basic attack.
+  const abilities = (enemyDef?.abilities ?? [])
+    .filter(ab => {
+      if (!ab.when) return true
+      if (ab.when.selfHpBelow !== undefined && enemy.maxHp > 0 && enemy.hp / enemy.maxHp >= ab.when.selfHpBelow) return false
+      if (ab.when.roundAtLeast !== undefined && state.round < ab.when.roundAtLeast) return false
+      return true
+    })
+    .map(ab => ({ ab, res: resolveEnemyAbility(ab, ruleset) }))
+    .filter((x): x is { ab: EnemyAbility; res: ResolvedAbility } => x.res !== null)
 
   // Press modes: the AI hunts weaknesses — abilities whose damage element hits
   // a living member's weakness weigh ×3, since a weak hit earns the side a
   // bonus press / One More.
   const pressMode = state.mode === 'pressTurn' || state.mode === 'oneMore'
-  const hitsWeakness = (ab: EnemyAbility) => ab.effects.some(e =>
+  const hitsWeakness = (res: ResolvedAbility) => res.effects.some(e =>
     e.t === 'damage' && partyTargets.some(({ a }) => (a.resistances?.[e.dmgType] ?? 0) < 0))
-  const abilityWeight = (ab: EnemyAbility) => ab.weight * (pressMode && hitsWeakness(ab) ? 3 : 1)
+  const abilityWeight = (x: { ab: EnemyAbility; res: ResolvedAbility }) =>
+    x.ab.weight * (pressMode && hitsWeakness(x.res) ? 3 : 1)
 
-  if (abilities?.length) {
+  if (abilities.length) {
     const totalWeight = abilities.reduce((s, a) => s + abilityWeight(a), 0)
     let pick = rand() * totalWeight
-    let chosen = abilities[abilities.length - 1]
-    for (const ab of abilities) {
-      pick -= abilityWeight(ab)
-      if (pick <= 0) { chosen = ab; break }
+    let chosen = abilities[abilities.length - 1].res
+    for (const x of abilities) {
+      pick -= abilityWeight(x)
+      if (pick <= 0) { chosen = x.res; break }
     }
 
     // Resolve target list from the ability's target type (from enemy perspective):
@@ -1146,7 +1181,7 @@ export function resolveEnemyTurn(
         targetIdxs = [partyTargets[Math.floor(rand() * partyTargets.length)].i]
     }
 
-    const abilityEntry: CombatLogEntry = { text: `${enemy.name} uses an ability!`, kind: 'spell' }
+    const abilityEntry: CombatLogEntry = { text: `${enemy.name} ${chosen.verb} ${chosen.name}!`, kind: 'spell' }
     const aBoost = chosen.effects.some(e => e.t === 'damage') ? findBoost(enemy, ruleset, 'magical') : null
     const aBase = aBoost ? stripStatus(state.actors, state.turnIdx, aBoost.statusId) : state.actors
     const { actors: newActors, log: effectLog, events } = resolveCombatEffects(

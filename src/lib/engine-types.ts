@@ -243,10 +243,26 @@ export interface StatusEffectDef extends Definition {
   boostMult?: number
 }
 
+/** One entry in an enemy's weighted move kit. The move's substance comes from
+ *  exactly one source, checked in order: a database spell, a database skill,
+ *  or custom inline `effects`. References keep monsters and player classes
+ *  drawing from the same shared vocabulary — buff Bio once, every caster of
+ *  Bio moves with it. Enemies pay no MP/HP costs and ignore skill cooldowns;
+ *  `weight` and `when` gates control frequency instead. */
 export interface EnemyAbility {
   weight: number
-  effects: Effect[]
-  target: SpellTarget
+  /** Battle-log name ("uses Bad Breath!"). Defaults to the referenced
+   *  spell/skill's name, or "an ability" for unnamed custom moves. */
+  name?: string
+  /** Cast this database spell (name/target/effects come from the def). */
+  spell?: DefRef<SpellDef>
+  /** Use this database skill (name/target/effects come from the def). */
+  skill?: DefRef<SkillDef>
+  /** Custom inline effects — used when no spell/skill reference is set. */
+  effects?: Effect[]
+  /** Overrides the referenced def's target. Required for custom effects. */
+  target?: SpellTarget
+  /** @deprecated Never consumed by the AI — enemies don't track MP. */
   mpCost?: number
   /** Gate for boss phases: the ability is only usable when ALL hold.
    *  selfHpBelow is a fraction of max HP (0.5 = below half). */

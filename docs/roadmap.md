@@ -237,6 +237,9 @@ parked here, roughly by value:
   "wire or remove").
 
 ### Low — cleanup, polish, nice-to-haves
+- Enemy abilities referencing database spells/skills ignore MP/HP costs and
+  cooldowns — weights and `when` gates control frequency instead. Wire real
+  enemy resource pools only if a design ever needs them.
 - Dead fields with zero consumers: `EnemyAbility.mpCost` (the AI never
   checks or spends it — hidden from the bestiary ability editor until wired),
   `GameMeta.startingPartyId`, `GameMeta.rows`,

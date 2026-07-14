@@ -5,7 +5,8 @@
 
 import assert from 'node:assert/strict'
 import { duplicateEnemy, eliteEnemy } from '../src/lib/enemy-schema'
-import type { EnemyDef } from '../src/lib/engine-types'
+import { resolveEnemyAbility } from '../src/lib/combat-engine'
+import type { EnemyDef, Ruleset } from '../src/lib/engine-types'
 
 let passed = 0
 function test(name: string, fn: () => void) {
@@ -72,6 +73,41 @@ test('eliteEnemy: survives minimal defs (no gold/abilities/resistances)', () => 
   assert.equal(elite.hp, 2)         // 1 × 1.5 rounded, min 1
   assert.deepEqual(elite.gold, { min: 0, max: 0 })
   assert.equal(elite.abilities, undefined)
+})
+
+// ── Ability source resolution ────────────────────────────────────────────────
+
+const abilityRuleset = {
+  spells: [{ id: 'spell.bio', name: 'Bio', school: 'element', level: 4, mpCost: 9, target: 'enemy',
+    inCombat: true, outOfCombat: false, effects: [{ t: 'damage', dmgType: 'poison', amount: '2d8+4', canCrit: true }] }],
+  skills: [{ id: 'skill.shock', name: 'Shock', target: 'allEnemies',
+    effects: [{ t: 'damage', dmgType: 'physical', amount: '2d8+8', canCrit: false }] }],
+} as unknown as Ruleset
+
+test('resolveEnemyAbility: spell ref pulls name/verb/effects/target from the def', () => {
+  const res = resolveEnemyAbility({ weight: 1, spell: 'spell.bio' }, abilityRuleset)
+  assert.ok(res)
+  assert.equal(res!.name, 'Bio')
+  assert.equal(res!.verb, 'casts')
+  assert.equal(res!.target, 'enemy')
+  assert.deepEqual(res!.effects, abilityRuleset.spells[0].effects)
+})
+
+test('resolveEnemyAbility: skill ref resolves; explicit name and target override', () => {
+  const res = resolveEnemyAbility({ weight: 1, skill: 'skill.shock', name: 'Grand Slam', target: 'enemy' }, abilityRuleset)
+  assert.ok(res)
+  assert.equal(res!.name, 'Grand Slam')
+  assert.equal(res!.verb, 'uses')
+  assert.equal(res!.target, 'enemy')   // override beats the skill's allEnemies
+})
+
+test('resolveEnemyAbility: custom effects default name and target; empty sources are null', () => {
+  const custom = resolveEnemyAbility({ weight: 1, effects: [{ t: 'heal', amount: 5 }] }, abilityRuleset)
+  assert.equal(custom!.name, 'an ability')
+  assert.equal(custom!.target, 'enemy')
+  assert.equal(resolveEnemyAbility({ weight: 1, spell: 'spell.nope' }, abilityRuleset), null)   // dangling ref
+  assert.equal(resolveEnemyAbility({ weight: 1 }, abilityRuleset), null)                        // no source at all
+  assert.equal(resolveEnemyAbility({ weight: 1, effects: [] }, abilityRuleset), null)           // empty custom
 })
 
 console.log(`\n${passed} bestiary tests passed`)

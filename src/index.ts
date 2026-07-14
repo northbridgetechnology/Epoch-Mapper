@@ -224,11 +224,12 @@ export {
   resolvePlayerUseSkill,
   canUseSkill,
   resolveEnemyTurn,
+  resolveEnemyAbility,
   applyCombatOutcome,
   consumeCombatItems,
   upcomingTurns,
 } from './lib/combat-engine'
-export type { CombatActor, CombatEvent, CombatLogEntry, CombatPhase, CombatState, InitCombatOpts } from './lib/combat-engine'
+export type { CombatActor, CombatEvent, CombatLogEntry, CombatPhase, CombatState, InitCombatOpts, ResolvedAbility } from './lib/combat-engine'
 
 // Balance simulator (headless, uses the real combat engine)
 export { simulateEncounterTable, makeSimParty } from './lib/battle-sim'

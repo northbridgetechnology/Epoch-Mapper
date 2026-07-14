@@ -766,4 +766,32 @@ test("enemy 'allAllies' heal restores its whole side, not the heroes", () => {
   assert.equal(s.actors[bIdx].hp, 20)                               // 10 + 10
 })
 
+test('enemy ability log lines use the ability name — refs say casts, customs say uses', () => {
+  const rs = {
+    ...ruleset,
+    spells: [{ id: 'spell.bio', name: 'Bio', school: 'element', level: 4, mpCost: 9, target: 'enemy',
+      inCombat: true, outOfCombat: false, effects: [{ t: 'damage', dmgType: 'poison', amount: 5, canCrit: false }] }],
+    enemies: [
+      { id: 'enemy.caster', name: 'Caster', hp: 30, attack: 5, defense: 0, speed: 1, xp: 0, gold: { min: 0, max: 0 },
+        abilities: [{ weight: 1, spell: 'spell.bio' }] },
+      { id: 'enemy.brawler', name: 'Brawler', hp: 30, attack: 5, defense: 0, speed: 1, xp: 0, gold: { min: 0, max: 0 },
+        abilities: [{ weight: 1, name: 'Haymaker', target: 'enemy', effects: [{ t: 'damage', dmgType: 'physical', amount: 5, canCrit: false }] }] },
+    ],
+  } as unknown as Ruleset
+  const enc: ResolvedEncounter = {
+    tableId: 'enc.t', tableName: 'T', goldReward: 0, xpReward: 0,
+    enemies: [
+      { defId: 'enemy.caster', name: 'Caster', hp: 30, maxHp: 30, attack: 5, defense: 0, speed: 2, xp: 0, gold: 0 },
+      { defId: 'enemy.brawler', name: 'Brawler', hp: 30, maxHp: 30, attack: 5, defense: 0, speed: 1, xp: 0, gold: 0 },
+    ],
+  }
+  const s0 = initCombat([hero], enc)
+  const casterIdx = s0.actors.findIndex(a => a.name === 'Caster')
+  const brawlerIdx = s0.actors.findIndex(a => a.name === 'Brawler')
+  const s1 = resolveEnemyTurn({ ...s0, turnIdx: casterIdx, phase: 'enemy_turn' }, rs, rng)
+  assert.ok(s1.log.some(e => e.text === 'Caster casts Bio!'), 'spell ref logs by name')
+  const s2 = resolveEnemyTurn({ ...s0, turnIdx: brawlerIdx, phase: 'enemy_turn' }, rs, rng)
+  assert.ok(s2.log.some(e => e.text === 'Brawler uses Haymaker!'), 'named custom logs by name')
+})
+
 console.log(`\n${passed} passed`)
