@@ -1,8 +1,10 @@
 # Engine roadmap — deferred feature specs
 
-Specs for features discussed and approved in direction but **not yet
-implemented**. Each is written to be buildable without re-deriving design
-decisions. Shipped features are documented in the code and in `docs/sprites.md`.
+Specs for features discussed and approved in direction. Deferred entries are
+written to be buildable without re-deriving design decisions; sections marked
+*(shipped)* record how the shipped shape differs from the original spec.
+Shipped features are otherwise documented in the code, the README's Game
+engine section, and `docs/sprites.md`.
 
 Current in-flight plan (implemented batch by batch):
 
@@ -21,10 +23,10 @@ Current in-flight plan (implemented batch by batch):
 
 Everything below is deferred beyond those batches.
 
-> **Follow-up to Batch G — FFT roster & bench.** Recruitment is flat (capped at
-> `partySize`). A full roster with an active-party selection + swap/formation UI
-> at camp/inn/save (SaveState.roster), plus battle-negotiation recruitment
-> (§2), is the deferred next step.
+> **Follow-up to Batch G — FFT roster & bench** *(shipped)*: `SaveState.reserve`
+> holds benched members and the Tab menu's Party screen benches/fields them with
+> front/back row control (the hero can never be benched; the field is never
+> emptied). Still deferred: battle-negotiation recruitment (§2).
 
 ---
 
@@ -103,28 +105,17 @@ upload a portrait (data-URI). Built-in ids travel in save state; uploads embed.
 
 ---
 
-## 1. Press-turn combat (SMT weakness economy)
+## 1. Press-turn combat (SMT weakness economy) *(shipped)*
 
-The signature SMT mechanic: exploiting weaknesses buys actions, wasting
-attacks loses them.
-
-- Each side starts its round with `N` turn icons (N = living combatants on
-  that side).
-- An action normally consumes one full icon.
-- Hitting a **weakness** (negative resistance) or landing a **crit** consumes
-  only half an icon (a full icon flips to a "blinking" half; a blinking icon
-  is consumed).
-- Hitting an **immunity** (resistance ≥ 1) consumes **two** icons; a miss
-  consumes two as well.
-- Data model: `CombatState.turnIcons: { side: 'party' | 'enemy'; full: number; half: number }`;
-  `advanceTurn()` decides consumption from the action's resolved outcome
-  (already surfaced via `CombatEvent.kind: 'weak' | 'resist' | 'miss' | 'crit'`).
-- UI: icon strip above the battle log (full = solid gem, blinking = pulsing
-  gem — reuse the SMT-style cues already rendered for weakness hits).
-- Tuning: `combatTuning.pressTurn: boolean` gates the whole system so classic
-  one-action-per-actor remains the default.
-- Enemy AI: enemies with a known player weakness (already expressed in
-  abilities) naturally benefit; no AI change needed for v1.
+Shipped in a fuller shape than this spec: `CombatMode = 'classic' | 'oneMore'
+| 'pressTurn'` is a **global Game Rule** (`GameMeta.combatMode`; the legacy
+per-map value is honored only when the global one is unset). 1-More grants a
+Persona-style bonus action on weakness/crit; full press-turn runs the icon
+economy (weakness/crit spends half an icon, a miss burns two), knockdown,
+**All-Out Attack** when every foe is downed, and free member select. Enemy AI
+overweights weakness-hitting abilities ×3 and hunts physically-weak members
+in press modes. Still open (tracked below): the blink-conversion animation
+flourish.
 
 ## 2. Negotiation & recruitment (SMT demon talk)
 
@@ -142,7 +133,8 @@ Talk as a battle command; enemies can join, pay, or turn hostile.
 - Joined enemies become party-owned `Character`s built from the EnemyDef
   stat block (the NpcDef→Character mirroring groundwork already exists);
   party size caps still apply — overflow goes to a roster (see below).
-- Roster: `SaveState.reserve: Character[]` — swap at save points / camp.
+- Roster: `SaveState.reserve` already exists and the Tab menu swaps
+  bench/field freely — joined overflow just lands in the reserve.
 - Checks resolve through the seeded combat RNG so battles stay replayable.
 
 ## 3. Surprise & ambush rounds
@@ -157,40 +149,36 @@ Talk as a battle command; enemies can join, pay, or turn hostile.
   inject a `roundModifier` consumed by `resolveEnemyTurn` / turn advance.
 - Safe rooms (`trick: safeRoom`) never ambush (already suppress encounters).
 
-## 4. Exploration status pressure
+## 4. Exploration status pressure *(shipped)*
 
-Statuses that tick while walking, not just in combat.
+Shipped as `StatusEffectDef.persistsExploring` + `exploreStepInterval`
+(`tickExplorationStatuses` in `src/lib/exploration.ts`, hooked into the
+movement pipeline alongside torch burn-down and trick tiles). Poison ticks
+every few steps and can knock a member out (feeding the game-over flow);
+Regeneration heals while walking; exploration ticks decrement `remaining` so
+statuses wear off on the move.
 
-- `StatusEffectDef.tickOutOfCombat?: boolean` — when true, `tickEffects`
-  apply every N steps (default 4; tunable `stepTickInterval`).
-- Poison walk: lose HP per interval. Exploration damage is now lethal and
-  triggers the game-over flow (see `applyExploreHarm`), so a step tick that
-  drops the last member wipes the party — decide whether poison should floor
-  at 1 HP out of combat or be allowed to kill.
-- Duration: exploration ticks also decrement `remaining` so a Blind that
-  would last 3 combat turns wears off after ~12 steps.
-- Implementation point: the movement pipeline in `DungeonMapper.handleMove`
-  (same hook as torch burn-down / trick tiles).
+## 5. Audio hooks *(superseded — music shipped, SFX remain)*
 
-## 5. Audio hooks
+Shipped bigger than this spec: a full **music subsystem** instead of bare
+refs — an `AudioTrackDef` database (uploads stored in IndexedDB and baked
+into the `.epochmap` on export; URLs streamed), gapless looping Web Audio
+playback, and a resolution hierarchy (per-encounter custom track → boss →
+generic battle → per-map `MapData.musicId` → `GameMeta.defaultMusicId`),
+with volume/mute in the in-game Config screen.
 
-The engine emits sound *references*; the consuming app decides how to play
-them (no audio assets in this package).
+Still deferred (the SFX half): a `{ t: 'playSound' }` effect for
+events/objects and an engine sound-event bus for built-in moments (door,
+lever, chest, hit, crit, level-up) — see the audio-niceties bullet below.
 
-- `GameMeta.music?: { title?: string; battle?: string; gameOver?: string }`
-- `MapData.music?: string` (per-floor track ref)
-- New effect: `{ t: 'playSound'; sound: string }` for events/objects.
-- Engine-side: a lightweight event bus — `onEngineSound(cb)` — fired for
-  built-in moments (door open, lever, chest, stairs, hit, crit, spell, level
-  up). Refs are plain strings; Epoch maps them to actual files.
-- Editor: text fields on map settings and game meta; no asset management.
+## 6. Step & time counters *(partially shipped)*
 
-## 6. Step & time counters
+Shipped: `SaveState.stepsTaken` — the global step counter, incremented per
+successful move, persisted in saves, and shown in the play HUD's Steps
+readout.
 
-World clocks driven by movement.
+Still deferred:
 
-- `SaveState.steps: number` — incremented per successful move (the torch
-  burn-down already counts steps per item; this is the global counter).
 - Auto-flags: `steps.total`, `steps.sinceRest` exposed to the condition
   system so events can gate on them (`{ c: 'flag', flag: 'steps.total', … }`
   extended with a numeric `gte` comparator).
@@ -199,6 +187,7 @@ World clocks driven by movement.
   (dark-map machinery already provides the fog ramp).
 - Timed doors/events: authors combine `steps.*` conditions with onFlag
   events — no new event machinery needed.
+- Journal display of steps walked / playtime (also in QoL below).
 
 ---
 
@@ -212,7 +201,7 @@ World clocks driven by movement.
   gating is revisited (press-turn work), extend `antiMagic` to enemy
   spell-like abilities (flag on `EnemyAbility`).
 
-## Known gaps & deferred work (scan of 2026-07-13)
+## Known gaps & deferred work (scan of 2026-07-13; verified against the code 2026-07-14)
 
 The three HIGH items from this scan are fixed (save-point policy detection,
 item/status stat-modifier editors, two-handed hand blocking). The rest is
@@ -243,8 +232,9 @@ parked here, roughly by value:
 - Dead fields with zero consumers: `EnemyAbility.mpCost` (the AI never
   checks or spends it — hidden from the bestiary ability editor until wired),
   `GameMeta.startingPartyId`, `GameMeta.rows`,
-  `RaceDef.traits` (could become racial perks), `SpellDef.level` (redundant
-  with the `learn` table). Wire or delete.
+  `RaceDef.traits` (could become racial perks). Wire or delete.
+  (`SpellDef.level` left this list — it's the learn-level fallback for
+  spell sorting.)
 - Audio niceties: victory fanfare / boss-intro stingers, music ducking during
   dialogue, a separate SFX bus with its own volume.
 - Spell-school depth: opposed schools, school-boost equipment
@@ -253,6 +243,15 @@ parked here, roughly by value:
 - QoL: a one-time "ruleset migrated" toast when `normalizeRuleset` heals a
   legacy draft; a level-up summary popup (stat gains + spells learned) instead
   of a name toast; Journal shows steps walked / playtime.
+- Exploration messages as an FF-style bottom-of-screen dialogue strip in the
+  play view (doors, chests, NPC barks) — the Tab menu already uses modal FF
+  alert windows via `notify()`; exploration still uses corner toasts by
+  design, but a period-authentic strip would complete the look.
+- Database editor QoL: bestiary list sorting/grouping (the shared
+  `SortedList` pattern used by spells/statuses/skills/items is a drop-in);
+  a Duplicate action on the other database lists (spells, items, skills) —
+  the bestiary's helper pattern generalizes trivially; custom multipliers for
+  **Make Elite** if the fixed ×1.5/×1.25/×2 preset feels limiting.
 - Skills follow-ups (from the FF seeding pass): **Jump-style windup** (charge
   this turn, auto-release a stored ×2 attack next turn, untargetable mid-air);
   **Steal/Mug** (new `steal` effect: chance-based mid-battle roll of the enemy
