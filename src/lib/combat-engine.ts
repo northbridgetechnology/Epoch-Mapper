@@ -1124,18 +1124,25 @@ export function resolveEnemyTurn(
       if (pick <= 0) { chosen = ab; break }
     }
 
-    // Resolve target list from the ability's target type (from enemy perspective)
+    // Resolve target list from the ability's target type (from enemy perspective):
+    // 'enemy' = a hero, 'ally' = the enemy's own side (heals/buffs).
+    const sideTargets = state.actors.map((a, i) => ({ a, i })).filter(({ a }) => a.kind === 'enemy' && a.alive)
     let targetIdxs: number[]
     switch (chosen.target) {
       case 'self':
         targetIdxs = [state.turnIdx]
         break
       case 'allEnemies': // enemy's "enemies" = party
-      case 'allAllies':  // enemy's "allies" = also party in simplified model
       case 'enemyRow':
         targetIdxs = partyTargets.map(t => t.i)
         break
-      default: // 'enemy', 'ally', 'none'
+      case 'ally': // most-wounded living ally on the enemy's own side
+        targetIdxs = [sideTargets.reduce((m, t) => (t.a.hp / Math.max(1, t.a.maxHp) < m.a.hp / Math.max(1, m.a.maxHp) ? t : m), sideTargets[0]).i]
+        break
+      case 'allAllies': // the enemy's whole side
+        targetIdxs = sideTargets.map(t => t.i)
+        break
+      default: // 'enemy', 'none'
         targetIdxs = [partyTargets[Math.floor(rand() * partyTargets.length)].i]
     }
 

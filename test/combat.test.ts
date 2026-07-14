@@ -723,4 +723,47 @@ test('Charged and Concentrated coexist but never double-dip one action', () => {
   assert.ok(me.statuses.some(st => st.def === 'status.concentrated'))          // magical boost untouched
 })
 
+// ── Enemy own-side targeting ─────────────────────────────────────────────────
+
+const medicRuleset = (target: 'ally' | 'allAllies') => ({
+  ...ruleset,
+  enemies: [{
+    id: 'enemy.medic', name: 'Medic', hp: 30, attack: 5, defense: 0, speed: 1, xp: 0, gold: { min: 0, max: 0 },
+    abilities: [{ weight: 1, target, effects: [{ t: 'heal', amount: 10 }] }],
+  }],
+}) as unknown as Ruleset
+
+const medicEncounter = (): ResolvedEncounter => ({
+  tableId: 'enc.medics', tableName: 'Medics', goldReward: 0, xpReward: 0,
+  enemies: [
+    { defId: 'enemy.medic', name: 'Medic A', hp: 30, maxHp: 30, attack: 5, defense: 0, speed: 2, xp: 0, gold: 0 },
+    { defId: 'enemy.medic', name: 'Medic B', hp: 10, maxHp: 30, attack: 5, defense: 0, speed: 1, xp: 0, gold: 0 },
+  ],
+})
+
+test("enemy 'ally' heal lands on its own most-wounded side, never the party", () => {
+  const rs = medicRuleset('ally')
+  const s0 = initCombat([{ ...hero, hp: 20 } as Character], medicEncounter())
+  const heroIdx = s0.actors.findIndex(a => a.kind === 'party')
+  const aIdx = s0.actors.findIndex(a => a.name === 'Medic A')
+  const bIdx = s0.actors.findIndex(a => a.name === 'Medic B')
+  const s = resolveEnemyTurn({ ...s0, turnIdx: aIdx, phase: 'enemy_turn' }, rs, rng)
+  assert.equal(s.actors[heroIdx].hp, s0.actors[heroIdx].hp)   // party untouched
+  assert.equal(s.actors[bIdx].hp, 20)                          // wounded medic healed 10 → 20
+  assert.equal(s.actors[aIdx].hp, 30)                          // healthy one skipped
+})
+
+test("enemy 'allAllies' heal restores its whole side, not the heroes", () => {
+  const rs = medicRuleset('allAllies')
+  const s0 = initCombat([{ ...hero, hp: 20 } as Character], medicEncounter())
+  const wounded = { ...s0, actors: s0.actors.map(a => a.name === 'Medic A' ? { ...a, hp: 15 } : a) }
+  const heroIdx = wounded.actors.findIndex(a => a.kind === 'party')
+  const aIdx = wounded.actors.findIndex(a => a.name === 'Medic A')
+  const bIdx = wounded.actors.findIndex(a => a.name === 'Medic B')
+  const s = resolveEnemyTurn({ ...wounded, turnIdx: aIdx, phase: 'enemy_turn' }, rs, rng)
+  assert.equal(s.actors[heroIdx].hp, wounded.actors[heroIdx].hp)   // party untouched
+  assert.equal(s.actors[aIdx].hp, 25)                               // 15 + 10
+  assert.equal(s.actors[bIdx].hp, 20)                               // 10 + 10
+})
+
 console.log(`\n${passed} passed`)

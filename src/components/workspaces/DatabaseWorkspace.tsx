@@ -1,10 +1,10 @@
 'use client'
 
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
-import { Plus, Trash2, Package, List, Skull, Swords, Sparkles, Zap, Store, Puzzle, ScrollText, Shield, Sword, Shirt, Music, BookOpen, Flame, Upload, Play, Square } from 'lucide-react'
+import { Plus, Trash2, Copy, Crown, Package, List, Skull, Swords, Sparkles, Zap, Store, Puzzle, ScrollText, Shield, Sword, Shirt, Music, BookOpen, Flame, Upload, Play, Square } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
-import type { ClassDef, ItemSlot, DamageType, WeaponTypeDef, ArmorTypeDef, AudioTrackDef, SpellSchoolDef, SkillDef, Effect, EnemyDef, EncounterTableDef, EventDef, ItemDef, LootTableDef, QuestDef, ShopDef, SpellDef, StatusEffectDef, Ruleset } from '@/lib/engine-types'
+import type { ClassDef, ItemSlot, DamageType, WeaponTypeDef, ArmorTypeDef, AudioTrackDef, SpellSchoolDef, SkillDef, Effect, EnemyAbility, EnemyDef, EncounterTableDef, EventDef, ItemDef, LootTableDef, QuestDef, ShopDef, SpellDef, StatusEffectDef, Ruleset } from '@/lib/engine-types'
 import { CLASS_SCHEMA, blankClass } from '@/lib/class-schema'
 import { WEAPON_TYPE_SCHEMA, ARMOR_TYPE_SCHEMA, DAMAGE_TYPE_OPTIONS, blankWeaponType, blankArmorType } from '@/lib/type-schema'
 import { blankAudioTrack } from '@/lib/music'
@@ -17,7 +17,7 @@ import { SimulatePanel } from '@/components/SimulatePanel'
 import { SchemaForm } from '../forms/SchemaForm'
 import { EffectBuilder } from '../forms/EffectBuilder'
 import { ITEM_SCHEMA, LOOT_TABLE_SCHEMA, blankItem, itemGroups, type ItemSort } from '@/lib/item-schema'
-import { ENEMY_SCHEMA, ENCOUNTER_TABLE_SCHEMA, blankEnemy } from '@/lib/enemy-schema'
+import { ENEMY_SCHEMA, ENCOUNTER_TABLE_SCHEMA, blankEnemy, duplicateEnemy, eliteEnemy } from '@/lib/enemy-schema'
 import { SPELL_SCHEMA, STATUS_SCHEMA, STATUS_KINDS, SPELL_SCHOOL_SCHEMA, blankSpell, blankStatusEffect, blankSpellSchool, sortSpells, sortStatuses, spellLearnLevel, type SpellSort, type StatusSort } from '@/lib/spell-schema'
 import { SHOP_SCHEMA, blankShop } from '@/lib/shop-schema'
 
@@ -330,12 +330,14 @@ function EnemyList({
   onSelect,
   onAdd,
   onDelete,
+  onDuplicate,
 }: {
   enemies: EnemyDef[]
   selectedId: string | null
   onSelect: (id: string) => void
   onAdd: () => void
   onDelete: (id: string) => void
+  onDuplicate: (id: string) => void
 }) {
   return (
     <div className="flex flex-col h-full min-h-0">
@@ -365,6 +367,10 @@ function EnemyList({
               <div className="text-sm truncate">{e.name}</div>
               <div className="text-xs text-white/35">{e.hp} HP · ATK {e.attack} · DEF {e.defense}</div>
             </div>
+            <button onClick={ev => { ev.stopPropagation(); onDuplicate(e.id) }} title="Duplicate"
+              className="opacity-0 group-hover:opacity-100 p-0.5 rounded text-white/30 hover:text-amber-300">
+              <Copy className="w-3 h-3" />
+            </button>
             <button onClick={ev => { ev.stopPropagation(); onDelete(e.id) }} className="opacity-0 group-hover:opacity-100 p-0.5 rounded text-white/30 hover:text-red-400">
               <Trash2 className="w-3 h-3" />
             </button>
@@ -377,7 +383,10 @@ function EnemyList({
 
 // ── Enemy editor ───────────────────────────────────────────────────────────────
 
-function EnemyEditor({ enemy, ruleset, onChange }: { enemy: EnemyDef; ruleset: Ruleset; onChange: (e: EnemyDef) => void }) {
+function EnemyEditor({ enemy, ruleset, onChange, onDuplicate, onMakeElite }: {
+  enemy: EnemyDef; ruleset: Ruleset; onChange: (e: EnemyDef) => void
+  onDuplicate: () => void; onMakeElite: () => void
+}) {
   const raw = enemy as unknown as Record<string, unknown>
 
   return (
@@ -387,6 +396,16 @@ function EnemyEditor({ enemy, ruleset, onChange }: { enemy: EnemyDef; ruleset: R
         <div>
           <div className="text-base font-bold text-white/90">{enemy.name}</div>
           <div className="text-xs text-white/40 font-mono">{enemy.id}</div>
+        </div>
+        <div className="ml-auto flex gap-1">
+          <button onClick={onDuplicate} title="Duplicate this enemy as a starting point for a variant"
+            className="flex items-center gap-1 px-2 py-1 rounded text-xs text-white/50 hover:text-white hover:bg-white/10 border border-white/10">
+            <Copy className="w-3 h-3" /> Duplicate
+          </button>
+          <button onClick={onMakeElite} title="Duplicate with the elite promotion: ×1.5 HP, ×1.25 ATK/DEF, ×2 XP and gold"
+            className="flex items-center gap-1 px-2 py-1 rounded text-xs text-amber-300/80 hover:text-amber-200 hover:bg-amber-500/10 border border-amber-500/25">
+            <Crown className="w-3 h-3" /> Make Elite
+          </button>
         </div>
       </div>
 
@@ -417,6 +436,153 @@ function EnemyEditor({ enemy, ruleset, onChange }: { enemy: EnemyDef; ruleset: R
           <span className="text-xs text-white/30">gold</span>
         </div>
       </div>
+
+      {/* Resistances */}
+      <div className="pt-2 border-t border-white/10">
+        <div className="text-xs font-medium text-white/50 uppercase tracking-wide mb-0.5">Resistances</div>
+        <div className="text-[10px] text-white/30 mb-2">
+          +100% = immune · negative = weakness. Press-turn battles reward hitting weaknesses.
+        </div>
+        <ResistancesEditor value={enemy.resistances} onChange={resistances => onChange({ ...enemy, resistances })} />
+      </div>
+
+      {/* Ability kit */}
+      <div className="pt-2 border-t border-white/10">
+        <div className="text-xs font-medium text-white/50 uppercase tracking-wide mb-0.5">Abilities</div>
+        <div className="text-[10px] text-white/30 mb-2">
+          Each turn one ability is picked by weight; with none defined the enemy uses its basic
+          physical attack. Gates hold an ability back until a boss phase (low HP / later rounds).
+        </div>
+        <EnemyAbilitiesEditor
+          abilities={enemy.abilities ?? []}
+          ruleset={ruleset}
+          onChange={abilities => onChange({ ...enemy, abilities: abilities.length > 0 ? abilities : undefined })}
+        />
+      </div>
+    </div>
+  )
+}
+
+/** Per-damage-type resistance sliders. Stored as fractions (1 = immune,
+ *  negative = weakness); zeroed entries are pruned from the def. */
+function ResistancesEditor({ value, onChange }: {
+  value?: Partial<Record<DamageType, number>>
+  onChange: (r: Partial<Record<DamageType, number>> | undefined) => void
+}) {
+  const set = (dt: DamageType, pct: number) => {
+    const frac = Math.round(pct) / 100
+    const next = { ...(value ?? {}) }
+    if (frac === 0) delete next[dt]
+    else next[dt] = frac
+    onChange(Object.keys(next).length > 0 ? next : undefined)
+  }
+  return (
+    <div className="space-y-1">
+      {DAMAGE_TYPE_OPTIONS.map(({ value: dt, label }) => {
+        const frac = value?.[dt as DamageType] ?? 0
+        return (
+          <div key={dt} className="flex items-center gap-2 text-xs">
+            <span className="w-16 text-white/60">{label}</span>
+            <input type="range" min={-100} max={100} step={5} value={frac * 100}
+              onChange={e => set(dt as DamageType, e.target.valueAsNumber)}
+              className="flex-1 accent-amber-500" />
+            <span className={cn('w-28 text-right font-mono',
+              frac > 0 ? 'text-emerald-300' : frac < 0 ? 'text-rose-300' : 'text-white/25')}>
+              {frac >= 1 ? 'immune' : frac > 0 ? `resists ${Math.round(frac * 100)}%` : frac < 0 ? `weak +${Math.round(-frac * 100)}%` : '—'}
+            </span>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+/** Enemy-perspective targets: the enemy's "enemy" is a hero. */
+const ABILITY_TARGETS = [
+  { value: 'enemy',      label: 'One hero' },
+  { value: 'allEnemies', label: 'All heroes' },
+  { value: 'ally',       label: 'Own ally (most wounded)' },
+  { value: 'allAllies',  label: 'All own allies' },
+  { value: 'self',       label: 'Self' },
+] as const
+
+/** Structured editor for an enemy's weighted ability kit (weight + share
+ *  readout, target, boss-phase gates, and the shared effect builder). */
+function EnemyAbilitiesEditor({ abilities, ruleset, onChange }: {
+  abilities: EnemyAbility[]; ruleset: Ruleset; onChange: (a: EnemyAbility[]) => void
+}) {
+  const totalWeight = abilities.reduce((sum, a) => sum + (a.weight || 0), 0)
+  const update = (idx: number, patch: Partial<EnemyAbility>) =>
+    onChange(abilities.map((a, i) => (i === idx ? { ...a, ...patch } : a)))
+  const setWhen = (idx: number, key: 'selfHpBelow' | 'roundAtLeast', v: number | undefined) => {
+    const when = { ...(abilities[idx].when ?? {}) }
+    if (v === undefined || Number.isNaN(v)) delete when[key]
+    else when[key] = v
+    update(idx, { when: Object.keys(when).length > 0 ? when : undefined })
+  }
+  const addAbility = () => onChange([...abilities, {
+    weight: 3, target: 'enemy',
+    effects: [{ t: 'damage', dmgType: 'physical', amount: '1d6+2', canCrit: true }],
+  }])
+
+  return (
+    <div className="space-y-2">
+      {abilities.map((ab, i) => {
+        const share = totalWeight > 0 ? Math.round(((ab.weight || 0) / totalWeight) * 100) : 0
+        const hpPct = ab.when?.selfHpBelow !== undefined ? Math.round(ab.when.selfHpBelow * 100) : undefined
+        return (
+          <div key={i} className="rounded-lg border border-white/10 bg-zinc-900/60 p-2.5 space-y-2">
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-semibold text-white/70">Ability {i + 1}</span>
+              <span className="text-[10px] text-white/35">
+                ≈{share}% of turns{ab.when ? ' (once its gate opens)' : ''}
+              </span>
+              <button onClick={() => onChange(abilities.filter((_, x) => x !== i))}
+                className="ml-auto p-0.5 rounded text-white/30 hover:text-red-400">
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            </div>
+            <div className="flex items-center gap-3 text-xs">
+              <label className="flex items-center gap-1.5">
+                <span className="text-white/50">Weight</span>
+                <input type="number" min={1} value={ab.weight}
+                  onChange={e => update(i, { weight: Math.max(1, e.target.valueAsNumber || 1) })}
+                  className="w-14 px-1.5 py-1 rounded bg-zinc-800 border border-white/10 text-white/90 focus:outline-none focus:border-amber-500/50" />
+              </label>
+              <label className="flex items-center gap-1.5 flex-1">
+                <span className="text-white/50">Target</span>
+                <select value={ab.target}
+                  onChange={e => update(i, { target: e.target.value as EnemyAbility['target'] })}
+                  className="flex-1 px-1.5 py-1 rounded bg-zinc-800 border border-white/10 text-white/90 focus:outline-none">
+                  {ABILITY_TARGETS.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+                </select>
+              </label>
+            </div>
+            <div className="flex items-center gap-3 text-xs">
+              <label className="flex items-center gap-1.5">
+                <span className="text-white/50">Only below own HP %</span>
+                <input type="number" min={1} max={99} placeholder="—"
+                  value={hpPct ?? ''}
+                  onChange={e => setWhen(i, 'selfHpBelow', Number.isNaN(e.target.valueAsNumber) ? undefined : Math.min(99, Math.max(1, e.target.valueAsNumber)) / 100)}
+                  className="w-14 px-1.5 py-1 rounded bg-zinc-800 border border-white/10 text-white/90 focus:outline-none focus:border-amber-500/50" />
+              </label>
+              <label className="flex items-center gap-1.5">
+                <span className="text-white/50">Only from round</span>
+                <input type="number" min={1} placeholder="—"
+                  value={ab.when?.roundAtLeast ?? ''}
+                  onChange={e => setWhen(i, 'roundAtLeast', Number.isNaN(e.target.valueAsNumber) ? undefined : Math.max(1, Math.round(e.target.valueAsNumber)))}
+                  className="w-14 px-1.5 py-1 rounded bg-zinc-800 border border-white/10 text-white/90 focus:outline-none focus:border-amber-500/50" />
+              </label>
+            </div>
+            <EffectBuilder effects={ab.effects} ruleset={ruleset}
+              onChange={effects => update(i, { effects })} />
+          </div>
+        )
+      })}
+      <button onClick={addAbility}
+        className="w-full flex items-center justify-center gap-1 px-2 py-1.5 rounded border border-dashed border-white/15 text-xs text-white/40 hover:text-amber-200 hover:border-amber-500/40">
+        <Plus className="w-3 h-3" /> Add ability
+      </button>
     </div>
   )
 }
@@ -1627,6 +1793,19 @@ export function DatabaseWorkspace({ ruleset, onRulesetChange }: DatabaseWorkspac
     if (selectedId === id) setSelectedId(next[0]?.id ?? null)
   }
 
+  /** Duplicate (or elite-promote) an enemy, inserting the copy right after
+   *  its source and selecting it for editing. */
+  function duplicateEnemyById(id: string, elite = false) {
+    const idx = ruleset.enemies.findIndex(e => e.id === id)
+    if (idx < 0) return
+    const ids = ruleset.enemies.map(e => e.id)
+    const copy = elite ? eliteEnemy(ruleset.enemies[idx], ids) : duplicateEnemy(ruleset.enemies[idx], ids)
+    const enemies = [...ruleset.enemies.slice(0, idx + 1), copy, ...ruleset.enemies.slice(idx + 1)]
+    onRulesetChange({ ...ruleset, enemies })
+    setSelectedId(copy.id)
+    setCategory('bestiary')
+  }
+
   // ── encounter tables ──
 
   const selectedEncTable = ruleset.encounterTables.find(t => t.id === selectedId) ?? null
@@ -1907,7 +2086,7 @@ export function DatabaseWorkspace({ ruleset, onRulesetChange }: DatabaseWorkspac
           <LootTableList tables={ruleset.lootTables} selectedId={selectedId} onSelect={setSelectedId} onAdd={addLootTable} onDelete={deleteLootTable} />
         )}
         {category === 'bestiary' && (
-          <EnemyList enemies={ruleset.enemies} selectedId={selectedId} onSelect={setSelectedId} onAdd={addEnemy} onDelete={deleteEnemy} />
+          <EnemyList enemies={ruleset.enemies} selectedId={selectedId} onSelect={setSelectedId} onAdd={addEnemy} onDelete={deleteEnemy} onDuplicate={duplicateEnemyById} />
         )}
         {category === 'encounters' && (
           <EncounterTableList tables={ruleset.encounterTables} selectedId={selectedId} onSelect={setSelectedId} onAdd={addEncounterTable} onDelete={deleteEncounterTable} />
@@ -1962,7 +2141,9 @@ export function DatabaseWorkspace({ ruleset, onRulesetChange }: DatabaseWorkspac
         ) : category === 'loot_tables' && selectedTable ? (
           <LootTableEditor table={selectedTable} ruleset={ruleset} onChange={updateLootTable} />
         ) : category === 'bestiary' && selectedEnemy ? (
-          <EnemyEditor enemy={selectedEnemy} ruleset={ruleset} onChange={updateEnemy} />
+          <EnemyEditor enemy={selectedEnemy} ruleset={ruleset} onChange={updateEnemy}
+            onDuplicate={() => duplicateEnemyById(selectedEnemy.id)}
+            onMakeElite={() => duplicateEnemyById(selectedEnemy.id, true)} />
         ) : category === 'encounters' && selectedEncTable ? (
           <EncounterTableEditor table={selectedEncTable} ruleset={ruleset} onChange={updateEncounterTable} />
         ) : category === 'spells' && selectedSpell ? (

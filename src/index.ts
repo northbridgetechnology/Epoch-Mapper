@@ -173,7 +173,7 @@ export { notify, setNotifySink } from './lib/notify'
 export type { NotifyKind, NotifySink } from './lib/notify'
 
 // Enemy + encounter-table schema helpers (Phase E3)
-export { ENEMY_SCHEMA, ENCOUNTER_TABLE_SCHEMA, blankEnemy, blankEncounterTable } from './lib/enemy-schema'
+export { ENEMY_SCHEMA, ENCOUNTER_TABLE_SCHEMA, blankEnemy, blankEncounterTable, duplicateEnemy, eliteEnemy } from './lib/enemy-schema'
 
 // NPC / global event / quest schema helpers
 export { NPC_SCHEMA, EVENT_SCHEMA, QUEST_SCHEMA, blankNpc, blankEventDef, blankQuest } from './lib/npc-schema'

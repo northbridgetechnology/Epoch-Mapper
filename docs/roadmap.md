@@ -237,7 +237,9 @@ parked here, roughly by value:
   "wire or remove").
 
 ### Low — cleanup, polish, nice-to-haves
-- Dead fields with zero consumers: `GameMeta.startingPartyId`, `GameMeta.rows`,
+- Dead fields with zero consumers: `EnemyAbility.mpCost` (the AI never
+  checks or spends it — hidden from the bestiary ability editor until wired),
+  `GameMeta.startingPartyId`, `GameMeta.rows`,
   `RaceDef.traits` (could become racial perks), `SpellDef.level` (redundant
   with the `learn` table). Wire or delete.
 - Audio niceties: victory fanfare / boss-intro stingers, music ducking during
