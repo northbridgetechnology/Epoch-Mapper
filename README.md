@@ -21,12 +21,11 @@ This repository is **both**:
 
 > **Status:** the map editor, the `.epochmap` codec, the custom-marker system,
 > and the Epoch integration are complete — and on top of that sits a full
-> **game engine**: a first-person renderer, turn-based combat, a content
-> database (classes/races/items/spells/enemies/shops/loot), events/quests/NPCs,
-> and exploration systems (light & darkness, trick tiles, wall switches,
-> inscriptions, camp/rest, save slots, traps & damage hazards, FOE patrols,
-> stairs between floors). See the **Game engine** section below,
-> [`docs/roadmap.md`](docs/roadmap.md) for deferred specs, and
+> **game engine**: a first-person renderer, turn-based combat in three battle
+> systems (classic / Persona-style 1-More / full SMT press-turn), a 15-table
+> content database with richly seeded defaults, character progression, music,
+> events/quests/NPCs, and deep exploration systems. See the **Game engine**
+> section below, [`docs/roadmap.md`](docs/roadmap.md) for deferred specs, and
 > [`docs/sprites.md`](docs/sprites.md) for the sprite system.
 
 ---
@@ -37,38 +36,144 @@ Beyond the map editor, Epoch Mapper ships a playable first-person engine. Build
 content in the **Database** and **Party** workspaces, place it on the grid with
 the **Cell Inspector**, then switch to **Play** to walk your dungeon.
 
-- **First-person renderer** — a pseudo-3D painter's view (Eye of the Beholder /
-  SMT style) with per-cell water/lava/void, ceiling/floor mortar grids, code-
-  authored pixel sprites for objects and creatures, and real 3D stairs that
-  descend into a pit or climb through a lit ceiling opening.
-- **Turn-based combat** — enemies stand on a 3×3 playfield, an FF-style command
-  bar (Attack / Spell / Item / Defend / Flee), front/back ranks, elemental
-  weaknesses & resistances, seeded RNG (deterministic, so the balance simulator
-  can replay it), boss ability phases, and loot drops.
-- **Content database** — classes, races, attributes, items (with equipment
-  modifiers, light sources, cursed & unidentified gear), spells (with level-up
-  learn tables), status effects, enemies, encounter/loot tables, shops.
-- **Story systems** — cell events (sequential, `onEnter`/`onInteract`/`onFlag`
-  reactive), a global event library, quests-as-flags with a lore journal, and
-  From-Software-style NPCs (the player listens; NPCs speak).
+### First-person exploration
+
+- **Pseudo-3D painter's renderer** (Eye of the Beholder / SMT style) with
+  per-cell water/lava/void, ceiling/floor mortar grids, code-authored pixel
+  sprites for objects and creatures (plus creator PNG uploads with two-frame
+  animation), and real 3D stairs that descend into a pit or climb through a lit
+  ceiling opening.
+- **Light & darkness** — dark maps collapse view distance to the party's light
+  radius; torches and lanterns shed light (with optional burn-down over steps),
+  and light spells help too.
+- **Trick tiles** — spinner, pit, silent teleport, anti-magic, darkness, safe
+  room. Plus wall switches & switch-sealed doors, wall inscriptions, locked &
+  keyed doors/chests, visible fixed encounters, and FOE-style patrols.
+- **Step counter & status pressure** — Poison keeps ticking every few steps
+  while exploring; Regeneration heals as you walk.
+- **Minimap fog by exploration** — cells appear only once actually seen via
+  line-of-sight from a walked cell.
+- **Camp/rest** with ambush risk, functional inns, save slots + save-point
+  policy (save anywhere, or only on save points), and a wipe/game-over flow
+  with gold penalty and respawn.
+
+### Turn-based combat
+
+- **Three battle systems**, a global Game Rule: **Classic** (one action per
+  actor), **1-More** (Persona — weakness/crit grants an extra action), and
+  **full SMT press-turn** (turn icons; weakness/crit spends half an icon, a
+  miss burns two, knockdown, **All-Out Attack** when every foe is downed, and
+  free member select).
+- **FF-style command bar** — Attack / Skill / Spell / Item / Defend / Flee —
+  over a 3×3 enemy playfield with front/back ranks on both sides.
+- **Skills** — martial actives costing % of max HP, MP, or a round cooldown,
+  gated by class learn tables, with a battle Skill submenu.
+- **Empower-next mechanics** — Charge!/Focus Aim (next physical ×2) and
+  Concentrate (next spell ×2). Boosts never stack and re-applying wastes the
+  action — the log says so.
+- **Elemental weaknesses & resistances** shape damage; status-effect modifiers
+  shape hit math; spell schools scale power off their key attribute.
+- **Charged equipment** — wands and staves can be zapped from the Item submenu
+  (N⚡), spending charges that persist to the gear after battle.
+- **Seeded, deterministic RNG** — same seed + same actions = same battle, which
+  powers the built-in **balance simulator** for encounter tuning.
+- Battle outcomes apply XP, level-ups, attribute growth, banked level points,
+  newly learned spells/skills, loot, and gold in one pure resolution step.
+
+### Enemies & bosses
+
+- **Weighted, named ability kits** — each ability draws its substance from a
+  **database spell**, a **database skill**, or custom inline effects, so
+  monsters and player classes share one vocabulary (buff Bio once, every
+  caster of Bio moves with it). The battle log speaks: "Malboro uses Bad
+  Breath!"
+- **Boss phases** — abilities can be gated behind HP thresholds ("below 35%
+  own HP") or round numbers ("from round 3"); Bombs detonate when cornered,
+  Behemoth starts calling Meteor.
+- **Targeting AI** — random or hunt-the-weakest; in press modes enemies
+  overweight weakness-hitting abilities and hunt physically-weak members.
+- **Bestiary editor** — structured ability cards (weight with a live "% of
+  turns" readout, enemy-perspective targets, phase gates, the shared effect
+  builder) and per-element resistance sliders. **Duplicate** and **Make
+  Elite** (×1.5 HP, ×1.25 ATK/DEF, ×2 rewards) turn any mob into a variant in
+  one click.
+- **Seeded bestiary** — 41 enemies across SMT-mythology and FF5–9 rosters
+  (Jack Frost to Cactuar, Tonberry, Malboro, Behemoth, and the superboss
+  Omega), each with a named kit, plus field/boss encounter tables.
+
+### Character progression
+
+- **Classes & races** with attribute modifiers, hit/spell dice, and
+  proficiencies; a point-buy **Character Builder** for the protagonist.
+- **FF-style equip restrictions** — weapon/armor **type tables** drive class
+  proficiency, scaling attribute, damage element, range, armor speed penalty,
+  and two-handed hand blocking.
+- **Hybrid leveling** — classes auto-grow attributes per level *and* bank
+  level points the player spends freely in the Tab menu (capped per
+  attribute); an XP curve **formula override** (safe mini-evaluator) tunes
+  pacing.
+- **Spell learning** by school + level, plus single-use **spell tomes**
+  (class school gates apply automatically); skills learn by class level.
+
+### Content database
+
+Fifteen tables, all with structured schema-driven editors (no raw JSON):
+items, weapon types, armor types, music, classes, loot tables, bestiary,
+encounter tables, spells, status effects, spell schools, skills, shops,
+events, and quests — with **sortable, collapsible grouped lists** (spells by
+school, statuses by kind, skills by class, items by kind/slot) built for
+hundreds of entries.
+
+Seeded defaults ship a playable baseline: **123 items** (iron→ebonsteel
+material tiers, enchanted element weapons that drop unidentified, cursed
+trap jewelry, artifacts, buff potions, thrown flasks, spell tomes, food, and
+vendor treasure), **~60 spells** (full elemental lines plus dark and holy
+damage schools, ailments, buffs, and the endgame quartet Holy / Flare /
+Meteor / Ultima), **32 skills** (class actives plus the Blue-Magic monster
+set: 1000 Needles, Bad Breath, Self-Destruct…), and loot tables that feed
+the identify/curse economy.
+
+### Music & audio
+
+A **Music database** — upload tracks (stored in IndexedDB, baked into the
+`.epochmap` on export) or stream by URL — with gapless looping Web Audio
+playback. Tracks resolve by hierarchy: per-encounter custom music → boss
+track → generic battle track → per-map track → game default. Volume and mute
+live in the in-game Config screen.
+
+### Story systems
+
+- **Cell events** (sequential chains, `onEnter`/`onInteract`/`onFlag`
+  reactive) plus a global event library; **quests-as-flags** with a lore
+  journal; From-Software-style **NPCs** (the player listens; NPCs speak) with
+  dialogue-driven recruitment into the party.
 - **Story & protagonist** — a paced **opening story** (slides with optional
-  splash art) on New Game, a player **Character Builder** (name, built-in or
-  uploaded portrait, pronoun, class/race, point-buy attributes) that creates the
-  **Main Character**, `{mc}`/pronoun text tokens resolved across all authored
-  text, and an optional protagonist-death-ends-game rule.
-- **Exploration systems** — light & darkness (torches/lanterns with optional
-  burn-down), trick tiles (spinner, pit, silent teleport, anti-magic, darkness,
-  safe room), wall switches & switch-sealed doors, wall inscriptions, camp/rest
-  with ambush risk, save slots + save points, a wipe/game-over flow, functional
-  inns, visible fixed encounters, and FOE-style patrols.
-- **Hazards** — traps spring their effects when stepped on, damage edges bite
-  every crossing, and event/boundary `damage`/`status`/`cure` effects resolve
-  out of combat (respecting race resistances; lethal, so a wipe rolls
-  game-over). See [`docs/roadmap.md`](docs/roadmap.md) for deferred combat specs.
-- **Generator** — "Randomly Generate & Populate" builds a two-level demo world
-  (main floor + a dark *Depths*) wiring every system, in one of three layout
-  styles: **Rooms** (BSP), **EotB** (dense thin-wall maze), or **SMT** (arterial
-  lattice). Every generated door provably leads somewhere.
+  splash art), the player-built **Main Character** (name, portrait, pronoun,
+  class/race, point-buy attributes), `{mc}`/pronoun text tokens resolved
+  across all authored text, and an optional protagonist-death-ends-game rule.
+
+### In-game menu (Tab)
+
+An authentic FF-style full-screen hub — Item / Magic / Equip / Status /
+Party / Journal / Camp / Save / Config — with complete keyboard control.
+Notifications inside the menu are **front-and-center FF alert windows** (no
+corner toasts). The Status screen is locked to player verbs while playing
+(attributes rise only through the point-spend panel; designers keep full
+god-mode editing in the workspaces), the hero can never be benched out of
+the party, and Config carries music volume/mute and the control reference.
+
+### Hazards
+
+Traps spring their effects when stepped on, damage edges bite every crossing,
+and event/boundary `damage`/`status`/`cure` effects resolve out of combat
+(respecting race resistances; lethal, so a wipe rolls game-over).
+
+### Generator
+
+"Randomly Generate & Populate" builds a two-level demo world (main floor + a
+dark *Depths*) wiring every system, in one of three layout styles: **Rooms**
+(BSP), **EotB** (dense thin-wall maze), or **SMT** (arterial lattice). Every
+generated door provably leads somewhere.
 
 ---
 
@@ -86,7 +191,7 @@ bun run dev          # standalone editor at http://localhost:3100
 | `dev`               | Run the standalone app (Next.js, port 3100)             |
 | `build`             | Production build of the standalone app                  |
 | `build:lib`         | Bundle the npm package into `dist/` (JS + `.d.ts`)      |
-| `test`              | Full suite: codec, markers, combat, switches, events, generator, sprites, exploration |
+| `test`              | Full suite (200+ checks): codec, markers, combat, switches, events, generator, sprites, exploration, story, recruit, equipment, music, formula, spell-sort, bestiary |
 | `lint`              | ESLint                                                  |
 
 Tests run via `tsx` (no DOM needed) — the codec, combat engine, event/effect
@@ -225,6 +330,16 @@ re-opened any time with the **?** toolbar button or the `?` key.
 | `Ctrl+P`             | Export PDF                              |
 | `+` / `-`            | Zoom in / out                           |
 | `?`                  | Open the help modal                     |
+
+In **Play** mode:
+
+| Key                  | Action                                  |
+| -------------------- | --------------------------------------- |
+| WASD / arrows        | Move / turn                             |
+| `E`                  | Interact (doors, chests, NPCs, levers)  |
+| `Tab`                | Open / close the in-game menu           |
+| `M`                  | Toggle the full map view                |
+| ↑/↓ · Enter · Esc    | Navigate menus / confirm / back         |
 
 ---
 
