@@ -931,6 +931,22 @@ for (const [kind, def] of Object.entries(SPRITES)) {
 // wins; otherwise the id/name is keyword-matched to an archetype.
 
 const CREATURE_KEYWORDS: [RegExp, string][] = [
+  // FF-flavoured bestiary — distinctive names first, before the generic rules
+  // (e.g. "Zombie Dragon" must hit the dragon rule, not /zomb/).
+  [/dragon|drake|wyvern/, 'cr_serpent'],
+  [/tonberry/, 'cr_hooded'],
+  [/behemoth/, 'cr_demon'],
+  [/goblin|kobold/, 'cr_imp'],
+  [/cactuar|cactus/, 'cr_imp'],
+  [/sahagin|merman|fish/, 'cr_serpent'],
+  [/\bbomb\b|grenade/, 'cr_pumpkin'],
+  [/coeurl|panther|\bcat\b/, 'cr_beast'],
+  [/ochu|malboro|morbol|vine|plant/, 'cr_slime'],
+  [/chimera|manticore/, 'cr_beast'],
+  [/adamant|tortoise|turtle/, 'cr_beast'],
+  [/ahriman|floating eye/, 'bat'],
+  [/\bzu\b|vulture|\broc\b|bird/, 'bat'],
+  [/omega|automaton|machina|robot/, 'cr_guard'],
   [/skelet|lich|bone/, 'cr_skeleton'],
   [/zomb|ghoul|fallen|corpse|dead/, 'cr_zombie'],
   [/slime|ooze|blob|obariyon/, 'cr_slime'],

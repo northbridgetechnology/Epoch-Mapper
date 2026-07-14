@@ -118,6 +118,7 @@ export const DEFAULT_SPELL_SCHOOLS: SpellSchoolDef[] = [
   { id: 'element', name: 'Elemental', icon: '🔥', color: '#e17055', description: "Fire, ice, and storm bent to the caster's will. Scales with Intellect.", keyAttribute: 'attr.intellect' },
   { id: 'divine',  name: 'Divine',    icon: '✨', color: '#f39c12', description: 'Healing light and protective blessings. Scales with Spirit.', keyAttribute: 'attr.spirit' },
   { id: 'holy',    name: 'Holy',      icon: '✝️', color: '#f9ca24', description: 'Consecrated wrath against the unholy. Scales with Spirit.', keyAttribute: 'attr.spirit' },
+  { id: 'dark',    name: 'Dark',      icon: '🌑', color: '#6c5ce7', description: 'Curses, death words, and entropy. Scales with Intellect.', keyAttribute: 'attr.intellect' },
 ]
 
 
@@ -227,6 +228,52 @@ export const DEFAULT_SKILLS: SkillDef[] = [
     target: 'self',
     effects: [{ t: 'status', status: 'status.concentrated' }],
     learn: [{ classId: 'class.mage', level: 5 }],
+  },
+  // ── Final Fantasy classics ────────────────────────────────────────────────────
+  {
+    id: 'skill.cross_slash', name: 'Cross-Slash', icon: '✖️', color: '#74b9ff',
+    description: 'Three strokes in the shape of a kanji — the wound binds the foe in place.',
+    hpCostPct: 0.1, target: 'enemy',
+    effects: [
+      { t: 'damage', dmgType: 'physical', amount: '3d6+6', canCrit: true },
+      { t: 'status', status: 'status.bound', chance: 0.5 },
+    ],
+    learn: [{ classId: 'class.fighter', level: 7 }],
+  },
+  {
+    id: 'skill.darkside', name: 'Darkside', icon: '🌑', color: '#2d3436',
+    description: 'Feed your own life force into the blade for a devastating shadow strike.',
+    hpCostPct: 0.2, target: 'enemy',
+    effects: [{ t: 'damage', dmgType: 'dark', amount: '3d8+8', canCrit: true }],
+    learn: [{ classId: 'class.fighter', level: 8 }],
+  },
+  {
+    id: 'skill.shock', name: 'Shock', icon: '💥', color: '#f9ca24',
+    description: 'Raise your weapon and bring a field of force crashing onto the whole enemy line.',
+    hpCostPct: 0.1, cooldown: 3, target: 'allEnemies',
+    effects: [{ t: 'damage', dmgType: 'physical', amount: '2d8+8', canCrit: false }],
+    learn: [{ classId: 'class.fighter', level: 10 }],
+  },
+  {
+    id: 'skill.sword_dance', name: 'Sword Dance', icon: '💃', color: '#e84393',
+    description: 'A deadly waltz of steel — beautiful, unpredictable, and vicious.',
+    hpCostPct: 0.08, cooldown: 3, target: 'enemy',
+    effects: [{ t: 'damage', dmgType: 'physical', amount: '4d6+4', canCrit: true }],
+    learn: [{ classId: 'class.rogue', level: 6 }],
+  },
+  {
+    id: 'skill.rapid_fire', name: 'Rapid Fire', icon: '🔫', color: '#2980b9',
+    description: 'Empty the cylinder — four wild shots that trade accuracy for volume.',
+    hpCostPct: 0.06, cooldown: 2, target: 'enemy',
+    effects: [{ t: 'damage', dmgType: 'physical', amount: '4d4+4', canCrit: false }],
+    learn: [{ classId: 'class.gunslinger', level: 7 }],
+  },
+  {
+    id: 'skill.chakra', name: 'Chakra', icon: '🧘', color: '#00cec9',
+    description: 'Open the inner gates and pour spiritual energy back into an ally.',
+    cooldown: 3, target: 'ally',
+    effects: [{ t: 'restoreMp', amount: '2d6+4' }],
+    learn: [{ classId: 'class.cleric', level: 6 }, { classId: 'class.mage', level: 7 }],
   },
 ]
 
@@ -356,6 +403,17 @@ export const DEFAULT_STATUS_EFFECTS: StatusEffectDef[] = [
     description: 'Defenses shattered. Takes far more physical punishment.',
     kind: 'debuff', durationTurns: 3, blocksAction: false,
     modifiers: [{ target: 'derived', key: 'defense', op: 'add', amount: -6 }],
+  },
+  {
+    id: 'status.haste', name: 'Haste', icon: '⏩', color: '#00b894',
+    description: 'Time flows faster. Acts sooner and evades more easily.',
+    kind: 'buff', durationTurns: 3, blocksAction: false,
+    modifiers: [{ target: 'attribute', key: 'agility', op: 'add', amount: 5 }],
+  },
+  {
+    id: 'status.stopped', name: 'Stopped', icon: '⏱️', color: '#636e72',
+    description: 'Frozen outside of time. Cannot act.',
+    kind: 'control', durationTurns: 2, blocksAction: true,
   },
 ]
 
@@ -732,6 +790,80 @@ export const DEFAULT_SPELLS: SpellDef[] = [
     inCombat: true, outOfCombat: false,
     description: 'Engulfs all enemies in flame for 2d6 fire damage.',
     effects: [{ t: 'damage', dmgType: 'fire', amount: '2d6', canCrit: true }],
+  },
+  // ── Final Fantasy classics ────────────────────────────────────────────────────
+  {
+    id: 'spell.bio', name: 'Bio', icon: '☣️', color: '#6ab04c',
+    school: 'element', level: 4, mpCost: 9, target: 'enemy',
+    inCombat: true, outOfCombat: false,
+    description: 'A splash of virulent ooze. Medium poison damage and may Poison.',
+    effects: [
+      { t: 'damage', dmgType: 'poison', amount: '2d8+4', canCrit: true },
+      { t: 'status', status: 'status.poisoned', chance: 0.45 },
+    ],
+  },
+  {
+    id: 'spell.haste', name: 'Haste', icon: '⏩', color: '#00b894',
+    school: 'arcane', level: 4, mpCost: 8, target: 'ally',
+    inCombat: true, outOfCombat: false,
+    description: 'Accelerates one ally through time. Raises agility for 3 turns.',
+    effects: [{ t: 'status', status: 'status.haste' }],
+  },
+  {
+    id: 'spell.hastega', name: 'Hastega', icon: '⏩', color: '#55efc4',
+    school: 'arcane', level: 8, mpCost: 20, target: 'allAllies',
+    inCombat: true, outOfCombat: false,
+    description: 'Time races for the whole party. Raises agility of all allies.',
+    effects: [{ t: 'status', status: 'status.haste' }],
+  },
+  {
+    id: 'spell.slowga', name: 'Slowga', icon: '🐌', color: '#636e72',
+    school: 'arcane', level: 6, mpCost: 16, target: 'allEnemies',
+    inCombat: true, outOfCombat: false,
+    description: 'Time crawls for every foe. Lowers agility of all enemies (60% each).',
+    effects: [{ t: 'status', status: 'status.sukunda', chance: 0.6 }],
+  },
+  {
+    id: 'spell.stop', name: 'Stop', icon: '⏱️', color: '#b2bec3',
+    school: 'arcane', level: 5, mpCost: 10, target: 'enemy',
+    inCombat: true, outOfCombat: false,
+    description: 'Halts one foe outside of time (50% chance). They cannot act.',
+    effects: [{ t: 'status', status: 'status.stopped', chance: 0.5 }],
+  },
+  {
+    id: 'spell.esuna', name: 'Esuna', icon: '🍀', color: '#55efc4',
+    school: 'divine', level: 3, mpCost: 10, target: 'ally',
+    inCombat: true, outOfCombat: true,
+    description: 'A cleansing wind lifts every ailment from one ally.',
+    effects: [{ t: 'cure', status: 'all' }],
+  },
+  {
+    id: 'spell.holy', name: 'Holy', icon: '🌟', color: '#f9ca24',
+    school: 'holy', level: 9, mpCost: 30, target: 'enemy',
+    inCombat: true, outOfCombat: false,
+    description: 'The ultimate white magic. Pearls of sacred light burst against one foe.',
+    effects: [{ t: 'damage', dmgType: 'holy', amount: '5d8+10', canCrit: true }],
+  },
+  {
+    id: 'spell.flare', name: 'Flare', icon: '💫', color: '#e74c3c',
+    school: 'element', level: 9, mpCost: 30, target: 'enemy',
+    inCombat: true, outOfCombat: false,
+    description: 'The ultimate black magic. Raw non-elemental force annihilates one foe.',
+    effects: [{ t: 'damage', dmgType: 'physical', amount: '6d6+12', canCrit: false }],
+  },
+  {
+    id: 'spell.meteor', name: 'Meteor', icon: '☄️', color: '#e17055',
+    school: 'arcane', level: 9, mpCost: 34, target: 'allEnemies',
+    inCombat: true, outOfCombat: false,
+    description: 'Calls burning stones down from beyond the sky onto all foes.',
+    effects: [{ t: 'damage', dmgType: 'physical', amount: '4d8+8', canCrit: false }],
+  },
+  {
+    id: 'spell.ultima', name: 'Ultima', icon: '🌀', color: '#a29bfe',
+    school: 'arcane', level: 10, mpCost: 45, target: 'allEnemies',
+    inCombat: true, outOfCombat: false,
+    description: 'The forbidden magic of the ancients. Devastates the entire enemy line.',
+    effects: [{ t: 'damage', dmgType: 'physical', amount: '5d8+12', canCrit: false }],
   },
 ]
 
@@ -1407,6 +1539,211 @@ export const DEFAULT_ENEMIES: EnemyDef[] = [
       { weight: 1, effects: [{ t: 'status', status: 'status.panicked', chance: 0.60 }], target: 'allEnemies' },
     ],
   },
+  // ── Final Fantasy bestiary — Tier 1 ───────────────────────────────────────────
+  {
+    id: 'enemy.goblin', name: 'Goblin', icon: '👺', color: '#27ae60',
+    description: 'A scrawny green raider with a rusty knife and boundless overconfidence.',
+    hp: 28, attack: 9, defense: 3, speed: 6, xp: 12, gold: { min: 3, max: 10 },
+    loot: 'loot.weak_demon',
+    abilities: [
+      { weight: 3, effects: [{ t: 'damage', dmgType: 'physical', amount: '1d6+1', canCrit: true }], target: 'enemy' },
+      { weight: 1, effects: [{ t: 'damage', dmgType: 'physical', amount: '2d4+2', canCrit: false }], target: 'enemy' },
+    ],
+  },
+  {
+    id: 'enemy.sahagin', name: 'Sahagin', icon: '🐟', color: '#00b894',
+    description: 'A fish-man of the shallows that fights with a barbed trident and foul water.',
+    hp: 42, attack: 12, defense: 6, speed: 8, xp: 20, gold: { min: 4, max: 14 },
+    resistances: { ice: 0.5, lightning: -0.5 },
+    loot: 'loot.beast_drop',
+    abilities: [
+      { weight: 3, effects: [{ t: 'damage', dmgType: 'physical', amount: '1d8+2', canCrit: true }], target: 'enemy' },
+      { weight: 1, effects: [{ t: 'status', status: 'status.poisoned', chance: 0.4 }], target: 'enemy' },
+    ],
+  },
+  {
+    id: 'enemy.bomb', name: 'Bomb', icon: '🔥', color: '#e17055',
+    description: 'A living fireball that swells with every wound — and detonates when cornered.',
+    hp: 45, attack: 12, defense: 6, speed: 7, xp: 25, gold: { min: 5, max: 16 },
+    resistances: { fire: 1.0, ice: -0.75 },
+    loot: 'loot.weak_demon',
+    abilities: [
+      { weight: 3, effects: [{ t: 'damage', dmgType: 'fire', amount: '1d8+3', canCrit: false }], target: 'enemy' },
+      { weight: 6, when: { selfHpBelow: 0.35 },
+        effects: [{ t: 'damage', dmgType: 'fire', amount: '4d6+6', canCrit: false }], target: 'allEnemies' },
+    ],
+  },
+  // ── Final Fantasy bestiary — Tier 2 ───────────────────────────────────────────
+  {
+    id: 'enemy.cactuar', name: 'Cactuar', icon: '🌵', color: '#6ab04c',
+    description: 'A sprinting cactus that is nearly impossible to pin down. Its needles never miss.',
+    hp: 40, attack: 14, defense: 20, speed: 20, xp: 60, gold: { min: 20, max: 60 },
+    resistances: { physical: 0.5 },
+    loot: 'loot.beast_drop',
+    abilities: [
+      { weight: 2, effects: [{ t: 'damage', dmgType: 'physical', amount: 30, canCrit: false }], target: 'enemy' },
+      { weight: 3, effects: [{ t: 'damage', dmgType: 'physical', amount: '1d4', canCrit: false }], target: 'enemy' },
+    ],
+  },
+  {
+    id: 'enemy.coeurl', name: 'Coeurl', icon: '🐆', color: '#a29bfe',
+    description: 'An elegant great cat with whip-like whiskers that crackle with paralyzing current.',
+    hp: 70, attack: 16, defense: 10, speed: 15, xp: 45, gold: { min: 10, max: 32 },
+    resistances: { lightning: 0.5 },
+    loot: 'loot.beast_drop',
+    abilities: [
+      { weight: 3, effects: [{ t: 'damage', dmgType: 'physical', amount: '2d6+3', canCrit: true }], target: 'enemy' },
+      { weight: 2, effects: [
+        { t: 'damage', dmgType: 'lightning', amount: '1d8+3', canCrit: false },
+        { t: 'status', status: 'status.shocked', chance: 0.6 },
+      ], target: 'enemy' },
+    ],
+  },
+  {
+    id: 'enemy.ochu', name: 'Ochu', icon: '🌿', color: '#2ecc71',
+    description: 'A shambling mass of vines and tendrils that spreads sickly-sweet spores.',
+    hp: 85, attack: 18, defense: 10, speed: 6, xp: 48, gold: { min: 8, max: 26 },
+    resistances: { poison: 1.0, fire: -0.5 },
+    loot: 'loot.beast_drop',
+    abilities: [
+      { weight: 3, effects: [{ t: 'damage', dmgType: 'physical', amount: '2d6+4', canCrit: false }], target: 'enemy' },
+      { weight: 2, effects: [{ t: 'status', status: 'status.poisoned', chance: 0.55 }], target: 'enemy' },
+      { weight: 1, effects: [{ t: 'status', status: 'status.asleep', chance: 0.45 }], target: 'enemy' },
+    ],
+  },
+  {
+    id: 'enemy.zu', name: 'Zu', icon: '🦅', color: '#b07d4a',
+    description: 'A colossal carrion bird whose wingbeats knock grown warriors off their feet.',
+    hp: 80, attack: 19, defense: 8, speed: 13, xp: 46, gold: { min: 8, max: 28 },
+    loot: 'loot.beast_drop',
+    abilities: [
+      { weight: 3, effects: [{ t: 'damage', dmgType: 'physical', amount: '2d8+3', canCrit: true }], target: 'enemy' },
+      { weight: 1, effects: [{ t: 'damage', dmgType: 'physical', amount: '1d8+3', canCrit: false }], target: 'allEnemies' },
+    ],
+  },
+  // ── Final Fantasy bestiary — Tier 3 ───────────────────────────────────────────
+  {
+    id: 'enemy.malboro', name: 'Malboro', icon: '🦠', color: '#6ab04c',
+    description: 'A reeking tangle of eyes and tentacles. Its breath is legendary — for the worst reasons.',
+    hp: 130, attack: 22, defense: 14, speed: 5, xp: 110, gold: { min: 20, max: 65 },
+    resistances: { poison: 1.0, fire: -0.25 },
+    size: 2,
+    loot: 'loot.strong_demon',
+    abilities: [
+      { weight: 2, effects: [{ t: 'damage', dmgType: 'poison', amount: '2d8+6', canCrit: false }], target: 'enemy' },
+      { weight: 2, effects: [
+        { t: 'status', status: 'status.poisoned', chance: 0.6 },
+        { t: 'status', status: 'status.silenced', chance: 0.4 },
+        { t: 'status', status: 'status.panicked', chance: 0.4 },
+      ], target: 'allEnemies' },
+    ],
+  },
+  {
+    id: 'enemy.tonberry', name: 'Tonberry', icon: '🔪', color: '#00b894',
+    description: 'A small hooded figure with a lantern and a kitchen knife. It walks toward you. Slowly.',
+    hp: 160, attack: 30, defense: 22, speed: 2, xp: 130, gold: { min: 40, max: 120 },
+    resistances: { physical: 0.25 },
+    targeting: 'weakest',
+    loot: 'loot.strong_demon',
+    abilities: [
+      { weight: 3, effects: [{ t: 'damage', dmgType: 'physical', amount: '5d6+10', canCrit: true }], target: 'enemy' },
+      { weight: 1, effects: [{ t: 'damage', dmgType: 'dark', amount: '3d8+6', canCrit: false }], target: 'enemy' },
+    ],
+  },
+  {
+    id: 'enemy.ahriman', name: 'Ahriman', icon: '👁️', color: '#6c5ce7',
+    description: 'A winged eye that drifts through ruins, unraveling minds with its gaze.',
+    hp: 100, attack: 20, defense: 14, speed: 12, xp: 78, gold: { min: 15, max: 45 },
+    resistances: { dark: 0.5, holy: -0.5 },
+    loot: 'loot.night_drop',
+    abilities: [
+      { weight: 2, effects: [{ t: 'damage', dmgType: 'dark', amount: '2d8+5', canCrit: false }], target: 'enemy' },
+      { weight: 2, effects: [{ t: 'status', status: 'status.panicked', chance: 0.55 }], target: 'enemy' },
+      { weight: 1, effects: [{ t: 'status', status: 'status.sukunda', chance: 0.6 }], target: 'allEnemies' },
+    ],
+  },
+  {
+    id: 'enemy.iron_giant', name: 'Iron Giant', icon: '🤖', color: '#636e72',
+    description: 'A walking suit of colossal armor with nobody inside — only a greatsword and intent.',
+    hp: 150, attack: 28, defense: 26, speed: 6, xp: 125, gold: { min: 30, max: 90 },
+    resistances: { physical: 0.5, lightning: -0.5 },
+    size: 2,
+    loot: 'loot.strong_demon',
+    abilities: [
+      { weight: 3, effects: [{ t: 'damage', dmgType: 'physical', amount: '3d8+8', canCrit: true }], target: 'enemy' },
+      { weight: 1, effects: [{ t: 'damage', dmgType: 'physical', amount: '2d8+8', canCrit: false }], target: 'allEnemies' },
+    ],
+  },
+  {
+    id: 'enemy.chimera', name: 'Chimera', icon: '🦁', color: '#e17055',
+    description: 'Lion, goat, and serpent fused into one furious beast. Each head breathes a different ruin.',
+    hp: 135, attack: 24, defense: 18, speed: 12, xp: 115, gold: { min: 25, max: 75 },
+    resistances: { fire: 0.5, ice: 0.5 },
+    loot: 'loot.strong_demon',
+    abilities: [
+      { weight: 2, effects: [{ t: 'damage', dmgType: 'fire', amount: '2d8+6', canCrit: false }], target: 'allEnemies' },
+      { weight: 2, effects: [{ t: 'damage', dmgType: 'ice', amount: '2d8+6', canCrit: false }], target: 'allEnemies' },
+      { weight: 2, effects: [{ t: 'damage', dmgType: 'physical', amount: '3d6+8', canCrit: true }], target: 'enemy' },
+    ],
+  },
+  {
+    id: 'enemy.adamantoise', name: 'Adamantoise', icon: '🐢', color: '#b07d4a',
+    description: 'A mountain that walks. Its shell has turned aside siege engines.',
+    hp: 170, attack: 20, defense: 30, speed: 3, xp: 120, gold: { min: 25, max: 70 },
+    resistances: { physical: 0.5, ice: -0.25 },
+    size: 2,
+    loot: 'loot.beast_drop',
+    abilities: [
+      { weight: 3, effects: [{ t: 'damage', dmgType: 'physical', amount: '3d6+8', canCrit: false }], target: 'enemy' },
+      { weight: 1, effects: [{ t: 'status', status: 'status.rakukaja' }], target: 'ally' },
+    ],
+  },
+  // ── Final Fantasy bestiary — Boss Tier ────────────────────────────────────────
+  {
+    id: 'enemy.behemoth', name: 'Behemoth', icon: '🐗', color: '#8e44ad',
+    description: 'The king of beasts — a horned purple titan whose rage calls stones from the sky.',
+    hp: 320, attack: 34, defense: 24, speed: 13, xp: 480, gold: { min: 90, max: 220 },
+    resistances: { physical: 0.25, fire: 0.25 },
+    size: 2,
+    loot: 'loot.boss_drop',
+    abilities: [
+      { weight: 3, effects: [{ t: 'damage', dmgType: 'physical', amount: '5d6+12', canCrit: true }], target: 'enemy' },
+      { weight: 1, effects: [{ t: 'damage', dmgType: 'physical', amount: '3d8+8', canCrit: false }], target: 'allEnemies' },
+      { weight: 3, when: { roundAtLeast: 3 },
+        effects: [{ t: 'damage', dmgType: 'physical', amount: '4d8+8', canCrit: false }], target: 'allEnemies' },
+    ],
+  },
+  {
+    id: 'enemy.zombie_dragon', name: 'Zombie Dragon', icon: '🐉', color: '#636e72',
+    description: 'A dragon that death could not keep down. Its breath is a rolling wall of rot.',
+    hp: 280, attack: 30, defense: 20, speed: 6, xp: 420, gold: { min: 70, max: 180 },
+    resistances: { dark: 0.75, poison: 1.0, holy: -0.75, fire: -0.25 },
+    size: 2,
+    loot: 'loot.boss_drop',
+    abilities: [
+      { weight: 3, effects: [{ t: 'damage', dmgType: 'physical', amount: '4d8+10', canCrit: true }], target: 'enemy' },
+      { weight: 2, effects: [
+        { t: 'damage', dmgType: 'poison', amount: '3d6+6', canCrit: false },
+        { t: 'status', status: 'status.poisoned', chance: 0.5 },
+      ], target: 'allEnemies' },
+    ],
+  },
+  {
+    id: 'enemy.omega', name: 'Omega', icon: '🛸', color: '#2d3436',
+    description: 'An ancient war machine that has never stopped hunting. Nothing about it is fair.',
+    hp: 500, attack: 40, defense: 34, speed: 18, xp: 999, gold: { min: 200, max: 500 },
+    resistances: { physical: 0.5, fire: 0.5, ice: 0.5, poison: 1.0, dark: 0.5, holy: 0.5, lightning: -0.25 },
+    size: 2,
+    loot: 'loot.boss_drop',
+    abilities: [
+      { weight: 3, effects: [{ t: 'damage', dmgType: 'fire', amount: '5d8+10', canCrit: false }], target: 'allEnemies' },
+      { weight: 2, effects: [{ t: 'damage', dmgType: 'physical', amount: '6d6+12', canCrit: true }], target: 'enemy' },
+      { weight: 1, effects: [
+        { t: 'damage', dmgType: 'physical', amount: '3d6+6', canCrit: false },
+        { t: 'status', status: 'status.panicked', chance: 0.5 },
+      ], target: 'enemy' },
+    ],
+  },
 ]
 
 // ── Encounter Tables ───────────────────────────────────────────────────────────
@@ -1475,6 +1812,55 @@ export const DEFAULT_ENCOUNTER_TABLES: EncounterTableDef[] = [
       { enemy: 'enemy.fallen',     min: 1, max: 3, weight: 2 },
       { enemy: 'enemy.lich',       min: 1, max: 1, weight: 1 },
     ],
+  },
+  {
+    id: 'enc.verdant_wilds', name: 'Verdant Wilds', icon: '🌵', color: '#6ab04c',
+    description: 'Sun-baked scrub and riverbanks. Goblins, fish-men, and the occasional sprinting cactus.',
+    entries: [
+      { enemy: 'enemy.goblin',   min: 1, max: 3, weight: 3 },
+      { enemy: 'enemy.sahagin',  min: 1, max: 2, weight: 3 },
+      { enemy: 'enemy.bomb',     min: 1, max: 2, weight: 2 },
+      { enemy: 'enemy.cactuar',  min: 1, max: 1, weight: 1 },
+    ],
+  },
+  {
+    id: 'enc.feral_woods', name: 'Feral Woods', icon: '🐆', color: '#27ae60',
+    description: 'Deep forest where the wildlife bites back. Watch for whiskers and spores.',
+    entries: [
+      { enemy: 'enemy.coeurl',  min: 1, max: 2, weight: 3 },
+      { enemy: 'enemy.ochu',    min: 1, max: 2, weight: 3 },
+      { enemy: 'enemy.zu',      min: 1, max: 2, weight: 2 },
+      { enemy: 'enemy.malboro', min: 1, max: 1, weight: 1 },
+    ],
+  },
+  {
+    id: 'enc.ancient_ruins', name: 'Ancient Ruins', icon: '🏛️', color: '#636e72',
+    description: 'Collapsed halls of a fallen civilization. Its guardians never got the news.',
+    entries: [
+      { enemy: 'enemy.ahriman',     min: 1, max: 2, weight: 3 },
+      { enemy: 'enemy.iron_giant',  min: 1, max: 1, weight: 2 },
+      { enemy: 'enemy.chimera',     min: 1, max: 1, weight: 2 },
+      { enemy: 'enemy.adamantoise', min: 1, max: 1, weight: 2 },
+      { enemy: 'enemy.tonberry',    min: 1, max: 1, weight: 1 },
+    ],
+  },
+  {
+    id: 'enc.behemoth_lair', name: "Behemoth's Lair", icon: '🐗', color: '#8e44ad',
+    description: 'Boss: the king of beasts. From round 3 it begins calling meteors.',
+    boss: true,
+    entries: [{ enemy: 'enemy.behemoth', min: 1, max: 1, weight: 1 }],
+  },
+  {
+    id: 'enc.dragon_crypt', name: 'Dragon Crypt', icon: '🐉', color: '#636e72',
+    description: 'Boss: a dragon that refused to stay buried. Bring holy fire and antidotes.',
+    boss: true,
+    entries: [{ enemy: 'enemy.zombie_dragon', min: 1, max: 1, weight: 1 }],
+  },
+  {
+    id: 'enc.omega_vault', name: 'Omega Vault', icon: '🛸', color: '#2d3436',
+    description: 'Superboss: the sealed war machine. For parties with nothing left to prove.',
+    boss: true,
+    entries: [{ enemy: 'enemy.omega', min: 1, max: 1, weight: 1 }],
   },
 ]
 
