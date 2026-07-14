@@ -222,7 +222,7 @@ export function GameMenu({
           {cmd === 'status' && <MemberScreen party={party} onExit={exit} render={(char, idx) => (
             <div className="space-y-3">
               <PointSpend char={char} ruleset={ruleset} onChange={c => updateChar(idx, c)} />
-              <CharacterSheet char={char} ruleset={ruleset} inventory={inventory}
+              <CharacterSheet char={char} ruleset={ruleset} inventory={inventory} mode="play"
                 onChange={c => updateChar(idx, c)} onInventoryChange={inv => onInventoryChange(inv, gold)} />
             </div>
           )} />}

@@ -335,13 +335,19 @@ export function EquipmentPanel({
 // ── Character sheet ────────────────────────────────────────────────────────────
 
 export function CharacterSheet({
-  char, ruleset, inventory, onChange, onInventoryChange,
+  char, ruleset, inventory, onChange, onInventoryChange, mode = 'design',
 }: {
   char: Character; ruleset: Ruleset; inventory: ItemInstance[]
   onChange: (c: Character) => void
   onInventoryChange: (inv: ItemInstance[]) => void
+  /** 'play' is the player's surface (the Tab menu): identity, level, HP/MP,
+   *  and attributes are display-only — progression comes from XP, point
+   *  spending, and healing verbs. Equipment stays interactive in both modes. */
+  mode?: 'design' | 'play'
 }) {
   const cls = classOf(ruleset, char.classId)
+  const race = raceOf(ruleset, char.raceId)
+  const locked = mode === 'play'
   const [expanded, setExpanded] = useState<Record<string, boolean>>({ attrs: true, equip: true })
 
   function toggle(key: string) { setExpanded(p => ({ ...p, [key]: !p[key] })) }
@@ -356,7 +362,14 @@ export function CharacterSheet({
 
   return (
     <div className="space-y-3 text-sm">
-      {/* Identity */}
+      {/* Identity — read-only while playing */}
+      {locked ? (
+        <div className="space-y-0.5">
+          <div className="text-base font-semibold text-white/90">{char.name}</div>
+          <div className="text-xs text-white/50">Lv.{char.level} {race?.name} {cls?.icon} {cls?.name}</div>
+          <div className="text-xs text-white/40 font-mono">XP {char.xp} / {xpToNextLevel(char.level, ruleset.formulas?.xpToNext)}</div>
+        </div>
+      ) : (
       <div className="space-y-2">
         <div>
           <label className="block text-xs text-white/50 mb-0.5">Name</label>
@@ -400,27 +413,36 @@ export function CharacterSheet({
           </div>
         </div>
       </div>
+      )}
 
-      {/* Resources */}
+      {/* Resources — healing verbs only while playing */}
       <div className="grid grid-cols-2 gap-2">
         <div className="rounded-lg bg-red-950/30 border border-red-900/30 p-2">
           <div className="text-xs text-red-300 font-medium mb-1">HP</div>
+          {locked ? (
+            <div className="text-sm text-white/90 font-mono">{char.hp} <span className="text-white/40 text-xs">/ {char.maxHp}</span></div>
+          ) : (
           <div className="flex items-center gap-1">
             <input type="number" min={0} max={char.maxHp} value={char.hp}
               onChange={e => onChange({ ...char, hp: Math.max(0, Math.min(char.maxHp, e.target.valueAsNumber || 0)) })}
               className="w-14 px-1 py-0.5 rounded bg-zinc-800 border border-white/10 text-sm text-white/90 focus:outline-none focus:border-amber-500/50" />
             <span className="text-white/40 text-xs">/ {char.maxHp}</span>
           </div>
+          )}
         </div>
         {char.maxMp > 0 && (
           <div className="rounded-lg bg-blue-950/30 border border-blue-900/30 p-2">
             <div className="text-xs text-blue-300 font-medium mb-1">MP</div>
+            {locked ? (
+              <div className="text-sm text-white/90 font-mono">{char.mp} <span className="text-white/40 text-xs">/ {char.maxMp}</span></div>
+            ) : (
             <div className="flex items-center gap-1">
               <input type="number" min={0} max={char.maxMp} value={char.mp}
                 onChange={e => onChange({ ...char, mp: Math.max(0, Math.min(char.maxMp, e.target.valueAsNumber || 0)) })}
                 className="w-14 px-1 py-0.5 rounded bg-zinc-800 border border-white/10 text-sm text-white/90 focus:outline-none focus:border-amber-500/50" />
               <span className="text-white/40 text-xs">/ {char.maxMp}</span>
             </div>
+            )}
           </div>
         )}
       </div>
@@ -437,10 +459,14 @@ export function CharacterSheet({
             {ruleset.attributes.map((attr: AttributeDef) => (
               <div key={attr.id} className="rounded bg-zinc-800 border border-white/10 p-1.5">
                 <div className="text-xs text-white/40 font-mono">{attr.abbr}</div>
-                <input type="number" min={attr.min} max={attr.max}
-                  value={char.attributes[attr.id] ?? attr.default}
-                  onChange={e => handleAttrChange(attr.id, e.target.valueAsNumber)}
-                  className="w-full bg-transparent text-base font-bold text-amber-200 focus:outline-none text-center" />
+                {locked ? (
+                  <div className="text-base font-bold text-amber-200 text-center">{char.attributes[attr.id] ?? attr.default}</div>
+                ) : (
+                  <input type="number" min={attr.min} max={attr.max}
+                    value={char.attributes[attr.id] ?? attr.default}
+                    onChange={e => handleAttrChange(attr.id, e.target.valueAsNumber)}
+                    className="w-full bg-transparent text-base font-bold text-amber-200 focus:outline-none text-center" />
+                )}
               </div>
             ))}
           </div>

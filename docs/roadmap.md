@@ -255,3 +255,9 @@ parked here, roughly by value:
   **Provoke** (taunt targeting override), **Drain/Lancet** (damage + self-heal
   effect). The Charge empower-next mechanic (StatusEffectDef.boostScope/
   boostMult) is live and reusable for all of these.
+- **Player mode shell**: the Tab menu is now locked to player verbs
+  (CharacterSheet `mode="play"` — identity/level/HP/MP/attributes are
+  display-only; designers cheat via the Party workspace instead). The rest of
+  the wall: a distribution flag that hides the design workspaces entirely so
+  an exported `.epochmap` can be handed to players; optional "allow renaming
+  in play" Game Rule if a game wants FF-style name changes.
