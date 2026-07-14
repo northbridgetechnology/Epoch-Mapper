@@ -6,6 +6,7 @@
 import assert from 'node:assert/strict'
 import { duplicateEnemy, eliteEnemy } from '../src/lib/enemy-schema'
 import { resolveEnemyAbility } from '../src/lib/combat-engine'
+import { makeDefaultRuleset } from '../src/lib/default-ruleset'
 import type { EnemyDef, Ruleset } from '../src/lib/engine-types'
 
 let passed = 0
@@ -108,6 +109,20 @@ test('resolveEnemyAbility: custom effects default name and target; empty sources
   assert.equal(resolveEnemyAbility({ weight: 1, spell: 'spell.nope' }, abilityRuleset), null)   // dangling ref
   assert.equal(resolveEnemyAbility({ weight: 1 }, abilityRuleset), null)                        // no source at all
   assert.equal(resolveEnemyAbility({ weight: 1, effects: [] }, abilityRuleset), null)           // empty custom
+})
+
+test('every seeded enemy ability resolves — no dangling spell/skill refs', () => {
+  const rs = makeDefaultRuleset()
+  let refs = 0
+  for (const e of rs.enemies) {
+    for (const [i, ab] of (e.abilities ?? []).entries()) {
+      assert.ok(resolveEnemyAbility(ab, rs), `${e.id} ability #${i + 1} does not resolve`)
+      if (ab.spell || ab.skill) refs++
+    }
+  }
+  // The seed's shared-vocabulary floor: magic/technique moves reference the
+  // database; plain physical attacks stay custom by design.
+  assert.ok(refs >= 45, `expected ≥45 database references in the seed, found ${refs}`)
 })
 
 console.log(`\n${passed} bestiary tests passed`)
