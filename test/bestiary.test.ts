@@ -125,4 +125,26 @@ test('every seeded enemy ability resolves — no dangling spell/skill refs', () 
   assert.ok(refs >= 45, `expected ≥45 database references in the seed, found ${refs}`)
 })
 
+test('seed integrity: item type/spell/status refs and loot drops all resolve', () => {
+  const rs = makeDefaultRuleset()
+  const itemIds = new Set(rs.items.map(i => i.id))
+  const spellIds = new Set(rs.spells.map(sp => sp.id))
+  const statusIds = new Set(rs.statusEffects.map(st => st.id))
+  const wtypes = new Set((rs.weaponTypes ?? []).map(w => w.id))
+  const atypes = new Set((rs.armorTypes ?? []).map(a => a.id))
+  for (const it of rs.items) {
+    if (it.weaponType) assert.ok(wtypes.has(it.weaponType), `${it.id}: weaponType ${it.weaponType}`)
+    if (it.armorType) assert.ok(atypes.has(it.armorType), `${it.id}: armorType ${it.armorType}`)
+    for (const eff of it.onUse ?? []) {
+      if (eff.t === 'teachSpell') assert.ok(spellIds.has(eff.spell), `${it.id}: teaches unknown ${eff.spell}`)
+      if (eff.t === 'status') assert.ok(statusIds.has(eff.status), `${it.id}: unknown status ${eff.status}`)
+      if (eff.t === 'cure' && eff.status !== 'all') assert.ok(statusIds.has(eff.status), `${it.id}: cures unknown ${eff.status}`)
+    }
+  }
+  for (const lt of rs.lootTables) {
+    for (const d of lt.drops) assert.ok(itemIds.has(d.item), `${lt.id}: drops unknown ${d.item}`)
+  }
+  assert.ok(rs.items.length >= 110, `expected the expanded catalog (≥110 items), found ${rs.items.length}`)
+})
+
 console.log(`\n${passed} bestiary tests passed`)
