@@ -212,6 +212,10 @@ export { resolveEncounterTable, checkCellForEncounter, makeFixedEncounter, visit
 // Exploration mechanics: trick tiles + party light (dark maps)
 export { applyMoveTricks, getTricks, cellHasTrick, computeLightRadius, tickLightBurn, restParty, listFoes, advanceFoes, foeFlagKey, seenCellsFrom, chartWalkedCell, DARK_BASE_RADIUS } from './lib/exploration'
 export type { TrickMoveResult, RestResult, FoeRuntime } from './lib/exploration'
+
+// World grid — edge-link crossing (open-world seams)
+export { mapBounds, resolveEdgeCrossing, oppositeEdge } from './lib/world'
+export type { MapBounds, EdgeCrossing } from './lib/world'
 export type { ResolvedEncounter, EnemyInstance, CellEntity, ObjectInstance, Condition, CellEvent, BoundaryData, DoorDef, DoorState, Facing, SwitchDef, InscriptionDef, TrickKind, EventDef, NpcDef, NpcLine, QuestDef, QuestStage } from './lib/engine-types'
 
 // Encounter modal (Phase E3)

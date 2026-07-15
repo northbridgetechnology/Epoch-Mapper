@@ -3,7 +3,7 @@
 import { useRef } from 'react'
 import { Upload, Plus, Trash2, ChevronUp, ChevronDown, Image as ImageIcon } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import type { MapData } from '@/lib/types'
+import type { MapData, EdgeDir } from '@/lib/types'
 import type { AudioTrackDef, GameMeta, OpeningStory } from '@/lib/engine-types'
 import { toast } from 'sonner'
 import { THEMES, getTheme } from '@/lib/themes'
@@ -21,6 +21,9 @@ interface SettingsWorkspaceProps {
   /** Audio tracks (from the ruleset) for the music pickers. */
   tracks?: AudioTrackDef[]
   onMusicChange?: (mapIdx: number, musicId: string | undefined) => void
+  /** Connect/disconnect a world-grid edge (N/S/E/W) of a map to a neighbour;
+   *  the host reciprocates the opposite edge so the seam is bidirectional. */
+  onEdgeLinkChange?: (mapIdx: number, dir: EdgeDir, targetMapId: string | undefined) => void
   /** Author-tunable formula overrides (Ruleset.formulas). */
   formulas?: { xpToNext?: string }
   onFormulasChange?: (patch: { xpToNext?: string }) => void
@@ -303,7 +306,14 @@ function OpeningSlideRow({ slide, index, count, onText, onImage, onMove, onRemov
   )
 }
 
-export function SettingsWorkspace({ maps, onThemeChange, onDarkChange, meta, onMetaChange, tracks = [], onMusicChange, formulas, onFormulasChange }: SettingsWorkspaceProps) {
+const EDGE_DIRS: { dir: EdgeDir; label: string }[] = [
+  { dir: 'N', label: '⬆️ North edge' },
+  { dir: 'S', label: '⬇️ South edge' },
+  { dir: 'W', label: '⬅️ West edge' },
+  { dir: 'E', label: '➡️ East edge' },
+]
+
+export function SettingsWorkspace({ maps, onThemeChange, onDarkChange, meta, onMetaChange, tracks = [], onMusicChange, onEdgeLinkChange, formulas, onFormulasChange }: SettingsWorkspaceProps) {
   if (maps.length === 0) {
     return (
       <div className="flex-1 flex items-center justify-center text-white/20 text-sm">
@@ -412,6 +422,34 @@ export function SettingsWorkspace({ maps, onThemeChange, onDarkChange, meta, onM
                     noneLabel={meta?.defaultMusicId ? '— use default —' : '— none —'} />
                   <span className="text-[10px] text-white/30">Loops while exploring this level.</span>
                 </label>
+              )}
+
+              {onEdgeLinkChange && maps.length > 1 && (
+                <div className="rounded-lg border border-white/8 bg-white/4 px-3 py-2 space-y-1.5">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-white/70">🧭 World edges</span>
+                    <span className="text-[10px] text-white/30">
+                      Walk off a linked edge to cross into the neighbour at the opposite edge — build one open world from a grid of maps.
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    {EDGE_DIRS.map(({ dir, label }) => (
+                      <label key={dir} className="flex items-center gap-1.5">
+                        <span className="text-[11px] text-white/55 w-24 flex-shrink-0">{label}</span>
+                        <select
+                          value={map.edgeLinks?.[dir]?.mapId ?? ''}
+                          onChange={e => onEdgeLinkChange(idx, dir, e.target.value || undefined)}
+                          className={cn(MUSIC_SELECT, 'flex-1 min-w-0')}
+                        >
+                          <option value="">— none —</option>
+                          {maps.filter(m => m.id !== map.id).map(m => (
+                            <option key={m.id} value={m.id}>{m.name}</option>
+                          ))}
+                        </select>
+                      </label>
+                    ))}
+                  </div>
+                </div>
               )}
 
             </div>

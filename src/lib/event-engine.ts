@@ -59,7 +59,7 @@ export interface ExploreEffect {
   goldDelta: number
   itemsGained: { item: string; qty: number }[]
   itemsLost: { item: string; qty: number }[]
-  teleportTo?: { mapId: string; x: number; y: number; facing?: Facing }
+  teleportTo?: { mapId: string; x: number; y: number; facing?: Facing; transition?: import('./engine-types').TransitionStyle }
   openShop?: string
   startCombat?: string
   revealRadius?: number
@@ -195,7 +195,7 @@ function applyEffectsInto(
         result.flagSets[eff.flag] = eff.value
         break
       case 'teleport':
-        if (!result.teleportTo) result.teleportTo = { mapId: eff.mapId, x: eff.x, y: eff.y, facing: eff.facing }
+        if (!result.teleportTo) result.teleportTo = { mapId: eff.mapId, x: eff.x, y: eff.y, facing: eff.facing, transition: eff.transition }
         break
       case 'openShop':
         if (!result.openShop) result.openShop = eff.shop

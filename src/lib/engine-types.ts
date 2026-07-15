@@ -42,6 +42,14 @@ export type SpellTarget =
   | 'enemy' | 'allEnemies' | 'enemyRow'
   | 'none'
 
+/** How a map change presents to the player:
+ *  - 'fade'     = fade to black, swap, fade in (+ optional destination name
+ *                 card). The deliberate "place change" — doors, stairs, portals.
+ *  - 'seamless' = instant swap, no card. The open-world seam between adjacent
+ *                 world tiles; the fiction is one continuous world.
+ *  - 'prompt'   = a confirm window before crossing (Wizardry "descend?"). */
+export type TransitionStyle = 'fade' | 'seamless' | 'prompt'
+
 export type Facing = 'N' | 'S' | 'E' | 'W'
 
 // ── Effect vocabulary (shared by items/spells/enemies/events) ─────────────────
@@ -57,7 +65,7 @@ export type Effect =
   | { t: 'takeItem'; item: DefRef<ItemDef>; qty?: number }
   | { t: 'gold'; amount: number }
   | { t: 'setFlag'; flag: string; value: boolean | number | string }
-  | { t: 'teleport'; mapId: string; x: number; y: number; facing?: Facing }
+  | { t: 'teleport'; mapId: string; x: number; y: number; facing?: Facing; transition?: TransitionStyle }
   | { t: 'startCombat'; encounter: DefRef<EncounterTableDef> }
   | { t: 'message'; text: string }
   | { t: 'openShop'; shop: DefRef<ShopDef> }
@@ -582,7 +590,7 @@ export type CellEntity =
       /** loop: wraps to the start; pingpong: walks the route back and forth. */
       mode?: 'loop' | 'pingpong'
     }
-  | { t: 'mapLink'; mapId: string; x: number; y: number; facing?: Facing }
+  | { t: 'mapLink'; mapId: string; x: number; y: number; facing?: Facing; transition?: TransitionStyle }
   | { t: 'object'; object: ObjectInstance }
   | { t: 'event'; event: CellEvent }
 

@@ -204,6 +204,30 @@ Still deferred:
   gating is revisited (press-turn work), extend `antiMagic` to enemy
   spell-like abilities (flag on `EnemyAbility`).
 
+## World grid & map transitions *(shipped — Phases 1 & 2)*
+
+Map changes present with a transition (`TransitionStyle = 'fade' | 'seamless'
+| 'prompt'`): `fade` (default for doors/stairs) covers to black with a
+destination name card, `seamless` swaps instantly (world seams), `prompt`
+asks first (Wizardry "descend?"). All cross-map switches — mapLink, stairs,
+the teleport effect, and world seams — funnel through one `changeMap` path;
+the teleport effect's long-standing bug (it ignored `mapId` and relocated
+within the current map) is fixed.
+
+`MapData.edgeLinks` (N/S/E/W → neighbour) stitches maps into a world grid:
+stepping off a linked edge crosses into the neighbour at the opposite edge
+with the cross-axis position preserved (`resolveEdgeCrossing`, `src/lib/
+world.ts`), giving the illusion of one large open world from a lattice of
+maps. Authored in Settings (per-map World edges pickers, reciprocated
+automatically) and per-link in the Cell Inspector; round-trips through the
+`.epochmap` v2 ext block.
+
+**Deferred — Phase 3 (cross-seam rendering):** the first-person renderer
+still draws only the active map, so at a seam the neighbour pops in on
+crossing rather than being visible ahead. True Skyrim-style continuity needs
+the renderer to peek N cells into the linked neighbour past the edge. A world
+map screen showing the explored tile grid is a natural follow-on.
+
 ## Known gaps & deferred work (scan of 2026-07-13; verified against the code 2026-07-14)
 
 The three HIGH items from this scan are fixed (save-point policy detection,

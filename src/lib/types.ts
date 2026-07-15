@@ -93,6 +93,17 @@ export interface MapData {
   /** @deprecated Combat mode is now a global rule (GameMeta.combatMode). This
    *  legacy per-map value is honored only when the global one is unset. */
   combatMode?: import('./engine-types').CombatMode
+  /**
+   * World-grid edge connections. Stepping off an edge of this map crosses into
+   * the linked map, arriving at the opposite edge with the cross-axis position
+   * preserved (walk east at y=7 → arrive on the neighbour's west edge at y=7).
+   * Chaining these builds the illusion of one large open world from a lattice
+   * of maps (Creation Engine-style cell seams). Default transition: 'seamless'.
+   */
+  edgeLinks?: Partial<Record<EdgeDir, {
+    mapId: string
+    transition?: import('./engine-types').TransitionStyle
+  }>>
 }
 
 /** A user-defined cell type or overlay icon. IDs are 128–255. */

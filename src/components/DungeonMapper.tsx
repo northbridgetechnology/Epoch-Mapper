@@ -29,7 +29,7 @@ import { CharactersWorkspace } from './workspaces/CharactersWorkspace'
 import { DatabaseWorkspace } from './workspaces/DatabaseWorkspace'
 import { PlayWorkspace } from './workspaces/PlayWorkspace'
 import { SettingsWorkspace } from './workspaces/SettingsWorkspace'
-import type { BoundaryData, Character, CellEntity, DoorDef, DoorState, Effect, Facing, Formation, GameMeta, ItemInstance, ResolvedEncounter, InscriptionDef, Ruleset, SaveState, SwitchDef } from '@/lib/engine-types'
+import type { BoundaryData, Character, CellEntity, DoorDef, DoorState, Effect, Facing, Formation, GameMeta, ItemInstance, ResolvedEncounter, InscriptionDef, Ruleset, SaveState, SwitchDef, TransitionStyle } from '@/lib/engine-types'
 import { makeDefaultRuleset, normalizeRuleset } from '@/lib/default-ruleset'
 import { savePartyTemplate, loadPartyTemplate, clearPartyTemplate, saveToSlot, loadFromSlot, deleteAllSlots, listSaveSlots, npcToCharacter } from '@/lib/save-state'
 import { checkCellForEncounter, resolveEncounterTable, makeFixedEncounter, visitedFlagKey } from '@/lib/encounter-engine'
@@ -39,6 +39,7 @@ import { resolveText } from '@/lib/text-tokens'
 import { OpeningStoryOverlay } from './OpeningStory'
 import { CharacterBuilder } from './CharacterBuilder'
 import { applyMoveTricks, cellHasTrick, chartWalkedCell, tickLightBurn, tickExplorationStatuses, restParty, advanceFoes, listFoes, foeFlagKey } from '@/lib/exploration'
+import { resolveEdgeCrossing, oppositeEdge } from '@/lib/world'
 import { initCombat, applyCombatOutcome, consumeCombatItems, type CombatState } from '@/lib/combat-engine'
 import { CellInspector } from './CellInspector'
 import { usePanelWidth } from './ui/ResizablePanel'
@@ -293,6 +294,14 @@ export function DungeonMapper({
   const [gameOver, setGameOver] = useState(false)
   const gameOverRef = useRef(false)
   gameOverRef.current = gameOver
+  // Map-transition overlay: fade-to-black cover with an optional name card, and
+  // a pending confirm window for 'prompt'-style crossings. Both block movement.
+  const [transition, setTransition] = useState<{ black: boolean; label?: string } | null>(null)
+  const transitionRef = useRef<typeof transition>(null)
+  transitionRef.current = transition
+  const [mapPrompt, setMapPrompt] = useState<{ mapId: string; x: number; y: number; facing?: Facing; label?: string } | null>(null)
+  const mapPromptRef = useRef<typeof mapPrompt>(null)
+  mapPromptRef.current = mapPrompt
   // Steps walked this playthrough — drives exploration status pressure.
   const [stepsTaken, setStepsTaken] = useState(0)
   const stepsRef = useRef(0)
@@ -322,6 +331,8 @@ export function DungeonMapper({
   }, [])
 
   const activeMap = maps[activeIdx] ?? null
+  const activeMapRef = useRef(activeMap)
+  activeMapRef.current = activeMap
 
   const customBase = useMemo(() => {
     const t: Record<number, MarkerDef> = {}
@@ -469,6 +480,52 @@ export function DungeonMapper({
     seenCells: revealSeen(m, x, y),
   }), [revealAround, revealSeen])
 
+  // ── Map changes & transitions ───────────────────────────────────────────────
+  // Every cross-map switch (mapLink, stairs, teleport effect, world-edge seam)
+  // funnels through changeMap so the transition presentation is consistent.
+
+  const applyMapSwap = useCallback((dest: { mapId: string; x: number; y: number; facing?: Facing }): boolean => {
+    const targetIdx = maps.findIndex(m => m.id === dest.mapId)
+    if (targetIdx < 0) return false
+    setActiveIdx(targetIdx)
+    setMaps(prev => prev.map((m, i) => (i === targetIdx ? { ...m, ...moveReveal(m, dest.x, dest.y) } : m)))
+    if (dest.facing) setFacing(dest.facing)
+    setCameraOffset({ x: 0, y: 0 })
+    return true
+  }, [maps, moveReveal, setActiveIdx])
+
+  // Fade sequencing timers (cancelled on unmount / re-trigger).
+  const txTimers = useRef<number[]>([])
+  const clearTxTimers = useCallback(() => { txTimers.current.forEach(clearTimeout); txTimers.current = [] }, [])
+  useEffect(() => () => clearTxTimers(), [clearTxTimers])
+
+  const changeMap = useCallback((dest: {
+    mapId: string; x: number; y: number; facing?: Facing; style?: TransitionStyle
+  }) => {
+    if (!maps.some(m => m.id === dest.mapId)) { applyMapSwap(dest); return }
+    const style = dest.style ?? 'fade'
+    if (style === 'seamless') { applyMapSwap(dest); return }
+    const label = maps.find(m => m.id === dest.mapId)?.name
+    if (style === 'prompt') { setMapPrompt({ ...dest, label }); return }
+    // Fade: cover → swap under black (+ optional name card) → reveal.
+    clearTxTimers()
+    setTransition({ black: false, label })
+    const hold = label ? 700 : 220
+    txTimers.current.push(window.setTimeout(() => setTransition(t => (t ? { ...t, black: true } : t)), 20))
+    txTimers.current.push(window.setTimeout(() => applyMapSwap(dest), 320))
+    txTimers.current.push(window.setTimeout(() => setTransition(t => (t ? { ...t, black: false } : t)), 320 + hold))
+    txTimers.current.push(window.setTimeout(() => setTransition(null), 320 + hold + 320))
+  }, [maps, applyMapSwap, clearTxTimers])
+
+  /** Confirm/cancel a 'prompt'-style crossing. */
+  const confirmMapPrompt = useCallback(() => {
+    setMapPrompt(prev => {
+      if (prev) changeMap({ mapId: prev.mapId, x: prev.x, y: prev.y, facing: prev.facing, style: 'fade' })
+      return null
+    })
+  }, [changeMap])
+  const cancelMapPrompt = useCallback(() => setMapPrompt(null), [])
+
   const applyExploreEffect = useCallback((result: ExploreEffect) => {
     if (Object.keys(result.flagSets).length > 0) {
       setFlags(prev => ({ ...prev, ...result.flagSets }))
@@ -510,9 +567,16 @@ export function DungeonMapper({
       })
     }
     if (result.teleportTo) {
-      const { x, y } = result.teleportTo
-      updateActiveMap((m) => moveReveal(m, x, y))
-      setCameraOffset({ x: 0, y: 0 })
+      const dest = result.teleportTo
+      // Cross-map teleport switches maps (previously ignored mapId — a bug that
+      // silently relocated within the current map); same-map stays instant.
+      if (dest.mapId && dest.mapId !== activeMapRef.current?.id) {
+        changeMap({ mapId: dest.mapId, x: dest.x, y: dest.y, facing: dest.facing, style: dest.transition ?? 'fade' })
+      } else {
+        updateActiveMap((m) => moveReveal(m, dest.x, dest.y))
+        if (dest.facing) setFacing(dest.facing)
+        setCameraOffset({ x: 0, y: 0 })
+      }
     }
     if (result.openShop) {
       setShopId(result.openShop)
@@ -677,7 +741,7 @@ export function DungeonMapper({
         return next
       })
     }
-  }, [updateActiveMap, moveReveal, ruleset, setInventory, setGold, setFlags, setShopId, setActiveEncounter, setParty, setMaps, setGameOver])
+  }, [updateActiveMap, moveReveal, changeMap, ruleset, setInventory, setGold, setFlags, setShopId, setActiveEncounter, setParty, setMaps, setGameOver])
 
   const makeEventContext = useCallback((): EventContext => ({
     flags,
@@ -711,6 +775,16 @@ export function DungeonMapper({
 
       const nx = activeMap.playerX + dx
       const ny = activeMap.playerY + dy
+
+      // World-grid seams: stepping off a linked edge crosses into the neighbour
+      // at the opposite edge (cross-axis preserved). Checked before terrain
+      // blocking so an open border cell hands off instead of walking into void.
+      const dir: Facing = dx > 0 ? 'E' : dx < 0 ? 'W' : dy > 0 ? 'S' : 'N'
+      const crossing = resolveEdgeCrossing(activeMap, nx, ny, dir, maps)
+      if (crossing) {
+        changeMap({ mapId: crossing.mapId, x: crossing.x, y: crossing.y, style: crossing.transition })
+        return
+      }
 
       // Block movement into impassable terrain cells
       const destBase = activeMap.cells[`${nx},${ny}`]?.base ?? 0
@@ -769,17 +843,10 @@ export function DungeonMapper({
         setParty(prev => prev.map(ch => ch.alive ? { ...ch, hp: Math.max(1, ch.hp - dmg) } : ch))
       }
       if (trick.teleportTo) {
-        const dest = trick.teleportTo
-        const targetIdx = maps.findIndex(m => m.id === dest.mapId)
-        if (targetIdx >= 0) {
-          setActiveIdx(targetIdx)
-          setMaps(prev => prev.map((m, i) => {
-            if (i !== targetIdx) return m
-            return { ...m, ...moveReveal(m, dest.x, dest.y) }
-          }))
-          setCameraOffset({ x: 0, y: 0 })
-          return
-        }
+        // Silent teleports & pit drops are meant to be disorienting — seamless,
+        // no fade card.
+        changeMap({ mapId: trick.teleportTo.mapId, x: trick.teleportTo.x, y: trick.teleportTo.y, style: 'seamless' })
+        return
       }
 
       // FOE patrols step whenever the party does; contact = fixed battle
@@ -827,20 +894,11 @@ export function DungeonMapper({
           setFlags(prev => ({ ...prev, [visitedKey]: true }))
         }
 
-        // mapLink: teleport to another map
+        // mapLink: cross to another map (doors, stairs). Default fade + name card.
         const mapLink = cell.entities?.find(e => e.t === 'mapLink')
-        if (mapLink && mapLink.t === 'mapLink') {
-          const targetIdx = maps.findIndex(m => m.id === mapLink.mapId)
-          if (targetIdx >= 0) {
-            setActiveIdx(targetIdx)
-            setMaps(prev => prev.map((m, i) => {
-              if (i !== targetIdx) return m
-              return { ...m, ...moveReveal(m, mapLink.x, mapLink.y) }
-            }))
-            if (mapLink.facing) setFacing(mapLink.facing)
-            setCameraOffset({ x: 0, y: 0 })
-            return
-          }
+        if (mapLink && mapLink.t === 'mapLink' && maps.some(m => m.id === mapLink.mapId)) {
+          changeMap({ mapId: mapLink.mapId, x: mapLink.x, y: mapLink.y, facing: mapLink.facing, style: mapLink.transition ?? 'fade' })
+          return
         }
 
         // onEnter events — sequential, with reactive onFlag expansion
@@ -848,7 +906,7 @@ export function DungeonMapper({
         applyExploreEffect(runCellEvents(cell, 'onEnter', ctx, ruleset))
       }
     },
-    [activeMap, maps, updateActiveMap, moveReveal, ruleset, flags, makeEventContext, applyExploreEffect, setActiveIdx, setFacing],
+    [activeMap, maps, updateActiveMap, moveReveal, changeMap, ruleset, flags, makeEventContext, applyExploreEffect, setActiveIdx, setFacing],
   )
 
   // ── Blobber movement ──────────────────────────────────────────────────────────
@@ -1944,8 +2002,14 @@ export function DungeonMapper({
       if (!mapperHoveredRef.current && workspaceRef.current !== 'play') return
 
       if (workspaceRef.current === 'play') {
-        // Block movement while any overlay (combat/shop/encounter) is active — those handle keys themselves
-        if (menuOpenRef.current || introActiveRef.current || combatStateRef.current || shopIdRef.current || activeEncounterRef.current || dialogueRef.current || inscriptionRef.current || gameOverRef.current || gameEndingRef.current) return
+        // A 'prompt' crossing owns Enter/Esc while its window is up.
+        if (mapPromptRef.current) {
+          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); confirmMapPrompt() }
+          else if (e.key === 'Escape') { e.preventDefault(); cancelMapPrompt() }
+          return
+        }
+        // Block movement while any overlay (combat/shop/encounter) or a fade is active — those handle keys themselves
+        if (menuOpenRef.current || introActiveRef.current || combatStateRef.current || shopIdRef.current || activeEncounterRef.current || dialogueRef.current || inscriptionRef.current || gameOverRef.current || gameEndingRef.current || transitionRef.current) return
         // Blobber controls: W=forward, S=back, A=turn-left, D=turn-right
         if (e.key === 'w' || e.key === 'W' || e.key === 'ArrowUp') { e.preventDefault(); stepForward(); return }
         if (e.key === 's' || e.key === 'S' || e.key === 'ArrowDown') { e.preventDefault(); stepBack(); return }
@@ -1994,7 +2058,7 @@ export function DungeonMapper({
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
-  }, [activeMap, movePlayer, stepForward, stepBack, turnLeft, turnRight, toggleReveal, handleInteract, openNoteForPlayer, undo, saveEpochmap, exportPdf])
+  }, [activeMap, movePlayer, stepForward, stepBack, turnLeft, turnRight, toggleReveal, handleInteract, openNoteForPlayer, undo, saveEpochmap, exportPdf, confirmMapPrompt, cancelMapPrompt])
 
   function closeWelcome() {
     setShowWelcome(false)
@@ -2174,6 +2238,34 @@ export function DungeonMapper({
           onFormulasChange={patch => setRuleset(r => ({ ...r, formulas: { ...r.formulas, ...patch } }))}
           onMusicChange={(idx, musicId) =>
             setMaps(prev => prev.map((m, i) => i === idx ? { ...m, musicId } : m))
+          }
+          onEdgeLinkChange={(idx, dir, targetMapId) =>
+            setMaps(prev => {
+              const src = prev[idx]
+              if (!src) return prev
+              const opp = oppositeEdge(dir)
+              const prevTargetId = src.edgeLinks?.[dir]?.mapId
+              return prev.map(m => {
+                // Source map: set or clear this edge
+                if (m.id === src.id) {
+                  const edgeLinks = { ...(m.edgeLinks ?? {}) }
+                  if (targetMapId) edgeLinks[dir] = { mapId: targetMapId }
+                  else delete edgeLinks[dir]
+                  return { ...m, edgeLinks: Object.keys(edgeLinks).length ? edgeLinks : undefined }
+                }
+                // New target: reciprocate the opposite edge back to the source
+                if (targetMapId && m.id === targetMapId) {
+                  return { ...m, edgeLinks: { ...(m.edgeLinks ?? {}), [opp]: { mapId: src.id } } }
+                }
+                // Previously-linked target being replaced/cleared: drop its reciprocal
+                if (prevTargetId && prevTargetId !== targetMapId && m.id === prevTargetId) {
+                  const edgeLinks = { ...(m.edgeLinks ?? {}) }
+                  if (edgeLinks[opp]?.mapId === src.id) delete edgeLinks[opp]
+                  return { ...m, edgeLinks: Object.keys(edgeLinks).length ? edgeLinks : undefined }
+                }
+                return m
+              })
+            })
           }
         />
       )}
@@ -2658,6 +2750,43 @@ export function DungeonMapper({
       )}
 
       {/* Game over — the party has fallen */}
+      {/* Map-transition fade cover (+ destination name card). z below combat/menu. */}
+      {transition && (
+        <div className="fixed inset-0 z-[65] bg-black pointer-events-none grid place-items-center transition-opacity duration-300 ease-in-out"
+          style={{ opacity: transition.black ? 1 : 0 }}>
+          {transition.label && (
+            <div className="text-center transition-opacity duration-300" style={{ opacity: transition.black ? 1 : 0 }}>
+              <div className="text-[11px] uppercase tracking-[0.3em] text-white/40 mb-1">Entering</div>
+              <div className="text-2xl font-semibold text-white/90" style={{ textShadow: '0 0 18px rgba(120,160,255,0.4)' }}>{transition.label}</div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* 'prompt'-style crossing: a Wizardry-style confirm before descending. */}
+      {mapPrompt && (
+        <div className="fixed inset-0 z-[66] bg-black/70 backdrop-blur-sm grid place-items-center"
+          onClick={cancelMapPrompt}>
+          <div className="w-[22rem] max-w-[90vw] rounded-2xl border border-sky-400/20 bg-zinc-950 p-6 space-y-4 text-center"
+            onClick={e => e.stopPropagation()}>
+            <div className="text-2xl">🚪</div>
+            <div className="text-sm text-white/80">
+              A passage leads onward{mapPrompt.label ? <> to <span className="text-sky-200 font-semibold">{mapPrompt.label}</span></> : null}.
+            </div>
+            <div className="flex gap-2">
+              <button onClick={confirmMapPrompt}
+                className="flex-1 py-2 rounded-lg text-sm font-medium border border-sky-400/30 text-sky-200 hover:bg-sky-500/10">
+                Enter · ⏎
+              </button>
+              <button onClick={cancelMapPrompt}
+                className="flex-1 py-2 rounded-lg text-sm font-medium border border-white/15 text-white/60 hover:bg-white/5">
+                Stay · Esc
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {gameOver && (
         <div className="fixed inset-0 z-[70] bg-black/85 backdrop-blur-sm grid place-items-center">
           <div className="w-[26rem] max-w-[90vw] rounded-2xl border border-red-500/20 bg-zinc-950 p-6 space-y-4 text-center">

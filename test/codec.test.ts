@@ -60,6 +60,7 @@ const sample: EpochmapFile = {
       playerY: 0,
       cells: {},
       revealedChunks: ['0,0'],
+      edgeLinks: { E: { mapId: 'm0' }, N: { mapId: 'm0', transition: 'seamless' } },
     },
   ],
 }
@@ -235,6 +236,12 @@ test('Settings bake in: opening story (text + image) and game meta round-trip', 
   // Per-map visual settings (theme / dark) travel too
   assert.equal(back.maps[0].theme, 'crypt')
   assert.equal(back.maps[0].dark, true)
+})
+
+test('map edgeLinks round-trip through the v2 ext block', () => {
+  const back = parseDotEpochmap(serializeDotEpochmap(sample))
+  assert.deepEqual(back.maps[1].edgeLinks, { E: { mapId: 'm0' }, N: { mapId: 'm0', transition: 'seamless' } })
+  assert.equal(back.maps[0].edgeLinks, undefined)
 })
 
 console.log(`\n${passed} passed`)

@@ -238,6 +238,16 @@ function MapLinkEntityEditor({
           </select>
         </div>
       </div>
+      <div>
+        <label className={LABEL}>Transition</label>
+        <select value={entity.transition ?? 'fade'}
+          onChange={e => onChange({ ...entity, transition: e.target.value === 'fade' ? undefined : e.target.value as 'seamless' | 'prompt' })}
+          className={cn(INPUT, 'w-full')}>
+          <option value="fade">Fade + name card (doors, stairs)</option>
+          <option value="seamless">Seamless (open-world seam)</option>
+          <option value="prompt">Prompt to confirm (Wizardry-style)</option>
+        </select>
+      </div>
     </div>
   )
 }
