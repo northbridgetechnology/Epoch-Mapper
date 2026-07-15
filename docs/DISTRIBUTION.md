@@ -10,8 +10,15 @@ play with every editor surface hidden (`DungeonMapper distribution`, wrapped by
 Build the player once:
 
 ```bash
+npm install            # dev dependencies must be present (esbuild, tailwindcss)
 npm run build:player
 ```
+
+> `build:player` uses esbuild and the Tailwind CLI — both **devDependencies**.
+> On a server where `NODE_ENV=production`, a plain `npm install` skips them; use
+> `npm install --include=dev`. You don't need any of this to use the editor's
+> in-app **Export Standalone HTML** button (the Docker image already builds the
+> template), or to run the app via Docker — only for the CLI build below.
 
 This produces:
 

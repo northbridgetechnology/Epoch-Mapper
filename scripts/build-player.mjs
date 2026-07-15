@@ -14,9 +14,8 @@
  * Uses only esbuild + the Tailwind CLI (both already in devDependencies).
  */
 
-import { build } from 'esbuild'
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, writeFileSync, mkdirSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, writeFileSync, mkdirSync, rmSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -26,6 +25,25 @@ const outDir = path.join(root, 'dist-player')
 const PLACEHOLDER = '__EPOCH_GAME_DATA__'
 
 function log(msg) { process.stdout.write(`[build-player] ${msg}\n`) }
+
+function missingDeps(err) {
+  process.stderr.write(
+    `\n[build-player] Build tools are not installed.\n${err ? `  (${err.message})\n` : ''}` +
+    `\nesbuild and tailwindcss are devDependencies. Install them with:\n\n` +
+    `    npm install            # or: bun install\n` +
+    `    npm install --include=dev   # if NODE_ENV=production skips devDependencies\n\n` +
+    `Then re-run:  npm run build:player\n` +
+    `(No host install needed if you only use the editor's "Export Standalone HTML" button.)\n`,
+  )
+  process.exit(1)
+}
+
+// esbuild + the Tailwind CLI are devDependencies; fail with a clear message
+// rather than a raw ERR_MODULE_NOT_FOUND when they are absent.
+let build
+try { ({ build } = await import('esbuild')) } catch (err) { missingDeps(err) }
+const tailwindBin = path.join(root, 'node_modules/.bin/tailwindcss')
+if (!existsSync(tailwindBin)) missingDeps()
 
 // ── 1. Bundle the player entry into one IIFE ──────────────────────────────────
 log('bundling engine (esbuild)…')
@@ -50,7 +68,6 @@ log(`  bundle: ${(js.length / 1024).toFixed(0)} KB`)
 log('generating CSS (tailwind)…')
 const tmp = mkdtempSync(path.join(tmpdir(), 'epoch-css-'))
 const cssOut = path.join(tmp, 'out.css')
-const tailwindBin = path.join(root, 'node_modules/.bin/tailwindcss')
 execFileSync(tailwindBin, ['-i', path.join(root, 'src/app/globals.css'), '-o', cssOut, '--minify'], {
   cwd: root, stdio: ['ignore', 'ignore', 'inherit'],
 })
