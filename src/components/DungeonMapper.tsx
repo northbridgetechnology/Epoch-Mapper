@@ -1189,6 +1189,20 @@ export function DungeonMapper({
     startNewGame(hero)
   }, [startNewGame])
 
+  // Autoplay policy: the FIRST user gesture anywhere unlocks the audio
+  // context and starts anything queued. Without this, a restored session that
+  // never touches the title screen (or Config) would stay silent forever —
+  // WASD movement alone never counted as an unlock.
+  useEffect(() => {
+    const once = () => music.unlock()
+    window.addEventListener('pointerdown', once, { once: true, capture: true })
+    window.addEventListener('keydown', once, { once: true, capture: true })
+    return () => {
+      window.removeEventListener('pointerdown', once, true)
+      window.removeEventListener('keydown', once, true)
+    }
+  }, [])
+
   // Background music: stop whenever we leave Play mode (runs only on that
   // transition, so authoring-time track previews aren't interrupted).
   useEffect(() => {

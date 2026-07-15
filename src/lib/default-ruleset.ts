@@ -2922,7 +2922,13 @@ export function normalizeRuleset(r: Ruleset): Ruleset {
     weaponTypes: r.weaponTypes?.length ? r.weaponTypes : DEFAULT_WEAPON_TYPES,
     armorTypes: r.armorTypes?.length ? r.armorTypes : DEFAULT_ARMOR_TYPES,
     spellSchools,
-    audioTracks: hadNoAudio ? DEFAULT_AUDIO_TRACKS : (r.audioTracks ?? []),
+    // Built-in tracks merge into every ruleset (they cost nothing and the
+    // 'chip.' namespace can't collide with authored ids) so the library is
+    // always available in the pickers; authored tracks stay untouched.
+    audioTracks: hadNoAudio ? DEFAULT_AUDIO_TRACKS : [
+      ...(r.audioTracks ?? []),
+      ...DEFAULT_AUDIO_TRACKS.filter(t => !(r.audioTracks ?? []).some(x => x.id === t.id)),
+    ],
     items: migrated.items,
     spells: r.spells ?? [],
     skills: r.skills ?? [],

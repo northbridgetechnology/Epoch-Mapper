@@ -88,8 +88,9 @@ test('normalizeRuleset: silent drafts get the library + slots; authored audio un
   authored.audioTracks = [{ id: 'mine', name: 'Mine', source: 'upload', loop: true, volume: 1 }]
   authored.meta = { ...authored.meta, battleMusicId: 'mine' }
   const kept = normalizeRuleset(authored)
-  assert.equal(kept.audioTracks.length, 1)
-  assert.equal(kept.meta.battleMusicId, 'mine')
+  assert.equal(kept.audioTracks.length, 18)                       // authored + merged built-ins
+  assert.equal(kept.audioTracks[0].id, 'mine')                    // authored first, untouched
+  assert.equal(kept.meta.battleMusicId, 'mine')                   // slots stay as authored
 })
 
 console.log(`\n${passed} chiptune tests passed`)
