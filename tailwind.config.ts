@@ -4,6 +4,7 @@ const config: Config = {
   content: [
     './src/app/**/*.{ts,tsx}',
     './src/components/**/*.{ts,tsx}',
+    './src/player/**/*.{ts,tsx}',
   ],
   theme: {
     extend: {

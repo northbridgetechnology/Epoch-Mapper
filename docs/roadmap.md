@@ -293,9 +293,15 @@ parked here, roughly by value:
   **Provoke** (taunt targeting override), **Drain/Lancet** (damage + self-heal
   effect). The Charge empower-next mechanic (StatusEffectDef.boostScope/
   boostMult) is live and reusable for all of these.
-- **Player mode shell**: the Tab menu is now locked to player verbs
-  (CharacterSheet `mode="play"` — identity/level/HP/MP/attributes are
-  display-only; designers cheat via the Party workspace instead). The rest of
-  the wall: a distribution flag that hides the design workspaces entirely so
-  an exported `.epochmap` can be handed to players; optional "allow renaming
-  in play" Game Rule if a game wants FF-style name changes.
+- **Player mode shell** *(shipped)*: the Tab menu is locked to player verbs
+  (CharacterSheet `mode="play"`), and `DungeonMapper distribution` hides every
+  design surface, booting straight into play — wrapped by `<GamePlayer>`, which
+  decodes an embedded `.epochmap` and restores its baked audio. A built game
+  distributes three ways off one player build (`npm run build:player`): a
+  single self-contained HTML (File → Export Standalone HTML, or
+  `scripts/bake-game.mjs`), a hosted static folder (`dist-player/web` + a
+  sidecar `game.epochmap`), or a native desktop app (Tauri scaffold in
+  `src-tauri/`). See `docs/DISTRIBUTION.md`. Still optional: an "allow renaming
+  in play" Game Rule; splitting the editor bundle out of the player build so
+  the standalone ships only the play engine (today the whole editor is bundled
+  but hidden).

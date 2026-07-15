@@ -147,6 +147,7 @@ export { NpcEditor } from './components/forms/NpcEditor'
 export { DatabaseWorkspace } from './components/workspaces/DatabaseWorkspace'
 export { PlayWorkspace } from './components/workspaces/PlayWorkspace'
 export { GameMenu } from './components/GameMenu'
+export { GamePlayer, type GamePlayerProps } from './components/GamePlayer'
 
 // Item schema helpers
 export { ITEM_SCHEMA, ITEM_KINDS, LOOT_TABLE_SCHEMA, blankItem, blankLootTable, itemDisplayName, itemGroups } from './lib/item-schema'

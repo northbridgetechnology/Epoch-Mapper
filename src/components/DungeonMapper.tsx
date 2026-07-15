@@ -205,6 +205,13 @@ export interface DungeonMapperProps {
   onSessionChange?: (session: EpochmapFile) => void
   /** Show the first-visit welcome modal in standalone mode. Default true. */
   welcomeOnFirstVisit?: boolean
+  /**
+   * Distribution (player) mode: hides every design surface — the activity bar
+   * and all editor workspaces — and boots straight into Play. The whole
+   * authoring UI is suppressed so a built game can be handed to players. Pair
+   * with `initialSession` (the embedded game) and `layout="fill"`.
+   */
+  distribution?: boolean
 }
 
 export function DungeonMapper({
@@ -212,8 +219,10 @@ export function DungeonMapper({
   initialSession,
   onSessionChange,
   welcomeOnFirstVisit = true,
+  distribution = false,
 }: DungeonMapperProps = {}) {
   const controlled = !!onSessionChange || !!initialSession
+  const showWelcomeGate = welcomeOnFirstVisit && !distribution
   const [gameTitle, setGameTitle] = useState('')
   const [romHash, setRomHash] = useState('')
   const [customMarkers, setCustomMarkers] = useState<CustomMarker[]>([])
@@ -250,7 +259,7 @@ export function DungeonMapper({
 
   // Activity-bar workspace
   type Workspace = 'map' | 'database' | 'characters' | 'play' | 'settings'
-  const [workspace, setWorkspace] = useState<Workspace>('map')
+  const [workspace, setWorkspace] = useState<Workspace>(distribution ? 'play' : 'map')
   const workspaceRef = useRef<Workspace>('map')
   workspaceRef.current = workspace
   const [ruleset, setRuleset] = useState<Ruleset>(() => makeDefaultRuleset())
@@ -386,7 +395,7 @@ export function DungeonMapper({
     if (restored && !initialSession) {
       setTimeout(() => toast('Restored unsaved session'), 50)
     }
-    if (!controlled && welcomeOnFirstVisit) {
+    if (!controlled && showWelcomeGate) {
       try {
         if (!localStorage.getItem(WELCOME_KEY)) setShowWelcome(true)
       } catch {
@@ -1937,26 +1946,59 @@ export function DungeonMapper({
     e.target.value = ''
   }
 
-  const saveEpochmap = useCallback(async () => {
-    // Bake uploaded music blobs (kept in IndexedDB, out of the localStorage
-    // draft) into the file so the .epochmap stays self-contained.
+  /** Assemble the current session into a self-contained EpochmapFile, baking
+   *  uploaded audio blobs (kept in IndexedDB) into it. Shared by save + export. */
+  const buildEpochmapFile = useCallback(async (): Promise<EpochmapFile> => {
     const uploadIds = (ruleset?.audioTracks ?? []).filter(t => t.source === 'upload').map(t => t.id)
     let audioBlobs: Record<string, string> | undefined
     if (uploadIds.length) {
       try { audioBlobs = await gatherAudioBlobs(uploadIds) } catch { /* skip audio bake on failure */ }
     }
-    const file: EpochmapFile = { version: 2, gameTitle, romHash, customMarkers, maps, ruleset, audioBlobs }
-    const bytes = serializeDotEpochmap(file)
-    const blob = new Blob([bytes as BlobPart], { type: 'application/octet-stream' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    const safe = (gameTitle || 'maps').replace(/[^a-z0-9]+/gi, '-').toLowerCase()
-    a.href = url
-    a.download = `${safe}.epochmap`
-    a.click()
-    URL.revokeObjectURL(url)
-    toast.success('Saved .epochmap')
+    return { version: 2, gameTitle, romHash, customMarkers, maps, ruleset, audioBlobs }
   }, [gameTitle, romHash, customMarkers, maps, ruleset])
+
+  const downloadBlob = (data: BlobPart, filename: string, type: string) => {
+    const url = URL.createObjectURL(new Blob([data], { type }))
+    const a = document.createElement('a')
+    a.href = url; a.download = filename; a.click()
+    URL.revokeObjectURL(url)
+  }
+  const safeName = useCallback(() => (gameTitle || 'game').replace(/[^a-z0-9]+/gi, '-').toLowerCase(), [gameTitle])
+
+  const saveEpochmap = useCallback(async () => {
+    const file = await buildEpochmapFile()
+    downloadBlob(serializeDotEpochmap(file) as BlobPart, `${safeName()}.epochmap`, 'application/octet-stream')
+    toast.success('Saved .epochmap')
+  }, [buildEpochmapFile, safeName])
+
+  /** Bake the current game into a self-contained standalone HTML the player can
+   *  double-click. Injects the base64 .epochmap into the pre-built player
+   *  template (public/player-template.html, produced by `npm run build:player`). */
+  const exportStandalone = useCallback(async () => {
+    const PLACEHOLDER = '__EPOCH_GAME_DATA__'
+    let template: string
+    try {
+      const res = await fetch('/player-template.html', { cache: 'no-store' })
+      if (!res.ok) throw new Error(String(res.status))
+      template = await res.text()
+    } catch {
+      toast.error('Player template missing — run "npm run build:player" first.')
+      return
+    }
+    if (!template.includes(JSON.stringify(PLACEHOLDER))) {
+      toast.error('Player template is malformed (no game placeholder).')
+      return
+    }
+    const file = await buildEpochmapFile()
+    const bytes = serializeDotEpochmap(file)
+    // Base64-encode the bytes (chunked to avoid call-stack limits).
+    let bin = ''
+    for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000))
+    const b64 = btoa(bin)
+    const html = template.replace(JSON.stringify(PLACEHOLDER), JSON.stringify(b64))
+    downloadBlob(html, `${safeName()}.html`, 'text/html')
+    toast.success('Exported standalone HTML — double-click to play.')
+  }, [buildEpochmapFile, safeName])
 
   const exportPdf = useCallback(async () => {
     if (maps.length === 0) return
@@ -2100,24 +2142,26 @@ export function DungeonMapper({
         if (file?.name.endsWith('.epochmap')) loadFile(file, 'open')
       }}
     >
-      {/* Activity bar */}
-      <nav className="w-12 flex-shrink-0 flex flex-col items-center gap-1 py-2 border-r border-white/10 bg-zinc-950 z-10">
-        {WORKSPACES.map(ws => (
-          <button
-            key={ws.id}
-            title={ws.label}
-            onClick={() => setWorkspace(ws.id)}
-            className={cn(
-              'w-9 h-9 grid place-items-center rounded-lg transition-colors',
-              workspace === ws.id
-                ? 'bg-amber-600/20 text-amber-400'
-                : 'text-white/40 hover:text-white hover:bg-white/10',
-            )}
-          >
-            {ws.icon}
-          </button>
-        ))}
-      </nav>
+      {/* Activity bar — hidden in distribution (player) mode */}
+      {!distribution && (
+        <nav className="w-12 flex-shrink-0 flex flex-col items-center gap-1 py-2 border-r border-white/10 bg-zinc-950 z-10">
+          {WORKSPACES.map(ws => (
+            <button
+              key={ws.id}
+              title={ws.label}
+              onClick={() => setWorkspace(ws.id)}
+              className={cn(
+                'w-9 h-9 grid place-items-center rounded-lg transition-colors',
+                workspace === ws.id
+                  ? 'bg-amber-600/20 text-amber-400'
+                  : 'text-white/40 hover:text-white hover:bg-white/10',
+              )}
+            >
+              {ws.icon}
+            </button>
+          ))}
+        </nav>
+      )}
 
       {/* Party workspace */}
       {workspace === 'characters' && (
@@ -2283,6 +2327,7 @@ export function DungeonMapper({
         onNew={doNew}
         onOpen={() => pickFile('open')}
         onSave={saveEpochmap}
+        onExportStandalone={exportStandalone}
         onImport={() => pickFile('import')}
         onExportPdf={exportPdf}
         onUndo={undo}

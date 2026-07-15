@@ -242,6 +242,27 @@ its `DungeonMap` table — see `Epoch/src/components/arcade/DungeonMapPanel.tsx`
 
 ---
 
+## Distributing a finished game
+
+A built game is self-contained (ruleset + maps + baked audio + sprites, all in
+one `.epochmap`) and the engine is serverless client code, so a game ships as a
+**standalone, editor-free player** three ways:
+
+- **Single HTML file** — File → **Export Standalone HTML** (or
+  `scripts/bake-game.mjs`) bakes the game into one double-click-to-play `.html`.
+  Perfect for itch.io HTML5.
+- **Hosted web build** — `npm run build:player` → deploy `dist-player/web/` with
+  a sidecar `game.epochmap` to any static host.
+- **Native desktop app** — a [Tauri](https://tauri.app) scaffold (`src-tauri/`)
+  wraps the same build into a small Windows/macOS/Linux binary
+  (`npm run desktop:build`).
+
+All three come from one player build (`DungeonMapper distribution`, wrapped by
+`<GamePlayer>`). Full walkthrough — including save-persistence and code-signing
+caveats — in [`docs/DISTRIBUTION.md`](docs/DISTRIBUTION.md).
+
+---
+
 ## The `.epochmap` format
 
 A compact, gzip-compressed, self-describing binary. The header is **never
