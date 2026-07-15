@@ -251,8 +251,9 @@ one `.epochmap`) and the engine is serverless client code, so a game ships as a
 - **Single HTML file** — File → **Export Standalone HTML** (or
   `scripts/bake-game.mjs`) bakes the game into one double-click-to-play `.html`.
   Perfect for itch.io HTML5.
-- **Hosted web build** — `npm run build:player` → deploy `dist-player/web/` with
-  a sidecar `game.epochmap` to any static host.
+- **Hosted web build** — File → **Export Web Build (.zip)** downloads
+  `index.html` + `game.epochmap` to unzip onto any static host or upload to
+  itch.io (or `npm run build:player` for the folder).
 - **Native desktop app** — a [Tauri](https://tauri.app) scaffold (`src-tauri/`)
   wraps the same build into a small Windows/macOS/Linux binary
   (`npm run desktop:build`).

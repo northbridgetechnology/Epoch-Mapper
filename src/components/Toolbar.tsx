@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react'
 import {
   ChevronDown, FilePlus2, FolderOpen, Save, Upload, FileDown, Undo2, ZoomIn, ZoomOut,
-  Palette, HelpCircle, Map as MapIcon, Check, Edit2, Loader2, Package,
+  Palette, HelpCircle, Map as MapIcon, Check, Edit2, Loader2, Package, Globe,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -19,6 +19,7 @@ interface ToolbarProps {
   onImport: () => void
   onExportPdf: () => void
   onExportStandalone: () => void
+  onExportWebBuild: () => void
   onUndo: () => void
   onZoomIn: () => void
   onZoomOut: () => void
@@ -75,6 +76,7 @@ export function Toolbar(props: ToolbarProps) {
               <MenuItem icon={<Save className="h-4 w-4" />} label="Save .epochmap" hint="Ctrl+S" onClick={() => fileAction(props.onSave)} />
               <MenuItem icon={<FileDown className="h-4 w-4" />} label="Export PDF" hint="Ctrl+P" onClick={() => fileAction(props.onExportPdf)} />
               <MenuItem icon={<Package className="h-4 w-4" />} label="Export Standalone HTML…" onClick={() => fileAction(props.onExportStandalone)} />
+              <MenuItem icon={<Globe className="h-4 w-4" />} label="Export Web Build (.zip)…" onClick={() => fileAction(props.onExportWebBuild)} />
             </div>
           )}
         </div>

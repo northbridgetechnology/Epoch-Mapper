@@ -13,6 +13,7 @@ import {
 import type { CellData, CellMap, CustomMarker, EdgeDir, EpochmapFile, MapData, MarkerDef, SubcubeObject } from '@/lib/types'
 import { getTheme } from '@/lib/themes'
 import { parseDotEpochmap, serializeDotEpochmap } from '@/lib/epochmap-codec'
+import { zipSync } from 'fflate'
 import { gatherAudioBlobs, restoreAudioBlobs, clearAudioStore } from '@/lib/audio-store'
 import { music } from '@/lib/audio-controller'
 import { resolveTrack, trackById } from '@/lib/music'
@@ -2000,6 +2001,28 @@ export function DungeonMapper({
     toast.success('Exported standalone HTML — double-click to play.')
   }, [buildEpochmapFile, safeName])
 
+  /** Export a hosted web build as a .zip: index.html (the player, unmodified —
+   *  it falls back to loading a sidecar ./game.epochmap) + game.epochmap. Unzip
+   *  onto any static host, or upload the zip to itch.io as an HTML5 game. */
+  const exportWebBuild = useCallback(async () => {
+    let template: string
+    try {
+      const res = await fetch('/player-template.html', { cache: 'no-store' })
+      if (!res.ok) throw new Error(String(res.status))
+      template = await res.text()
+    } catch {
+      toast.error('Player template missing — run "npm run build:player" first.')
+      return
+    }
+    const file = await buildEpochmapFile()
+    const zip = zipSync({
+      'index.html': new TextEncoder().encode(template),
+      'game.epochmap': serializeDotEpochmap(file),
+    }, { level: 0 })  // the .epochmap is already gzipped; the html re-zips fast
+    downloadBlob(zip as BlobPart, `${safeName()}-web.zip`, 'application/zip')
+    toast.success('Exported web build (.zip) — unzip to any host or upload to itch.io.')
+  }, [buildEpochmapFile, safeName])
+
   const exportPdf = useCallback(async () => {
     if (maps.length === 0) return
     setExporting(true)
@@ -2328,6 +2351,7 @@ export function DungeonMapper({
         onOpen={() => pickFile('open')}
         onSave={saveEpochmap}
         onExportStandalone={exportStandalone}
+        onExportWebBuild={exportWebBuild}
         onImport={() => pickFile('import')}
         onExportPdf={exportPdf}
         onUndo={undo}

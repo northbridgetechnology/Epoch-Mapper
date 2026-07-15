@@ -63,6 +63,13 @@ stay small.
 
 Serve a folder; saves work reliably because the page has a real origin.
 
+**From the editor (no install needed):** File → **Export Web Build (.zip)…**
+downloads a zip containing `index.html` + `game.epochmap`. Unzip onto any
+static host, or upload the zip straight to itch.io as an HTML5 game (set
+`index.html` as the launch file).
+
+**From the CLI:**
+
 ```bash
 npm run build:player
 cp my-game.epochmap dist-player/web/game.epochmap
