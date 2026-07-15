@@ -38,7 +38,7 @@ import { DialogueOverlay } from './DialogueOverlay'
 import { resolveText } from '@/lib/text-tokens'
 import { OpeningStoryOverlay } from './OpeningStory'
 import { CharacterBuilder } from './CharacterBuilder'
-import { applyMoveTricks, cellHasTrick, computeLightRadius, tickLightBurn, tickExplorationStatuses, restParty, advanceFoes, listFoes, foeFlagKey, seenCellsFrom } from '@/lib/exploration'
+import { applyMoveTricks, cellHasTrick, chartWalkedCell, tickLightBurn, tickExplorationStatuses, restParty, advanceFoes, listFoes, foeFlagKey } from '@/lib/exploration'
 import { initCombat, applyCombatOutcome, consumeCombatItems, type CombatState } from '@/lib/combat-engine'
 import { CellInspector } from './CellInspector'
 import { usePanelWidth } from './ui/ResizablePanel'
@@ -453,23 +453,14 @@ export function DungeonMapper({
     return changed ? [...set] : (map.revealedChunks ?? [])
   }, [])
 
-  // Per-cell exploration reveal for the Play-mode minimap: merge whatever the
-  // party sees standing on (x,y) (cardinal line of sight, stops at walls/doors)
-  // into the map's persisted `seenCells`. Chunk fog above stays independent.
-  const revealSeen = useCallback((map: MapData, x: number, y: number): string[] => {
-    // On dark maps sight is clamped to the party's light radius, so a torch
-    // only ever remembers as far as it could actually see; lit maps see full.
-    const cell = map.cells[`${x},${y}`]
-    const maxDist = (map.dark || cellHasTrick(cell, 'darkness'))
-      ? computeLightRadius(partyRef.current, ruleset, cell)
-      : undefined
-    const set = new Set(map.seenCells ?? [])
-    let changed = false
-    for (const k of seenCellsFrom(map, x, y, flagsRef.current, maxDist)) {
-      if (!set.has(k)) { set.add(k); changed = true }
-    }
-    return changed ? [...set] : (map.seenCells ?? [])
-  }, [ruleset])
+  // Per-cell exploration reveal for the Play-mode minimap: strictly the cells
+  // the party has WALKED — no line-of-sight bleed. The auto-map is a breadcrumb
+  // trail (Etrian/SMT style); seeing down a corridor doesn't chart it. Chunk
+  // fog above stays independent (it feeds the 3D renderer, which must draw
+  // what's ahead). Authored reveals (Cartographer's Lens, Scry) can still use
+  // seenCellsFrom to widen this set — see docs/roadmap.md.
+  const revealSeen = useCallback((map: MapData, x: number, y: number): string[] =>
+    chartWalkedCell(map.seenCells, x, y), [])
 
   // Convenience: the full position patch applied on every party move.
   const moveReveal = useCallback((m: MapData, x: number, y: number) => ({

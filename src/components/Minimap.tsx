@@ -4,15 +4,14 @@ import type { MapData, EdgeDir } from '@/lib/types'
 import type { Facing, Ruleset } from '@/lib/engine-types'
 import { BASE, EDGE, OVERLAY, boundaryKey } from '@/lib/constants'
 import { npcRecruitedFlagKey } from '@/lib/event-engine'
-import { seenCellsFrom } from '@/lib/exploration'
 import { getTheme } from '@/lib/themes'
 
 /**
  * Round, north-up minimap for Play mode. Shows a 9×9 window centred on the
- * party. Fog is strictly exploration-based: a cell only appears once the party
- * has actually seen it (persisted `map.seenCells`) plus whatever is in current
- * line of sight this step. Revealed geography persists even on dark maps (you
- * remember where you've walked). The player is an arrow that rotates with facing.
+ * party. Fog is strictly walked-cell exploration (persisted `map.seenCells`):
+ * the auto-map is a breadcrumb trail — no line-of-sight bleed. Revealed
+ * geography persists even on dark maps (you remember where you've walked).
+ * The player is an arrow that rotates with facing.
  */
 
 const R = 4                       // radius → 9×9 window
@@ -45,15 +44,12 @@ const FILL_COLOR: Record<Fill, string> = {
 }
 
 export function Minimap({
-  map, facing, flags, ruleset, sightRadius,
+  map, facing, flags, ruleset,
 }: {
   map: MapData
   facing: Facing
   flags: Record<string, boolean | number | string>
   ruleset?: Ruleset
-  /** Current view distance in cells (party light on dark maps). Undefined =
-   *  fully lit, so the live line of sight uses the default reveal distance. */
-  sightRadius?: number
 }) {
   const px = map.playerX
   const py = map.playerY
@@ -61,9 +57,10 @@ export function Minimap({
   const x0 = px - R
   const y0 = py - R
 
-  // Exploration reveal: everything ever seen, plus the current line of sight.
+  // Exploration reveal: strictly the walked trail. The current cell is always
+  // charted (covers the spawn cell before the first step).
   const revealedSet = new Set(map.seenCells ?? [])
-  for (const k of seenCellsFrom(map, px, py, flags, sightRadius)) revealedSet.add(k)
+  revealedSet.add(`${px},${py}`)
   const isRevealed = (gx: number, gy: number) => revealedSet.has(`${gx},${gy}`)
 
   const sx = (gx: number) => (gx - x0) * CELL

@@ -4,7 +4,7 @@
  */
 
 import assert from 'node:assert/strict'
-import { applyMoveTricks, cellHasTrick, computeLightRadius, tickLightBurn, tickExplorationStatuses, restParty, listFoes, advanceFoes, foeFlagKey, seenCellsFrom, DARK_BASE_RADIUS } from '../src/lib/exploration'
+import { applyMoveTricks, cellHasTrick, chartWalkedCell, computeLightRadius, tickLightBurn, tickExplorationStatuses, restParty, listFoes, advanceFoes, foeFlagKey, seenCellsFrom, DARK_BASE_RADIUS } from '../src/lib/exploration'
 import { EDGE } from '../src/lib/constants'
 import { makeDefaultRuleset } from '../src/lib/default-ruleset'
 import type { CellData, MapData } from '../src/lib/types'
@@ -293,6 +293,19 @@ test('exploration: poison can knock a member out', () => {
   const r = tickExplorationStatuses([afflicted('status.poisoned', 4, 1)], ruleset, 2, () => 0)
   assert.equal(r.party[0].alive, false)
   assert.equal(r.party[0].hp, 0)
+})
+
+test('chartWalkedCell: the auto-map is walked cells only — no LOS bleed', () => {
+  // Walking charts exactly the stood-on cell…
+  let trail = chartWalkedCell(undefined, 0, 0)
+  trail = chartWalkedCell(trail, 1, 0)
+  assert.deepEqual(trail, ['0,0', '1,0'])
+  // …never the corridor LOS would see from there.
+  const los = seenCellsFrom(floorMap(), 1, 0, {}, 4).filter(k => !trail.includes(k))
+  assert.ok(los.length > 0, 'fixture sanity: LOS sees beyond the trail')
+  for (const k of los) assert.ok(!trail.includes(k))
+  // Idempotent: re-charting a walked cell returns the same array reference.
+  assert.equal(chartWalkedCell(trail, 1, 0), trail)
 })
 
 console.log(`\n${passed} passed`)

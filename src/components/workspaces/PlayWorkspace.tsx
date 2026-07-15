@@ -1335,6 +1335,13 @@ export function PlayWorkspace({
 
   const px = activeMap.playerX; const py = activeMap.playerY
 
+  // The full-map view (M) is fogged by the walked trail — the same per-cell
+  // exploration set the minimap uses, NOT the editor's generous chunk fog
+  // (which feeds the 3D renderer so it can draw the corridor ahead).
+  const seenSet = new Set(activeMap.seenCells ?? [])
+  seenSet.add(`${px},${py}`)
+  const isSeenCell = (x: number, y: number) => seenSet.has(`${x},${y}`)
+
   // Dark maps (or local darkness zones) limit view to the party's light
   const playerCell = activeMap.cells[`${px},${py}`]
   const lightRadius = (activeMap.dark || cellHasTrick(playerCell, 'darkness'))
@@ -1399,7 +1406,7 @@ export function PlayWorkspace({
             lightRadius={lightRadius}
           />
           {!combat && (
-            <Minimap map={activeMap} facing={facing} flags={flags} ruleset={ruleset} sightRadius={lightRadius} />
+            <Minimap map={activeMap} facing={facing} flags={flags} ruleset={ruleset} />
           )}
           {combat && <BattleOutcomeOverlay state={combat} ruleset={ruleset} onContinue={onCombatEnd} />}
         </div>
@@ -1410,7 +1417,7 @@ export function PlayWorkspace({
           facing={facing}
           customBase={customBase}
           customOverlay={customOverlay}
-          isCellRevealed={isCellRevealed}
+          isCellRevealed={isSeenCell}
         />
       )}
 

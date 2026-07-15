@@ -247,6 +247,12 @@ parked here, roughly by value:
   play view (doors, chests, NPC barks) — the Tab menu already uses modal FF
   alert windows via `notify()`; exploration still uses corner toasts by
   design, but a period-authentic strip would complete the look.
+- **Authored map reveals** — the auto-map is now strictly the walked trail
+  (`chartWalkedCell`), and `seenCellsFrom` (cardinal LOS, wall-aware) is kept
+  exported as the engine piece for content that widens it: a **Cartographer's
+  Lens** item (onUse: LOS-reveal from the current cell), a **Scry** spell
+  (reveal a radius around the party), or extending the existing `reveal`
+  event effect to write `seenCells` instead of editor chunk fog.
 - Database editor QoL: bestiary list sorting/grouping (the shared
   `SortedList` pattern used by spells/statuses/skills/items is a drop-in);
   a Duplicate action on the other database lists (spells, items, skills) —

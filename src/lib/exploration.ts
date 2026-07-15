@@ -211,11 +211,26 @@ function blocksBase(base: number): boolean {
 }
 
 /**
+ * Chart the walked cell into the auto-map trail. The Play-mode minimap and the
+ * full-map (M) view are fogged strictly by this breadcrumb trail — standing on
+ * a cell maps it; seeing down a corridor does not. Returns the same array when
+ * nothing changed so React state stays referentially stable.
+ */
+export function chartWalkedCell(seenCells: string[] | undefined, x: number, y: number): string[] {
+  const key = `${x},${y}`
+  if (seenCells?.includes(key)) return seenCells
+  return [...(seenCells ?? []), key]
+}
+
+/**
  * Cells the party sees standing on `(x,y)`: the cell itself plus cardinal
  * line-of-sight out to `maxDist`, stopping at walls and shut doors. A blocking
  * wall cell is itself revealed (you see its near face) before the ray halts.
- * This is the exploration-reveal source for the Play-mode minimap — cells are
- * only ever revealed by having actually been seen, never pre-lit in bulk.
+ *
+ * NOT used by the core auto-map (that's `chartWalkedCell` — walked cells
+ * only). Kept as the engine piece for authored map reveals: a Cartographer's
+ * Lens item, a Scry spell, or the `reveal` event effect widening `seenCells`
+ * by line of sight — see docs/roadmap.md.
  */
 export function seenCellsFrom(
   map: MapData,

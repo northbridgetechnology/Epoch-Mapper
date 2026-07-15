@@ -206,7 +206,7 @@ export type { EquipCheck } from './lib/equipment'
 export { resolveEncounterTable, checkCellForEncounter, makeFixedEncounter, visitedFlagKey } from './lib/encounter-engine'
 
 // Exploration mechanics: trick tiles + party light (dark maps)
-export { applyMoveTricks, getTricks, cellHasTrick, computeLightRadius, tickLightBurn, restParty, listFoes, advanceFoes, foeFlagKey, seenCellsFrom, DARK_BASE_RADIUS } from './lib/exploration'
+export { applyMoveTricks, getTricks, cellHasTrick, computeLightRadius, tickLightBurn, restParty, listFoes, advanceFoes, foeFlagKey, seenCellsFrom, chartWalkedCell, DARK_BASE_RADIUS } from './lib/exploration'
 export type { TrickMoveResult, RestResult, FoeRuntime } from './lib/exploration'
 export type { ResolvedEncounter, EnemyInstance, CellEntity, ObjectInstance, Condition, CellEvent, BoundaryData, DoorDef, DoorState, Facing, SwitchDef, InscriptionDef, TrickKind, EventDef, NpcDef, NpcLine, QuestDef, QuestStage } from './lib/engine-types'
 
