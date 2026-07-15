@@ -1,0 +1,2 @@
+# Keeps public/ present in every checkout so the Docker build can COPY it,
+# and so `npm run build:player` has a home for player-template.html.
