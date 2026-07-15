@@ -4,10 +4,11 @@
  */
 
 import type {
-  AttributeDef, ClassDef, RaceDef, SpellDef, StatusEffectDef,
+  AttributeDef, AudioTrackDef, ClassDef, RaceDef, SpellDef, StatusEffectDef,
   ItemDef, WeaponTypeDef, ArmorTypeDef, SpellSchoolDef, SkillDef, EnemyDef, EncounterTableDef, LootTableDef, ShopDef,
   Ruleset,
 } from './engine-types'
+import { CHIP_TRACKS, CHIP_BOSS_INTRO } from './chiptune'
 
 // ── Attributes ─────────────────────────────────────────────────────────────────
 
@@ -108,6 +109,29 @@ export const DEFAULT_ARMOR_TYPES: ArmorTypeDef[] = [
   { id: 'atype.buckler', name: 'Buckler',      icon: '🛡️', color: '#b07d4a', description: 'A small light shield strapped to the forearm.',                weight: 'light' },
   { id: 'atype.shield',  name: 'Shield',       icon: '🛡️', color: '#b2bec3', description: 'A full shield — sturdy cover that slows the guard.',            weight: 'medium', speedMod: -1 },
 ]
+
+// ── Built-in music (synthesized chiptune library — zero assets) ─────────────────
+
+export const DEFAULT_AUDIO_TRACKS: AudioTrackDef[] = [...CHIP_TRACKS, CHIP_BOSS_INTRO].map(t => ({
+  id: t.id,
+  name: t.name,
+  icon: '🎵',
+  description: 'Built-in synthesized chiptune. Replace with an upload any time.',
+  source: 'builtin' as const,
+  loop: t.id !== 'chip.boss_intro',
+  volume: 1,
+}))
+
+/** Default global music slots — every fresh game is fully scored. */
+export const DEFAULT_MUSIC_SLOTS = {
+  titleMusicId: 'chip.title',
+  defaultMusicId: 'chip.dungeon',
+  battleMusicId: 'chip.battle',
+  bossMusicId: 'chip.boss',
+  bossIntroId: 'chip.boss_intro',
+  victoryMusicId: 'chip.victory',
+  gameOverMusicId: 'chip.gameover',
+} as const
 
 // ── Spell schools ───────────────────────────────────────────────────────────────
 // Ids are the historical school strings, so legacy spells/classes (which stored
@@ -2883,13 +2907,22 @@ export function normalizeRuleset(r: Ruleset): Ruleset {
     spellSchools = [...DEFAULT_SPELL_SCHOOLS, ...extras]
   }
 
+  // Audio: a ruleset with no tracks at all gets the built-in chiptune library,
+  // and any unset global music slot points at the matching built-in — a strict
+  // improvement for silent drafts, while authored audio is left untouched.
+  const hadNoAudio = !(r.audioTracks && r.audioTracks.length)
+  const meta = hadNoAudio
+    ? { ...DEFAULT_MUSIC_SLOTS, ...Object.fromEntries(Object.entries(r.meta).filter(([, v]) => v !== undefined)) } as typeof r.meta
+    : r.meta
+
   return {
     ...r,
+    meta,
     classes: migrated.classes,
     weaponTypes: r.weaponTypes?.length ? r.weaponTypes : DEFAULT_WEAPON_TYPES,
     armorTypes: r.armorTypes?.length ? r.armorTypes : DEFAULT_ARMOR_TYPES,
     spellSchools,
-    audioTracks: r.audioTracks ?? [],
+    audioTracks: hadNoAudio ? DEFAULT_AUDIO_TRACKS : (r.audioTracks ?? []),
     items: migrated.items,
     spells: r.spells ?? [],
     skills: r.skills ?? [],
@@ -2915,6 +2948,7 @@ export function makeDefaultRuleset(startMapId = 'map1'): Ruleset {
       rows: 2,
       permadeath: false,
       startingGold: 100,
+      ...DEFAULT_MUSIC_SLOTS,
     },
     attributes: DEFAULT_ATTRIBUTES,
     classes: DEFAULT_CLASSES,
@@ -2922,7 +2956,7 @@ export function makeDefaultRuleset(startMapId = 'map1'): Ruleset {
     weaponTypes: DEFAULT_WEAPON_TYPES,
     armorTypes: DEFAULT_ARMOR_TYPES,
     spellSchools: DEFAULT_SPELL_SCHOOLS,
-    audioTracks: [],
+    audioTracks: DEFAULT_AUDIO_TRACKS,
     items: DEFAULT_ITEMS,
     spells: DEFAULT_SPELLS,
     skills: DEFAULT_SKILLS,

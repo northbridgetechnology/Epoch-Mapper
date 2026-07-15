@@ -108,7 +108,7 @@ export type {
 export { deriveMaxHp, deriveMaxMp, xpToNextLevel } from './lib/engine-types'
 
 // Default ruleset
-export { makeDefaultRuleset, normalizeRuleset, DEFAULT_ATTRIBUTES, DEFAULT_CLASSES, DEFAULT_RACES, DEFAULT_SPELLS, DEFAULT_STATUS_EFFECTS } from './lib/default-ruleset'
+export { makeDefaultRuleset, normalizeRuleset, DEFAULT_ATTRIBUTES, DEFAULT_CLASSES, DEFAULT_RACES, DEFAULT_SPELLS, DEFAULT_STATUS_EFFECTS, DEFAULT_AUDIO_TRACKS, DEFAULT_MUSIC_SLOTS } from './lib/default-ruleset'
 
 // .epochsave codec + party persistence
 export {
@@ -167,6 +167,10 @@ export { resolveMusicId, resolveTrack, trackById, blankAudioTrack } from './lib/
 export type { MusicContext } from './lib/music'
 export { music } from './lib/audio-controller'
 export { putTrack, getTrack, deleteTrack, hasTrack, listTrackIds, gatherAudioBlobs, restoreAudioBlobs } from './lib/audio-store'
+
+// Built-in chiptune library (synthesized music + SFX, zero assets)
+export { CHIP_TRACKS, CHIP_BOSS_INTRO, composeChip, chipSpecById, isBuiltinTrackId, renderChip, renderSfx, SFX_DEFS } from './lib/chiptune'
+export type { ChipSpec, ChipScore, SfxName } from './lib/chiptune'
 
 // Player notifications — FF alert window inside the Tab menu, toasts elsewhere
 export { notify, setNotifySink } from './lib/notify'

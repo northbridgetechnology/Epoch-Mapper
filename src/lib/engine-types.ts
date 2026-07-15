@@ -72,6 +72,8 @@ export type Effect =
   | { t: 'removeCurse' }
   /** Teach the target character a spell (scrolls, trainers). */
   | { t: 'teachSpell'; spell: DefRef<SpellDef> }
+  /** Play a one-shot sound effect from the built-in SFX kit. */
+  | { t: 'playSound'; sound: string }
   /** Roll credits: ends the game with optional epilogue text. */
   | { t: 'gameEnd'; text?: string }
   /** Recruit an NPC into the party (dialogue "will you join me?", quest reward). */
@@ -297,11 +299,14 @@ export interface EncounterTableDef extends Definition {
 
 /** A looping background-music track. The bytes never live in the ruleset JSON:
  *  uploaded tracks are stored in IndexedDB (keyed by this id) and baked into the
- *  .epochmap on export; 'url' tracks stream from an external address. */
+ *  .epochmap on export; 'url' tracks stream from an external address; 'builtin'
+ *  tracks are synthesized on demand from the chiptune library (zero assets —
+ *  they regenerate anywhere, nothing to bake). */
 export interface AudioTrackDef extends Definition {
   /** 'upload' = blob in IndexedDB under this id (baked on export);
-   *  'url' = streamed from `src`. */
-  source: 'upload' | 'url'
+   *  'url' = streamed from `src`;
+   *  'builtin' = synthesized from the chiptune spec with this id. */
+  source: 'upload' | 'url' | 'builtin'
   /** For 'url': the external address. For 'upload': the original filename
    *  (informational — the blob is keyed by id, not by this). */
   src?: string
@@ -422,6 +427,16 @@ export interface GameMeta {
   /** Generic boss track — plays for encounters flagged boss (unless the
    *  encounter carries its own custom musicId). */
   bossMusicId?: DefRef<AudioTrackDef>
+  /** Title-screen track. Falls back to defaultMusicId when unset. */
+  titleMusicId?: DefRef<AudioTrackDef>
+  /** Played (looping, FF-style) under the battle-outcome overlay on victory;
+   *  the map track resumes when the overlay is dismissed. */
+  victoryMusicId?: DefRef<AudioTrackDef>
+  /** Played into the wipe/game-over flow on defeat. */
+  gameOverMusicId?: DefRef<AudioTrackDef>
+  /** Short stinger played once when a boss battle starts, chaining straight
+   *  into the boss loop. */
+  bossIntroId?: DefRef<AudioTrackDef>
   /** Turn system for all battles (classic / oneMore / pressTurn). Global game
    *  rule; legacy per-map MapData.combatMode is honored only when this is
    *  unset. Default 'classic'. */
