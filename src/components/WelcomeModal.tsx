@@ -3,13 +3,14 @@
 import { X } from 'lucide-react'
 
 const KEYS: Array<[string, string]> = [
-  ['Arrow keys / WASD', 'Move player'],
-  ['E', 'Interact (Play mode): doors, switches, NPCs, chests, inscriptions'],
-  ['J', 'Open the Journal — quests & lore (Play mode)'],
-  ['M', 'Toggle the full map view (Play mode) — a minimap is always shown in 3D'],
-  ['F', 'Toggle fog of war reveal for current cell'],
-  ['N', 'Add / edit note on current cell'],
-  ['Z / Ctrl+Z', 'Undo last cell edit'],
+  ['Arrow keys / WASD', 'Move / turn the player'],
+  ['E', 'Interact (Play): doors, switches, NPCs, chests, inscriptions'],
+  ['Tab', 'Open the in-game menu (Play): items, magic, equip, party, save…'],
+  ['J', 'Open the Journal — quests & lore (Play)'],
+  ['M', 'Toggle the full map view (Play) — a minimap is always shown in 3D'],
+  ['F', 'Toggle fog of war reveal for current cell (Map editor)'],
+  ['N', 'Add / edit note on current cell (Map editor)'],
+  ['Z / Ctrl+Z', 'Undo last cell edit (Map editor)'],
   ['Ctrl+S', 'Save current session to .epochmap'],
   ['Ctrl+P', 'Export PDF'],
   ['+ / -', 'Zoom in / out'],
@@ -52,28 +53,66 @@ export function WelcomeModal({ onClose }: { onClose: () => void }) {
               Epoch Mapper is a free, open-source first-person dungeon-crawler engine and authoring tool — in the
               tradition of Eye of the Beholder, Shin Megami Tensei, and Wizardry. Draw grid maps, build a full ruleset,
               and <strong className="text-white/85">play the result in a pseudo-3D first-person view</strong> with
-              turn-based combat, a party, and exploration hazards. Export your maps as a beautifully formatted PDF or as
-              a compact <code className="text-amber-200">.epochmap</code> file you can share. If you use the Epoch game
-              library, your maps sync to your profile and are always one click away from your game drawer.
+              turn-based combat, a party, character progression, music, and exploration hazards. When your game is done,
+              hand it out as a <strong className="text-white/85">standalone app</strong> — a single double-click HTML
+              file, a hosted web build, or a native desktop binary (see <em>Exporting &amp; distributing</em> below).
             </p>
+            <p className="text-white/55">
+              The left <strong className="text-white/75">activity bar</strong> switches workspaces:
+              🗺 <strong className="text-white/75">Map</strong> (draw), 🗄 <strong className="text-white/75">Database</strong> (content),
+              👥 <strong className="text-white/75">Characters</strong> (party &amp; NPCs), ▶ <strong className="text-white/75">Play</strong>,
+              and ⚙ <strong className="text-white/75">Settings</strong>.
+            </p>
+          </Section>
+
+          <Section title="Building your game (Database & Settings)">
+            <ul className="list-disc pl-5 space-y-1">
+              <li>
+                The <strong className="text-white/85">Database</strong> holds every content table with structured
+                editors (no raw JSON): classes, races, weapon/armor types, items, spells, spell schools, skills, status
+                effects, the <strong className="text-white/85">bestiary</strong> (with weighted ability kits,
+                resistances, and one-click Duplicate / Make&nbsp;Elite), encounter &amp; loot tables, shops, events,
+                quests, and <strong className="text-white/85">music</strong>. Big lists sort into collapsible groups.
+              </li>
+              <li>
+                Rich defaults ship ready to play: 100+ items, ~60 spells, 30+ skills, 40+ enemies, and 16 built-in
+                chiptune tracks — remix them or start from scratch.
+              </li>
+              <li>
+                <strong className="text-white/85">Settings</strong> holds the global Game Rules: the combat system
+                (Classic / 1-More / Press-Turn), audio slots, the XP curve, the opening story, and per-map options.
+              </li>
+            </ul>
           </Section>
 
           <Section title="Play mode">
             <ul className="list-disc pl-5 space-y-1">
               <li>
                 Switch to <strong className="text-white/85">Play</strong> (the ▶ activity-bar icon) to walk your dungeon
-                in first person: turn-based combat, party HUD, camp/rest, save slots, a Journal (<code className="text-amber-200">J</code>),
-                and a title/ending flow.
+                in first person: WASD to move/turn, <code className="text-amber-200">E</code> to interact. A minimap
+                shows your explored trail; <code className="text-amber-200">M</code> opens the full map.
               </li>
               <li>
-                <strong className="text-white/85">Hazards are live.</strong> Traps spring their effects when stepped on,
-                damage edges bite every crossing, and events can deal damage or inflict status — all lethal, so a party
-                wipe triggers game-over.
+                <strong className="text-white/85">Turn-based combat</strong> in one of three systems (a global rule):
+                Classic, Persona-style <strong className="text-white/85">1-More</strong>, or full SMT
+                <strong className="text-white/85"> Press-Turn</strong> (knockdown + All-Out Attack). Weaknesses,
+                resistances, skills, and empower-next moves (Charge / Concentrate) all matter.
               </li>
               <li>
-                <strong className="text-white/85">Dark maps</strong> collapse your view to the party&apos;s light — carry a
-                torch or lantern. Trick tiles (spinners, pits, teleporters, anti-magic and darkness zones, safe rooms)
-                lurk in the walls.
+                Press <code className="text-amber-200">Tab</code> for the <strong className="text-white/85">in-game
+                menu</strong> — an FF-style hub for Item, Magic, Equip, Status, Party, Journal, Camp, Save, and Config
+                (music &amp; sound volume). Full keyboard control.
+              </li>
+              <li>
+                <strong className="text-white/85">Music &amp; sound</strong> play automatically — per-level tracks,
+                battle/boss themes with a boss-intro stinger, a victory fanfare, and sound effects. Audio unlocks on
+                your first click or keypress (browser autoplay policy).
+              </li>
+              <li>
+                <strong className="text-white/85">Hazards are live.</strong> Traps spring when stepped on, damage edges
+                bite every crossing, poison ticks as you walk, and a party wipe triggers game-over. Dark maps collapse
+                your view to the party&apos;s light — carry a torch or lantern. Trick tiles (spinners, pits, teleporters,
+                anti-magic &amp; darkness zones, safe rooms) lurk in the walls.
               </li>
             </ul>
           </Section>
@@ -106,6 +145,11 @@ export function WelcomeModal({ onClose }: { onClose: () => void }) {
                 2, World Map). Maps are listed in the left panel.
               </li>
               <li>Each map has an infinite grid. You never run out of space — the viewport follows your player marker.</li>
+              <li>
+                Link maps with stairs/doors (a fade transition with a name card), or connect their
+                <strong className="text-white/85"> world edges</strong> in Settings so walking off one edge seamlessly
+                crosses into the neighbour — stitch a grid of maps into one large open world.
+              </li>
             </ul>
           </Section>
 
@@ -204,18 +248,34 @@ export function WelcomeModal({ onClose }: { onClose: () => void }) {
             </ul>
           </Section>
 
-          <Section title="Exporting">
+          <Section title="Exporting & distributing a game">
+            <p>From the <strong className="text-white/85">File</strong> menu:</p>
             <ul className="list-disc pl-5 space-y-1">
               <li>
-                <strong className="text-white/85">Export PDF</strong>: a print-ready PDF with a parchment border,
-                per-page legend, coordinate rulers, and a notes index. Each map becomes a page.
+                <strong className="text-white/85">Save .epochmap</strong>: a compact binary of your whole game —
+                every map, the full content ruleset, uploaded audio (baked in), custom markers, notes, and fog. Share
+                it with anyone who has the editor.
               </li>
               <li>
-                <strong className="text-white/85">Export .epochmap</strong>: a compact binary file containing all your
-                maps, custom markers, notes, fog-of-war state, and the game association (title + ROM hash if known).
-                Share it with other players.
+                <strong className="text-white/85">Export Standalone HTML</strong>: bakes the game into one
+                self-contained <code className="text-amber-200">.html</code> — double-click to play in any browser,
+                no install. Great for itch.io.
+              </li>
+              <li>
+                <strong className="text-white/85">Export Web Build (.zip)</strong>: <code className="text-amber-200">index.html</code>
+                {' '}+ a sidecar <code className="text-amber-200">game.epochmap</code>. Unzip onto any static host, or
+                upload the zip straight to itch.io as an HTML5 game.
+              </li>
+              <li>
+                <strong className="text-white/85">Export PDF</strong>: a print-ready PDF with a parchment border,
+                per-page legend, coordinate rulers, and a notes index — one page per map.
               </li>
             </ul>
+            <p className="text-white/55">
+              A native <strong className="text-white/75">desktop app</strong> (Windows/macOS/Linux) is also possible via
+              the Tauri scaffold — see <code className="text-amber-200">docs/DISTRIBUTION.md</code>. Distributed games
+              open editor-free: they boot straight to the title screen.
+            </p>
           </Section>
 
           <Section title="Importing .epochmap files">

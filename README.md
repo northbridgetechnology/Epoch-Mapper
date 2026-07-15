@@ -23,10 +23,13 @@ This repository is **both**:
 > and the Epoch integration are complete — and on top of that sits a full
 > **game engine**: a first-person renderer, turn-based combat in three battle
 > systems (classic / Persona-style 1-More / full SMT press-turn), a 15-table
-> content database with richly seeded defaults, character progression, music,
-> events/quests/NPCs, and deep exploration systems. See the **Game engine**
-> section below, [`docs/roadmap.md`](docs/roadmap.md) for deferred specs, and
-> [`docs/sprites.md`](docs/sprites.md) for the sprite system.
+> content database with richly seeded defaults, character progression, built-in
+> music + SFX, a world-grid map system, events/quests/NPCs, and deep exploration
+> systems. Finished games ship as **standalone apps** (single HTML, hosted web
+> build, or native desktop). See the **Game engine** and **Distributing a
+> finished game** sections below, [`docs/roadmap.md`](docs/roadmap.md) for
+> deferred specs, [`docs/DISTRIBUTION.md`](docs/DISTRIBUTION.md) for packaging,
+> and [`docs/sprites.md`](docs/sprites.md) for the sprite system.
 
 ---
 
@@ -51,8 +54,13 @@ the **Cell Inspector**, then switch to **Play** to walk your dungeon.
   keyed doors/chests, visible fixed encounters, and FOE-style patrols.
 - **Step counter & status pressure** — Poison keeps ticking every few steps
   while exploring; Regeneration heals as you walk.
-- **Minimap fog by exploration** — cells appear only once actually seen via
-  line-of-sight from a walked cell.
+- **Minimap fog by exploration** — the auto-map is strictly the walked trail
+  (Etrian/SMT breadcrumb style); the full-map view (`M`) shows only explored
+  cells.
+- **World grid & transitions** — stairs/doors and cross-map teleports present
+  with a fade + destination name card (or a Wizardry-style confirm prompt);
+  per-map **edge links** (N/S/E/W → neighbour) stitch maps into one open world,
+  crossing seamlessly at the opposite edge with position preserved.
 - **Camp/rest** with ambush risk, functional inns, save slots + save-point
   policy (save anywhere, or only on save points), and a wipe/game-over flow
   with gold penalty and respawn.
@@ -135,11 +143,15 @@ the identify/curse economy.
 
 ### Music & audio
 
-A **Music database** — upload tracks (stored in IndexedDB, baked into the
-`.epochmap` on export) or stream by URL — with gapless looping Web Audio
-playback. Tracks resolve by hierarchy: per-encounter custom music → boss
-track → generic battle track → per-map track → game default. Volume and mute
-live in the in-game Config screen.
+**16 built-in chiptune tracks** (synthesized on the fly — zero asset bytes) score
+every slot out of the box; upload your own (baked into the `.epochmap`) or stream
+by URL from the **Music database**. Gapless looping Web Audio, with a resolution
+hierarchy: per-encounter custom music → boss → battle → per-map → game default.
+The niceties are wired: a **victory fanfare**, a **boss-intro stinger** that
+chains into the boss loop, **dialogue ducking**, and a **synthesized SFX kit**
+(doors, chests, hits/crits, level-up, save…) on its own volume bus. Music and
+sound volume/mute live in the in-game Config screen; a `playSound` effect lets
+authored events fire SFX.
 
 ### Story systems
 
@@ -189,9 +201,12 @@ bun run dev          # standalone editor at http://localhost:3100
 | Script              | What it does                                            |
 | ------------------- | ------------------------------------------------------- |
 | `dev`               | Run the standalone app (Next.js, port 3100)             |
-| `build`             | Production build of the standalone app                  |
+| `build`             | Production build of the standalone app (runs `build:player` first) |
 | `build:lib`         | Bundle the npm package into `dist/` (JS + `.d.ts`)      |
-| `test`              | Full suite (200+ checks): codec, markers, combat, switches, events, generator, sprites, exploration, story, recruit, equipment, music, formula, spell-sort, bestiary |
+| `build:player`      | Build the standalone-player template (esbuild + Tailwind) → `dist-player/` + `public/player-template.html` |
+| `bake:game`         | Bake a `.epochmap` into a single standalone HTML (`bake:game <game.epochmap> [out.html]`) |
+| `desktop:build`     | Build a native desktop app (Tauri) — see `docs/DISTRIBUTION.md` |
+| `test`              | Full suite (200+ checks): codec, markers, combat, switches, events, generator, sprites, exploration, story, recruit, equipment, music, formula, spell-sort, bestiary, chiptune, world |
 | `lint`              | ESLint                                                  |
 
 Tests run via `tsx` (no DOM needed) — the codec, combat engine, event/effect
