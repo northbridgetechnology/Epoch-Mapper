@@ -3,8 +3,10 @@
 import { useEffect, useState } from 'react'
 
 /**
- * Buy Me a Coffee support button (bottom-LEFT — the bottom-right corner
- * belongs to the play HUD's Steps / Gold / Direction readouts).
+ * Buy Me a Coffee support button (bottom-right). While the Play workspace is
+ * mounted it hides itself entirely — Play renders an inline coffee chip in the
+ * party HUD next to the Steps counter instead (see PlayWorkspace), keeping the
+ * corner free for the HUD readouts.
  *
  * We try the official vendor widget first: it reads its config from its own
  * <script> data-* attributes and injects a floating button. Next.js can't run a
@@ -19,7 +21,7 @@ import { useEffect, useState } from 'react'
  */
 
 const WIDGET_SRC = 'https://cdnjs.buymeacoffee.com/1.0.0/widget.prod.min.js'
-const PROFILE_URL = 'https://www.buymeacoffee.com/northbridgetechnology'
+export const PROFILE_URL = 'https://www.buymeacoffee.com/northbridgetechnology'
 const BMC_COLOR = '#5F7FFF'
 
 const DATA: Record<string, string> = {
@@ -29,7 +31,7 @@ const DATA: Record<string, string> = {
   'data-description': 'Support me on Buy me a coffee!',
   'data-message': 'Thank you for visiting!',
   'data-color': BMC_COLOR,
-  'data-position': 'Left',
+  'data-position': 'Right',
   'data-x_margin': '18',
   'data-y_margin': '18',
 }
@@ -65,11 +67,12 @@ export function BuyMeACoffee() {
 
   return (
     <a
+      id="bmc-fallback"
       href={PROFILE_URL}
       target="_blank"
       rel="noopener noreferrer"
       aria-label="Buy me a coffee"
-      className="fixed bottom-[18px] left-[18px] z-[9998] inline-flex items-center gap-2 rounded-full px-4 py-2.5 text-sm font-semibold text-white shadow-lg ring-1 ring-black/10 transition-transform hover:scale-105"
+      className="fixed bottom-[18px] right-[18px] z-[9998] inline-flex items-center gap-2 rounded-full px-4 py-2.5 text-sm font-semibold text-white shadow-lg ring-1 ring-black/10 transition-transform hover:scale-105"
       style={{ backgroundColor: BMC_COLOR }}
     >
       <span aria-hidden>☕</span>

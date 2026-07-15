@@ -16,6 +16,7 @@ import type { CombatState } from '@/lib/combat-engine'
 import { useBattleController, BattleHud, BattleOutcomeOverlay } from '@/components/BattleHud'
 import { GameMenu } from '@/components/GameMenu'
 import { Minimap } from '@/components/Minimap'
+import { PROFILE_URL as COFFEE_URL } from '@/components/BuyMeACoffee'
 
 // ── Props ─────────────────────────────────────────────────────────────────────
 
@@ -139,6 +140,10 @@ function PartyHud({ party, gold, steps }: { party: Character[]; gold: number; st
         )
       })}
       <div className="ml-auto flex items-center gap-2 flex-shrink-0">
+        <a href={COFFEE_URL} target="_blank" rel="noopener noreferrer" title="Enjoying Epoch Mapper? Buy me a coffee ☕"
+          className="flex items-center px-3 py-1.5 rounded-lg border border-white/10 bg-zinc-900/60 hover:border-amber-400/40 hover:bg-zinc-800 transition-colors">
+          <span className="text-sm leading-none">☕</span>
+        </a>
         {steps != null && (
           <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-white/10 bg-zinc-900/60" title="Steps taken">
             <span className="text-sm leading-none">👣</span>
@@ -1296,6 +1301,22 @@ export function PlayWorkspace({
 
   // Battles play out in first person — snap to the 3D view when one starts
   useEffect(() => { if (combat) setView('3d') }, [combat])
+
+  // While Play is mounted the floating Buy-Me-a-Coffee button (vendor widget
+  // or fallback link) hides — the party HUD carries an inline coffee chip next
+  // to the Steps counter instead. The vendor widget mounts asynchronously, so
+  // keep re-asserting until it exists; restore on unmount.
+  useEffect(() => {
+    const setHidden = (hidden: boolean) => {
+      for (const id of ['bmc-wbtn', 'bmc-fallback']) {
+        const el = document.getElementById(id)
+        if (el) el.style.display = hidden ? 'none' : ''
+      }
+    }
+    setHidden(true)
+    const timer = window.setInterval(() => setHidden(true), 1000)
+    return () => { window.clearInterval(timer); setHidden(false) }
+  }, [])
 
   // Tab opens the main menu (the hub for items/magic/equip/party/journal/camp/
   // save/config); M toggles the full map view on/off.
