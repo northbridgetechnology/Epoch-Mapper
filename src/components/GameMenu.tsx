@@ -924,11 +924,18 @@ function SaveScreen({ canSaveHere, onSaveSlot, onLoadSlot, onExit }: {
 function ConfigScreen({ onExit }: { onExit: () => void }) {
   const [volume, setVolume] = useState(() => music.getVolume())
   const [muted, setMuted] = useState(() => music.isMuted())
+  const [sfxVolume, setSfxVol] = useState(() => music.getSfxVolume())
+  const [sfxMuted, setSfxMuted] = useState(() => music.isSfxMuted())
   const applyVol = (v: number) => {
     const nv = Math.min(1, Math.max(0, Math.round(v * 20) / 20))
     music.unlock(); music.setVolume(nv); setVolume(nv)
   }
+  const applySfxVol = (v: number) => {
+    const nv = Math.min(1, Math.max(0, Math.round(v * 20) / 20))
+    music.unlock(); music.setSfxVolume(nv); setSfxVol(nv); music.sfx('blip')
+  }
   const toggleMute = () => { const m = !music.isMuted(); music.setMuted(m); setMuted(m) }
+  const toggleSfxMute = () => { const m = !music.isSfxMuted(); music.setSfxMuted(m); setSfxMuted(m) }
   useKeydown((e) => {
     if (e.key === 'Escape') { onExit(); return true }
     if (e.key === 'ArrowLeft')  { applyVol(music.getVolume() - 0.1); return true }
@@ -949,6 +956,17 @@ function ConfigScreen({ onExit }: { onExit: () => void }) {
       <button onClick={toggleMute}
         className="w-full text-left px-2 py-1 rounded hover:bg-white/5 text-white/80">
         {muted ? '🔇 Music muted — click to unmute' : '🔊 Mute music'}
+      </button>
+      <div className="flex items-center gap-3 border-b border-white/5 py-2">
+        <span className="w-16">Sounds</span>
+        <input type="range" min={0} max={1} step={0.05} value={sfxMuted ? 0 : sfxVolume} disabled={sfxMuted}
+          onChange={e => applySfxVol(parseFloat(e.target.value))}
+          className="flex-1 accent-amber-500 disabled:opacity-40" />
+        <span className="w-10 text-right font-mono text-white/85">{Math.round((sfxMuted ? 0 : sfxVolume) * 100)}%</span>
+      </div>
+      <button onClick={toggleSfxMute}
+        className="w-full text-left px-2 py-1 rounded hover:bg-white/5 text-white/80">
+        {sfxMuted ? '🔇 Sounds muted — click to unmute' : '🔊 Mute sounds'}
       </button>
       <Heading>Controls</Heading>
       {[['Move / turn', 'WASD or arrows'], ['Interact', 'E'], ['Menu', 'Tab'], ['Toggle map', 'M']].map(([k, v]) => (

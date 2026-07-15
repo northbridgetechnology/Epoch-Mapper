@@ -1675,7 +1675,7 @@ function AudioTrackEditor({ track, onChange }: {
     }
   }
 
-  const canPreview = track.source === 'url' ? !!track.src : stored === true
+  const canPreview = track.source === 'builtin' ? true : track.source === 'url' ? !!track.src : stored === true
 
   return (
     <div className="p-4 space-y-4 overflow-y-auto h-full">
@@ -1698,10 +1698,17 @@ function AudioTrackEditor({ track, onChange }: {
       <div>
         <label className="block text-xs font-medium text-white/60 mb-1">Source</label>
         <div className="flex gap-1 mb-2">
+          {track.source === 'builtin' && <Chip active label="Built-in chiptune" onClick={() => {}} />}
           <Chip active={track.source === 'upload'} label="Upload" onClick={() => onChange({ ...track, source: 'upload' })} />
           <Chip active={track.source === 'url'} label="External URL" onClick={() => onChange({ ...track, source: 'url' })} />
         </div>
-        {track.source === 'upload' ? (
+        {track.source === 'builtin' ? (
+          <div className="text-[11px] text-white/35">
+            Synthesized on demand — zero file size, works everywhere, nothing to bake on
+            export. Switch to Upload or URL to replace it with your own audio (the id keeps
+            every slot and map that points here working).
+          </div>
+        ) : track.source === 'upload' ? (
           <div className="flex items-center gap-2">
             <input ref={fileRef} type="file" accept="audio/*" className="hidden" onChange={onFile} />
             <button type="button" disabled={busy} onClick={() => fileRef.current?.click()}
@@ -1717,11 +1724,13 @@ function AudioTrackEditor({ track, onChange }: {
             onChange={e => onChange({ ...track, src: e.target.value })}
             className="w-full px-2 py-1.5 rounded bg-zinc-800 border border-white/10 text-xs text-white/85 focus:outline-none focus:border-amber-500/50" />
         )}
-        <div className="text-[11px] text-white/35 mt-1">
-          {track.source === 'upload'
-            ? 'Stored locally and baked into the .epochmap on save — fully shareable.'
-            : 'Streamed from the web at play time (needs network + CORS). Keeps the file tiny.'}
-        </div>
+        {track.source !== 'builtin' && (
+          <div className="text-[11px] text-white/35 mt-1">
+            {track.source === 'upload'
+              ? 'Stored locally and baked into the .epochmap on save — fully shareable.'
+              : 'Streamed from the web at play time (needs network + CORS). Keeps the file tiny.'}
+          </div>
+        )}
       </div>
 
       {/* Loop + volume */}

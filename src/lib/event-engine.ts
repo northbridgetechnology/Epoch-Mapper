@@ -94,12 +94,14 @@ export interface ExploreEffect {
   revive?: boolean
   /** NPC ids to recruit into the party (dialogue/quest `recruit` effects). */
   recruits: string[]
+  /** One-shot SFX names to fire (playSound effects). */
+  sounds: string[]
 }
 
 function emptyExploreEffect(): ExploreEffect {
   return {
     flagSets: {}, messages: [], goldDelta: 0, itemsGained: [], itemsLost: [],
-    questUpdates: [], npcMoves: [], teachSpells: [], recruits: [],
+    questUpdates: [], npcMoves: [], teachSpells: [], recruits: [], sounds: [],
     heal: 0, restoreMp: 0, partyDamage: [], partyStatus: [], partyCure: [],
   }
 }
@@ -264,6 +266,9 @@ function applyEffectsInto(
         break
       case 'teachSpell':
         if (eff.spell) result.teachSpells.push(eff.spell)
+        break
+      case 'playSound':
+        if (eff.sound) result.sounds.push(eff.sound)
         break
       case 'gameEnd':
         if (!result.gameEnd) result.gameEnd = { text: eff.text }

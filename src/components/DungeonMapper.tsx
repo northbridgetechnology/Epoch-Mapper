@@ -473,6 +473,7 @@ export function DungeonMapper({
     if (Object.keys(result.flagSets).length > 0) {
       setFlags(prev => ({ ...prev, ...result.flagSets }))
     }
+    result.sounds.forEach(name => music.sfx(name))
     result.messages.forEach(msg => toast(msg))
     if (result.goldDelta !== 0) {
       setGold(g => g + result.goldDelta)
@@ -913,11 +914,13 @@ export function DungeonMapper({
         if (sw.facing === OPP[facingDir]) {
           const wasOn = !!flags[sw.flag]
           if (sw.mode === 'once' && wasOn) {
-            toast('The lever is stuck fast.')
+            music.sfx('locked')
+          toast('The lever is stuck fast.')
             return
           }
           const curCell = activeMap.cells[`${activeMap.playerX},${activeMap.playerY}`] ?? null
           applyExploreEffect(applyFlagWriteWithReactions(sw.flag, !wasOn, curCell, makeEventContext(), ruleset))
+          music.sfx('lever')
           toast(wasOn
             ? 'You hear a heavy thud echo through the halls…'
             : 'You hear something click in the distance…')
@@ -947,6 +950,7 @@ export function DungeonMapper({
             updateActiveMap(m => ({
               boundaries: { ...(m.boundaries ?? {}), [bk]: { ...boundary, door: { ...door, state: 'open' as const } } }
             }))
+            music.sfx('confirm')
             toast('Door unlocked!')
           } else {
             toast('The door is sealed shut. Something must unlock it…')
@@ -957,12 +961,14 @@ export function DungeonMapper({
           updateActiveMap(m => ({
             boundaries: { ...(m.boundaries ?? {}), [bk]: { ...boundary, door: { ...door, state: 'open' as const } } }
           }))
+          music.sfx('door')
           toast('The door creaks open.')
           return
         } else if (door.state === 'open') {
           updateActiveMap(m => ({
             boundaries: { ...(m.boundaries ?? {}), [bk]: { ...boundary, door: { ...door, state: 'closed' as const } } }
           }))
+          music.sfx('door')
           toast('The door swings shut.')
           return
         } else if (door.state === 'locked') {
@@ -970,8 +976,10 @@ export function DungeonMapper({
             updateActiveMap(m => ({
               boundaries: { ...(m.boundaries ?? {}), [bk]: { ...boundary, door: { ...door, state: 'open' as const } } }
             }))
+            music.sfx('confirm')
             toast('Door unlocked!')
           } else {
+            music.sfx('locked')
             toast('This door is locked.')
           }
           return
@@ -1030,6 +1038,7 @@ export function DungeonMapper({
             parts.push(`${qty > 1 ? `${qty}× ` : ''}${def?.name ?? item}`)
           }
           if (result.gold > 0) parts.push(`${result.gold} gold`)
+          music.sfx(parts.length > 0 ? 'chest' : 'blip')
           toast(parts.length > 0 ? `Found: ${parts.join(', ')}!` : 'The chest is empty.')
           return
         }
@@ -1191,20 +1200,40 @@ export function DungeonMapper({
   // exploration track when it ends. Playback stays queued until the first user
   // gesture unlocks it.
   const inBattle = combatState !== null
+  const combatPhase = combatState?.phase
   useEffect(() => {
     if (workspace !== 'play') return
     if (showTitle || introPhase) {
-      const t = trackById(ruleset.audioTracks, ruleset.meta.defaultMusicId)
+      const t = trackById(ruleset.audioTracks, ruleset.meta.titleMusicId || ruleset.meta.defaultMusicId)
       if (t) void music.play(t); else music.stop()
       return
+    }
+    // Game over / defeat: the dirge takes over until the flow resolves.
+    if (gameOver || combatPhase === 'defeat') {
+      const t = trackById(ruleset.audioTracks, ruleset.meta.gameOverMusicId)
+      if (t) { void music.play(t, { crossfadeMs: 300 }); return }
+    }
+    // Victory: FF-style fanfare loops under the outcome overlay; dismissing it
+    // clears combatState and this effect resumes the exploration track.
+    if (combatPhase === 'victory') {
+      const t = trackById(ruleset.audioTracks, ruleset.meta.victoryMusicId)
+      if (t) { void music.play(t, { crossfadeMs: 150 }); return }
     }
     const enc = inBattle && activeEncounter
       ? ruleset.encounterTables.find(t => t.id === activeEncounter.tableId)
       : undefined
     const battle = inBattle ? { musicId: enc?.musicId, boss: enc?.boss } : null
     const track = resolveTrack({ meta: ruleset.meta, mapMusicId: activeMap?.musicId, battle }, ruleset.audioTracks)
-    if (track) void music.play(track, battle ? { crossfadeMs: 400 } : undefined); else music.stop()
-  }, [workspace, showTitle, introPhase, inBattle, activeEncounter, activeMap?.id, activeMap?.musicId, ruleset.meta, ruleset.audioTracks, ruleset.encounterTables])
+    // Boss fights open on the intro stinger, chaining into the boss loop.
+    const intro = battle?.boss ? trackById(ruleset.audioTracks, ruleset.meta.bossIntroId) : undefined
+    if (track) void music.play(track, battle ? { crossfadeMs: 400, intro } : undefined); else music.stop()
+  }, [workspace, showTitle, introPhase, inBattle, combatPhase, gameOver, activeEncounter, activeMap?.id, activeMap?.musicId, ruleset.meta, ruleset.audioTracks, ruleset.encounterTables])
+
+  // Dialogue and inscriptions duck the music (SFX bus is unaffected).
+  useEffect(() => {
+    music.duck(dialogue !== null || inscription !== null)
+    return () => music.duck(false)
+  }, [dialogue, inscription])
 
   // Save-point policy: saving anywhere, or only while standing on a Save Point
   const canSaveHere = (ruleset.meta.savePolicy ?? 'anywhere') === 'anywhere'
@@ -1214,6 +1243,7 @@ export function DungeonMapper({
   const handleSaveSlot = useCallback((slot: number) => {
     if (!canSaveHere) { notify('You can only save at a save point.'); return }
     saveToSlot(slot, buildSaveState())
+    music.sfx('save')
     notify(`Saved to slot ${slot + 1}.`)
   }, [canSaveHere, buildSaveState])
 
@@ -2086,6 +2116,7 @@ export function DungeonMapper({
                 }
               }
               savePartyTemplate(updatedParty, formation, reserve)
+              if (levelUps.length > 0) music.sfx('levelup')
               levelUps.forEach(name => toast.success(`${name} leveled up!`))
               setCombatState(null)
               if (pendingFoeKillRef.current) {

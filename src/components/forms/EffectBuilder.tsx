@@ -1,6 +1,7 @@
 'use client'
 
 import { Plus, Trash2 } from 'lucide-react'
+import { SFX_DEFS } from '@/lib/chiptune'
 import { cn } from '@/lib/utils'
 import type { DamageType, Effect, Ruleset } from '@/lib/engine-types'
 
@@ -32,6 +33,7 @@ const ALL_VERBS = [
   { t: 'openShop',    label: '🏪 Open Shop',          group: 'World' },
   // Narrative
   { t: 'message',     label: '💬 Message',            group: 'Narrative' },
+  { t: 'playSound',   label: '🔊 Play Sound',         group: 'Narrative' },
   { t: 'dialogue',    label: '🗣️ NPC Speaks',         group: 'Narrative' },
   // Scripting
   { t: 'runEvent',    label: '🧩 Run Event',          group: 'Scripting' },
@@ -61,6 +63,7 @@ function blankEffect(verb: Verb): Effect {
     case 'reveal':       return { t: 'reveal', radius: 3 }
     case 'openShop':     return { t: 'openShop', shop: '' }
     case 'message':      return { t: 'message', text: '' }
+    case 'playSound':    return { t: 'playSound', sound: 'blip' }
     case 'dialogue':     return { t: 'dialogue', node: '' }
     case 'runEvent':     return { t: 'runEvent', event: '' }
     case 'questStage':   return { t: 'questStage', quest: '', stage: 1 }
@@ -114,6 +117,7 @@ function effectLabel(e: Effect, ruleset: Ruleset): string {
       return `Open shop: ${name}`
     }
     case 'message':   return `Message: "${e.text?.slice(0, 24)}"`
+    case 'playSound': return `Sound: ${e.sound}`
     case 'dialogue': {
       const name = ruleset.npcs?.find(n => n.id === e.node)?.name ?? e.node
       return `NPC speaks: ${name}`
@@ -442,6 +446,14 @@ function EffectRow({ effect, ruleset, onChange, onRemove }: EffectRowProps) {
             placeholder="Text shown to player…"
             className={cn(INPUT_CLS, 'flex-1')}
           />
+        )}
+
+        {/* playSound */}
+        {e.t === 'playSound' && (
+          <select value={e.sound} onChange={ev => onChange({ ...e, sound: ev.target.value })}
+            className="px-1.5 py-0.5 rounded bg-zinc-700 border border-white/10 text-xs text-white/90 focus:outline-none">
+            {Object.keys(SFX_DEFS).map(n => <option key={n} value={n}>{n}</option>)}
+          </select>
         )}
 
         {/* No-param effects */}

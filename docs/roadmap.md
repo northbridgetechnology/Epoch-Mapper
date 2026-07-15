@@ -167,9 +167,12 @@ playback, and a resolution hierarchy (per-encounter custom track → boss →
 generic battle → per-map `MapData.musicId` → `GameMeta.defaultMusicId`),
 with volume/mute in the in-game Config screen.
 
-Still deferred (the SFX half): a `{ t: 'playSound' }` effect for
-events/objects and an engine sound-event bus for built-in moments (door,
-lever, chest, hit, crit, level-up) — see the audio-niceties bullet below.
+The SFX half shipped too: a synthesized SFX kit on its own bus (door, lever,
+chest, hit, crit, heal, level-up, save, menu blips) wired at the built-in
+moments, a `{ t: 'playSound' }` effect for authored events, dialogue ducking,
+victory/game-over/title music slots, and a boss-intro stinger that chains
+into the boss loop. The 16-track built-in chiptune library scores every slot
+out of the box (see `src/lib/chiptune.ts`).
 
 ## 6. Step & time counters *(partially shipped)*
 
@@ -235,8 +238,9 @@ parked here, roughly by value:
   `RaceDef.traits` (could become racial perks). Wire or delete.
   (`SpellDef.level` left this list — it's the learn-level fallback for
   spell sorting.)
-- Audio niceties: victory fanfare / boss-intro stingers, music ducking during
-  dialogue, a separate SFX bus with its own volume.
+- ~~Audio niceties~~ *(shipped)*: victory fanfare, boss-intro stinger,
+  dialogue ducking, and the SFX bus with its own volume are all live (§5).
+  Still open: per-cell ambient loops (dripping water, wind) if ever wanted.
 - Spell-school depth: opposed schools, school-boost equipment
   (+Elemental power gear), per-school MP discounts — the SpellSchoolDef table
   already supports these without model changes.

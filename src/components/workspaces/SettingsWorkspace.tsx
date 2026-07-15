@@ -48,17 +48,31 @@ function TrackSelect({ tracks, value, onChange, noneLabel = '— none —' }: {
   )
 }
 
-function MusicSettings({ meta, tracks, onMetaChange }: {
+/** Global audio: every music slot the engine plays from, in one place.
+ *  16 built-in chiptune tracks ship by default; uploads replace them freely. */
+function AudioSettings({ meta, tracks, onMetaChange }: {
   meta: GameMeta
   tracks: AudioTrackDef[]
   onMetaChange: (patch: Partial<GameMeta>) => void
 }) {
+  const slots: { key: keyof GameMeta & string; label: string; hint?: string }[] = [
+    { key: 'titleMusicId',    label: '🏰 Title screen' },
+    { key: 'defaultMusicId',  label: '🗺️ Default map theme', hint: 'any map without its own track' },
+    { key: 'battleMusicId',   label: '⚔️ Battle theme' },
+    { key: 'bossIntroId',     label: '📯 Boss intro stinger', hint: 'plays once, then the boss theme' },
+    { key: 'bossMusicId',     label: '👹 Boss theme' },
+    { key: 'victoryMusicId',  label: '🎺 Victory fanfare' },
+    { key: 'gameOverMusicId', label: '💀 Game over' },
+  ]
   return (
     <div>
-      <h2 className="text-sm font-semibold text-white/70 mb-1">Music</h2>
+      <h2 className="text-sm font-semibold text-white/70 mb-1">🎵 Audio</h2>
       <p className="text-xs text-white/35 leading-relaxed mb-3">
-        Looping background tracks. Build the track library in <span className="text-white/50">Database → Music</span>,
-        then assign the default, battle, and boss themes here and per-level music below.
+        Global music slots — the engine ships 16 built-in chiptune tracks so every slot
+        is scored out of the box. Add your own in <span className="text-white/50">Database → Music</span>{' '}
+        (uploads or URLs) and pick them here; per-level tracks live with each map below.
+        Dialogue automatically ducks the music; sound effects have their own volume in
+        the in-game Config screen.
       </p>
       {tracks.length === 0 ? (
         <div className="text-xs text-white/30 rounded-lg border border-white/8 bg-white/4 px-3 py-2">
@@ -66,18 +80,13 @@ function MusicSettings({ meta, tracks, onMetaChange }: {
         </div>
       ) : (
         <div className="space-y-2">
-          <label className="flex items-center justify-between gap-3">
-            <span className="text-xs text-white/70">Default / title theme</span>
-            <TrackSelect tracks={tracks} value={meta.defaultMusicId} onChange={id => onMetaChange({ defaultMusicId: id })} />
-          </label>
-          <label className="flex items-center justify-between gap-3">
-            <span className="text-xs text-white/70">Battle theme</span>
-            <TrackSelect tracks={tracks} value={meta.battleMusicId} onChange={id => onMetaChange({ battleMusicId: id })} />
-          </label>
-          <label className="flex items-center justify-between gap-3">
-            <span className="text-xs text-white/70">Boss theme</span>
-            <TrackSelect tracks={tracks} value={meta.bossMusicId} onChange={id => onMetaChange({ bossMusicId: id })} />
-          </label>
+          {slots.map(({ key, label, hint }) => (
+            <label key={key} className="flex items-center justify-between gap-3">
+              <span className="text-xs text-white/70">{label}{hint && <span className="text-white/30"> — {hint}</span>}</span>
+              <TrackSelect tracks={tracks} value={meta[key] as string | undefined}
+                onChange={id => onMetaChange({ [key]: id } as Partial<GameMeta>)} />
+            </label>
+          ))}
         </div>
       )}
     </div>
@@ -307,8 +316,8 @@ export function SettingsWorkspace({ maps, onThemeChange, onDarkChange, meta, onM
     <div className="flex-1 min-h-0 overflow-y-auto">
       <div className="max-w-2xl mx-auto px-6 py-6 space-y-8">
         {meta && onMetaChange && <GameRules meta={meta} onMetaChange={onMetaChange} />}
+        {meta && onMetaChange && <AudioSettings meta={meta} tracks={tracks} onMetaChange={onMetaChange} />}
         {meta && onMetaChange && <StoryAndProtagonist meta={meta} onMetaChange={onMetaChange} />}
-        {meta && onMetaChange && <MusicSettings meta={meta} tracks={tracks} onMetaChange={onMetaChange} />}
         {onFormulasChange && (
           <div>
             <h2 className="text-sm font-semibold text-white/70 mb-1">Progression</h2>

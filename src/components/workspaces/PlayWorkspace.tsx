@@ -17,6 +17,7 @@ import { useBattleController, BattleHud, BattleOutcomeOverlay } from '@/componen
 import { GameMenu } from '@/components/GameMenu'
 import { Minimap } from '@/components/Minimap'
 import { PROFILE_URL as COFFEE_URL } from '@/components/BuyMeACoffee'
+import { music } from '@/lib/audio-controller'
 
 // ── Props ─────────────────────────────────────────────────────────────────────
 
@@ -1301,6 +1302,18 @@ export function PlayWorkspace({
 
   // Battles play out in first person — snap to the 3D view when one starts
   useEffect(() => { if (combat) setView('3d') }, [combat])
+
+  // Battle SFX: fire one-shots off the combat feedback events (hit/crit/heal).
+  const sfxSeqRef = useRef(0)
+  useEffect(() => {
+    if (!combat) { sfxSeqRef.current = 0; return }
+    if (combat.eventSeq === sfxSeqRef.current) return
+    sfxSeqRef.current = combat.eventSeq
+    const kinds = new Set(combat.events.map(ev => ev.kind))
+    if (kinds.has('crit')) music.sfx('crit')
+    else if (kinds.has('damage') || kinds.has('weak') || kinds.has('resist')) music.sfx('hit')
+    if (kinds.has('heal')) music.sfx('heal')
+  }, [combat])
 
   // While Play is mounted the floating Buy-Me-a-Coffee button (vendor widget
   // or fallback link) hides — the party HUD carries an inline coffee chip next
