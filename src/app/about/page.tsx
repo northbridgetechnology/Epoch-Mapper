@@ -42,7 +42,17 @@ export default function AboutPage() {
               buying me a coffee
             </a>
             . Every cup helps keep the project going and is hugely appreciated. There&apos;s also a coffee button in
-            the bottom-right corner. Thank you!
+            the bottom-left corner. Thank you!
+          </p>
+        </div>
+
+        <div className="rounded-xl border border-white/10 p-5 space-y-2">
+          <h2 className="font-semibold text-white/70">How it was built</h2>
+          <p className="text-white/60 leading-relaxed text-sm">
+            Epoch was built with heavy AI assistance, and I&apos;m happy to be upfront about it — including the
+            engine&apos;s built-in pixel-art sprites, which are AI-generated placeholders you can replace with your own
+            uploads in the editor. The music is synthesized chiptune, generated in-browser. It&apos;s all open source, so
+            you never have to take my word for any of it — read the code, fork it, and judge the result for yourself.
           </p>
         </div>
 
