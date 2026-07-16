@@ -275,6 +275,16 @@ test('systems showcase: one working example of every world system is generated',
   for (const ov of [OVERLAY.MINI_BOSS, OVERLAY.TRAP, OVERLAY.WARP, OVERLAY.SHOP_WEAPON, OVERLAY.EVENT]) {
     assert.ok(overlays.has(ov), `showcase missing overlay: ${ov}`)
   }
+
+  // Any NPC a `recruit` effect targets must be flagged recruitable — otherwise
+  // the 🤝 marker is off and the authoring UI shows it as "(not recruitable)".
+  const recruitTargets = new Set<string>()
+  for (const n of w.npcs) for (const l of n.lines ?? []) for (const e of l.effects ?? []) if (e.t === 'recruit') recruitTargets.add(e.npc)
+  assert.ok(recruitTargets.size >= 1, 'no recruit effect generated')
+  for (const id of recruitTargets) {
+    const def = w.npcs.find(n => n.id === id)
+    assert.ok(def?.recruitable === true, `recruit target ${id} is not flagged recruitable`)
+  }
 })
 
 console.log(`\n${passed} passed`)

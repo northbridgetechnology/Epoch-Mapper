@@ -1190,11 +1190,15 @@ export function buildGeneratedWorld(name: string, config: NewMapConfig, ruleset:
     const recRoom = nextRoom()
     if (recRoom) {
       const sellswordId = `npc.sellsword_${tag}`
-      npcs.push(mkNpc(sellswordId, 'Lost Sellsword', '🗡️', 'cr_guard', 'A blade with no banner left to follow.', [
-        { id: 'hail', text: ['You there — you look like you can hold a line.'], bark: true, once: true },
-        { id: 'join', text: ['I have no cause left.', 'Lend me yours, and my blade is yours.'], effects: [{ t: 'recruit', npc: sellswordId }] },
-        { id: 'joined', priority: 5, text: ['Lead on.'], conditions: [{ c: 'flag', flag: `npc.recruited.${sellswordId}`, equals: true }] },
-      ]))
+      npcs.push({
+        ...mkNpc(sellswordId, 'Lost Sellsword', '🗡️', 'cr_guard', 'A blade with no banner left to follow.', [
+          { id: 'hail', text: ['You there — you look like you can hold a line.'], bark: true, once: true },
+          { id: 'join', text: ['I have no cause left.', 'Lend me yours, and my blade is yours.'], effects: [{ t: 'recruit', npc: sellswordId }] },
+          { id: 'joined', priority: 5, text: ['Lead on.'], conditions: [{ c: 'flag', flag: `npc.recruited.${sellswordId}`, equals: true }] },
+        ]),
+        classId: 'class.fighter', raceId: 'race.human', level: 3,
+        recruitable: true, // marks the 🤝 flag so the recruit effect authors/reads correctly
+      })
       sAddEnt(recRoom.keys[0], { t: 'object', object: { kind: 'npc', id: uid(), npc: sellswordId } })
       putOverlay(recRoom.keys[0], OVERLAY.NPC)
     }
