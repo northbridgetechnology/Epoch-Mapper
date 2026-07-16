@@ -12,6 +12,18 @@ HTML, hosted web build, or native desktop binary), or export a print-ready
 **PDF** and a compact, self-describing **`.epochmap`** binary you can share with
 other players.
 
+<p align="center">
+  <img src="public/og.png" alt="Epoch — a first-person dungeon crawler built in the browser" width="840">
+</p>
+
+**See it in action** — a full playthrough exported to a single standalone HTML
+file: start a new game, name your hero, talk to a quest-giver, loot a chest,
+equip a full armor set from the in-game menu, then win a turn-based fight.
+
+<p align="center">
+  <img src="docs/epoch-demo.gif" alt="Epoch gameplay: dialogue, looting a chest, equipping armor, and turn-based combat" width="840">
+</p>
+
 This repository is **both**:
 
 1. **A standalone web app** (Next.js) — open the editor in a browser tab, no
