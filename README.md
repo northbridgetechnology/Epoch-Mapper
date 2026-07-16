@@ -286,36 +286,51 @@ gzipped** so the magic bytes, version, game title, and ROM hash can be read
 without decompressing.
 
 ```
-[UNCOMPRESSED HEADER]
+[UNCOMPRESSED HEADER]                              (v3)
   4   magic         "EPKM"
-  1   version       1
+  1   version       3
   2   gameTitleLen  (uint16 LE)
   N   gameTitle     UTF-8
-  64  romHash       hex SHA-256 (lowercase ASCII), 0x00-padded if unknown
+  32  romHash       raw SHA-256 (32 bytes), all-zero if unknown
 
 [GZIP-COMPRESSED BODY]
   custom markers · maps · cells · notes · revealed fog chunks
+  · audio blobs (raw) · JSON extension block (ruleset diff + entities + meta)
 ```
 
-All multi-byte integers are little-endian. Full layout, built-in type ID tables
-(base / overlay / edge), and design goals live in the spec, mirrored in
-[`src/lib/epochmap-codec.ts`](src/lib/epochmap-codec.ts) and
-[`src/lib/constants.ts`](src/lib/constants.ts).
+All multi-byte integers are little-endian. Layout and built-in type ID tables
+live in [`src/lib/epochmap-codec.ts`](src/lib/epochmap-codec.ts) and
+[`src/lib/constants.ts`](src/lib/constants.ts); the ruleset diff is in
+[`src/lib/ruleset-diff.ts`](src/lib/ruleset-diff.ts).
 
-### v1 design notes
+### Version history
 
-The in-memory editor model is richer than the v1 binary in two places, by
-design (the format reserves these for a future v2):
+- **v1** — visual only: markers, maps, cells (base + first overlay + legacy
+  edge bits), notes, fog. Two design-reserved lossy spots: a cell may hold
+  *multiple* overlays in the editor but v1 stores only the **first**, and edges
+  collapse to a 4-bit "marked sides" mask + a **single** edge type.
+- **v2** — adds a JSON extension block carrying the full L1 ruleset, per-cell
+  entities, per-side boundaries, per-map meta, and baked audio (base64 inside
+  the JSON). Boundaries move here, so the per-cell edge bytes go unused.
+- **v3** — the same content, much smaller:
+  - **Ruleset stored as a diff** against the built-in default ruleset (see
+    `ruleset-diff.ts`). ~80% of every prior file was the byte-for-byte identical
+    stock ruleset; the diff omits it and the loader reconstitutes it from the
+    bundled defaults. A default-ruleset game dropped from **~30 KB to <1 KB**.
+  - **Audio** rides a raw length-prefixed binary block (no base64 +33%, no
+    double-compressing text-encoded bytes).
+  - **romHash** packs to 32 raw bytes (was 64 hex ASCII).
+  - The two always-zero per-cell edge bytes are **dropped**.
 
-- **Overlays:** a cell may hold *multiple* overlays in the editor and in the
-  auto-saved JSON draft; the v1 `.epochmap` stores the **first** overlay byte.
-- **Edges:** the editor supports a *different* type per side (N/S/E/W); the v1
-  `.epochmap` stores a 4-bit "which sides are marked" mask plus a **single**
-  edge type for the cell.
+The codec reads v1, v2, and v3; it always writes v3. Round-trip fidelity
+(including the v1 overlay/edge collapse and full v3 ruleset diff/patch) is
+asserted in `test/codec.test.ts` and `test/ruleset-diff.test.ts`.
 
-Round-tripping a map with mixed overlay/edge types through `.epochmap` collapses
-those to the v1 representation. The codec's test suite asserts this behaviour
-explicitly (`test/codec.test.ts`).
+> **Self-containment tradeoff.** A v3 file leans on this build's default ruleset
+> to fill the gaps it omits, so it's no longer 100% version-independent. Additive
+> drift (a later release adding a stock spell) is benign; the defaults are
+> otherwise treated as a stable base. Anything the author edited, added, removed,
+> or reordered is stored in full and always wins.
 
 ---
 

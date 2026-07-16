@@ -67,16 +67,16 @@ const sample: EpochmapFile = {
 
 console.log('epochmap codec round-trip')
 
-test('serialize produces EPKM magic + version 2 in the clear header', () => {
+test('serialize produces EPKM magic + version 3 in the clear header', () => {
   const bytes = serializeDotEpochmap(sample)
   const magic = String.fromCharCode(bytes[0], bytes[1], bytes[2], bytes[3])
   assert.equal(magic, EPOCHMAP_MAGIC)
-  assert.equal(bytes[4], 2)
+  assert.equal(bytes[4], 3)
 })
 
 test('full round-trip preserves header fields', () => {
   const back = parseDotEpochmap(serializeDotEpochmap(sample))
-  assert.equal(back.version, 2)
+  assert.equal(back.version, 3)
   assert.equal(back.gameTitle, sample.gameTitle)
   assert.equal(back.romHash, sample.romHash)
 })
@@ -238,10 +238,64 @@ test('Settings bake in: opening story (text + image) and game meta round-trip', 
   assert.equal(back.maps[0].dark, true)
 })
 
-test('map edgeLinks round-trip through the v2 ext block', () => {
+test('map edgeLinks round-trip through the ext block', () => {
   const back = parseDotEpochmap(serializeDotEpochmap(sample))
   assert.deepEqual(back.maps[1].edgeLinks, { E: { mapId: 'm0' }, N: { mapId: 'm0', transition: 'seamless' } })
   assert.equal(back.maps[0].edgeLinks, undefined)
+})
+
+// ── v3: ruleset stored as a diff against the built-in defaults ──────────────────
+
+test('unchanged default ruleset round-trips exactly and stays tiny', () => {
+  const rs = makeDefaultRuleset()
+  const file: EpochmapFile = {
+    version: 3, gameTitle: 'Default', romHash: '', customMarkers: [], ruleset: rs,
+    maps: [{ id: 'm1', name: 'Floor 1', playerX: 0, playerY: 0, cells: { '0,0': { base: 1, overlays: [] } }, revealedChunks: ['0,0'] }],
+  }
+  const bytes = serializeDotEpochmap(file)
+  const back = parseDotEpochmap(bytes)
+  assert.deepEqual(back.ruleset, rs) // exact reconstruction from the defaults
+  // The whole point of v3: an unedited default ruleset should NOT dominate the
+  // file. Pre-v3 this was ~30 KB; the diff collapses it to a few KB.
+  assert.ok(bytes.length < 8192, `expected < 8KB for a default-ruleset game, got ${bytes.length}`)
+})
+
+test('edited / added / removed ruleset entries round-trip losslessly', () => {
+  const rs = makeDefaultRuleset()
+  // Edit an existing enemy, add a brand-new spell, remove the last item — all
+  // via immutable updates (never mutate the shared defaults / diff baseline).
+  rs.enemies = rs.enemies.map((e, i) => (i === 0 ? { ...e, name: 'Dread ' + e.name, hp: 9999 } : e))
+  rs.spells = [...rs.spells, {
+    id: 'spell.custom_nova', name: 'Custom Nova', school: 'element', level: 9, mpCost: 40,
+    target: 'allEnemies', inCombat: true, outOfCombat: false, description: 'Homebrew.',
+    effects: [{ t: 'damage', dmgType: 'fire', amount: '9d9+9', canCrit: true }],
+  }]
+  const removed = rs.items[rs.items.length - 1].id
+  rs.items = rs.items.slice(0, -1)
+
+  const file: EpochmapFile = {
+    version: 3, gameTitle: 'Edited', romHash: 'b'.repeat(64), customMarkers: [], ruleset: rs,
+    maps: [{ id: 'm1', name: 'F1', playerX: 0, playerY: 0, cells: {}, revealedChunks: [] }],
+  }
+  const back = parseDotEpochmap(serializeDotEpochmap(file))
+  assert.deepEqual(back.ruleset, rs)
+  assert.equal(back.ruleset!.enemies[0].hp, 9999)
+  assert.ok(back.ruleset!.spells.some(s => s.id === 'spell.custom_nova'))
+  assert.ok(!back.ruleset!.items.some(i => i.id === removed))
+  assert.equal(back.romHash, 'b'.repeat(64)) // 32-byte raw romHash round-trips
+})
+
+test('audio blobs survive the raw binary block (incl. non-ASCII bytes)', () => {
+  // 0xFF 0x00 0xFE — bytes that base64-in-JSON handled but are worth pinning
+  // now that audio rides a raw length-prefixed block.
+  const file: EpochmapFile = {
+    version: 3, gameTitle: '', romHash: '', customMarkers: [],
+    maps: [{ id: 'm', name: 'm', playerX: 0, playerY: 0, cells: {}, revealedChunks: [] }],
+    audioBlobs: { 'trk.a': 'QUJDRA==', 'trk.b': '/wD+' }, // "ABCD", and 0xFF 0x00 0xFE
+  }
+  const back = parseDotEpochmap(serializeDotEpochmap(file))
+  assert.equal(back.audioBlobs?.['trk.a'], 'QUJDRA==')
+  assert.equal(back.audioBlobs?.['trk.b'], '/wD+')
 })
 
 console.log(`\n${passed} passed`)
