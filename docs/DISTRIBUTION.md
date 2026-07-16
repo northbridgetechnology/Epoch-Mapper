@@ -53,9 +53,12 @@ browser origin, so in-game save slots may not persist reliably between sessions
 desktop app (Option C). Players can always export/import a `.epochsave` file as
 a portable save.
 
-Caveat — **size.** The engine is ~1.6 MB; uploaded audio/sprites add their
-base64 size (+33%). Games leaning on the built-in chiptunes and pixel sprites
-stay small.
+Caveat — **size.** The player engine is **~940 KB** (≈260 KB gzipped once
+hosted) — the PDF-export toolchain is stripped from the player build, since only
+the editor exports PDFs. The embedded game itself is tiny: a `.epochmap` built
+on the stock ruleset is well under 1 KB. Uploaded audio/sprites add their base64
+size (+33%); games leaning on the built-in chiptunes and pixel sprites stay
+small.
 
 ---
 

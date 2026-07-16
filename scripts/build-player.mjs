@@ -58,7 +58,13 @@ const result = await build({
   legalComments: 'none',
   write: false,
   define: { 'process.env.NODE_ENV': '"production"' },
-  alias: { '@': path.join(root, 'src') },
+  alias: {
+    // The player has no PDF export; swap the module for a tiny stub so the
+    // jsPDF/html2canvas/canvg/dompurify toolchain (~658 KB, ~40% of the bundle)
+    // is never pulled in. The editor's Next.js build is unaffected.
+    '@/lib/dungeon-export': path.join(root, 'src/player/pdf-stub.ts'),
+    '@': path.join(root, 'src'),
+  },
   loader: { '.png': 'dataurl', '.svg': 'dataurl' },
 })
 const js = result.outputFiles[0].text
