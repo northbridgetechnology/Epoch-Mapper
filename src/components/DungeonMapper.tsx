@@ -45,7 +45,7 @@ import { initCombat, applyCombatOutcome, consumeCombatItems, type CombatState } 
 import { CellInspector } from './CellInspector'
 import { usePanelWidth } from './ui/ResizablePanel'
 import { ShopModal } from './ShopModal'
-import { runCellEvents, applyFlagWriteWithReactions, resolveExploreEffects, applyExploreHarm, pickNpcLine, finishNpcLine, getInteractableObjects, objectUsedFlagKey, resolveLootTable, effectiveDoorState, npcRecruitedFlagKey, type ExploreEffect, type EventContext } from '@/lib/event-engine'
+import { runCellEvents, applyFlagWriteWithReactions, resolveExploreEffects, applyExploreHarm, dialogueStartNode, dialogueNodeById, eligibleChoices, enterDialogueNode, applyDialogueChoice, getInteractableObjects, objectUsedFlagKey, resolveLootTable, effectiveDoorState, npcRecruitedFlagKey, type ExploreEffect, type EventContext } from '@/lib/event-engine'
 
 const DRAFT_KEY = 'epochmapper.draft'
 const WELCOME_KEY = 'epochmapper.welcomed'
@@ -295,7 +295,7 @@ export function DungeonMapper({
   const reserveRef = useRef<Character[]>([])
   reserveRef.current = reserve
   const menuOpenRef = useRef(false)   // in-play main menu (blocks movement)
-  const [dialogue, setDialogue] = useState<{ npcId: string; lineId: string } | null>(null)
+  const [dialogue, setDialogue] = useState<{ dialogueId: string; nodeId: string; npcId?: string } | null>(null)
   const dialogueRef = useRef<typeof dialogue>(null)
   dialogueRef.current = dialogue
   const [inscription, setInscription] = useState<string[] | null>(null)
@@ -592,12 +592,11 @@ export function DungeonMapper({
       setShopId(result.openShop)
     }
     if (result.dialogueNode) {
-      const def = (ruleset.npcs ?? []).find(n => n.id === result.dialogueNode)
-      if (def) {
-        const mergedCtx = { ...makeEventContext(), flags: { ...flagsRef.current, ...result.flagSets } }
-        const line = pickNpcLine(def, mergedCtx)
-        if (line) setDialogue({ npcId: def.id, lineId: line.id })
-      }
+      // `dialogue` effect payload is a DialogueDef id; open it at its start node
+      // (node-enter effects fire via the dialogue useEffect below).
+      const dlg = (ruleset.dialogues ?? []).find(d => d.id === result.dialogueNode)
+      const node = dlg ? dialogueStartNode(dlg) : null
+      if (dlg && node) setDialogue({ dialogueId: dlg.id, nodeId: node.id })
     }
     for (const qu of result.questUpdates) {
       const q = (ruleset.quests ?? []).find(x => x.id === qu.quest)
@@ -946,19 +945,33 @@ export function DungeonMapper({
       if (ent.t !== 'object' || ent.object.kind !== 'npc' || !ent.object.npc) continue
       if (flagsRef.current[npcRecruitedFlagKey(ent.object.npc)]) continue   // recruited — no longer here
       const def = (ruleset.npcs ?? []).find(n => n.id === ent.object.npc)
-      if (!def) continue
-      const ctx = makeEventContext()
-      const line = pickNpcLine(def, ctx, { bark: true })
-      if (!line) continue
-      const sessionKey = `${def.id}.${line.id}`
-      if (sessionBarksRef.current.has(sessionKey)) continue
+      if (!def?.barks?.length) continue
+      const sessionKey = def.id
+      if (sessionBarksRef.current.has(sessionKey)) continue   // one bark per NPC per session
       sessionBarksRef.current.add(sessionKey)
-      toast(`${def.portrait ?? '🧑'} ${def.name}: “${line.text[0]}”`)
-      applyExploreEffect(finishNpcLine(def, line, aheadCell, ctx, ruleset))
+      const bark = def.barks[Math.floor(Math.random() * def.barks.length)]
+      toast(`${def.portrait ?? '🧑'} ${def.name}: “${bark}”`)
       break
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeMap?.playerX, activeMap?.playerY, facing])
+
+  // ── Dialogue node entry: mark the node seen (lore) and fire its on-enter
+  //    effects once per node arrival — decoupled from applyExploreEffect so the
+  //    `dialogue` effect can open a conversation without nested application.
+  const dialogueEnterRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (!dialogue || !activeMap) { dialogueEnterRef.current = null; return }
+    const key = `${dialogue.dialogueId}:${dialogue.nodeId}`
+    if (dialogueEnterRef.current === key) return
+    dialogueEnterRef.current = key
+    const dlg = (ruleset.dialogues ?? []).find(d => d.id === dialogue.dialogueId)
+    const node = dlg ? dialogueNodeById(dlg, dialogue.nodeId) : null
+    if (!dlg || !node) return
+    const cell = activeMap.cells[`${activeMap.playerX},${activeMap.playerY}`] ?? null
+    applyExploreEffect(enterDialogueNode(dlg, node, cell, makeEventContext(), ruleset))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dialogue])
 
   const handleInteract = useCallback(() => {
     if (!activeMap) return
@@ -1119,9 +1132,10 @@ export function DungeonMapper({
         if (obj.kind === 'npc' && obj.npc && !flagsRef.current[npcRecruitedFlagKey(obj.npc)]) {
           const def = (ruleset.npcs ?? []).find(n => n.id === obj.npc)
           if (def) {
-            const line = pickNpcLine(def, ctx)
-            if (line) setDialogue({ npcId: def.id, lineId: line.id })
-            else toast(`${def.name} has nothing more to say.`)
+            const dlg = def.dialogue ? (ruleset.dialogues ?? []).find(d => d.id === def.dialogue) : undefined
+            const node = dlg ? dialogueStartNode(dlg) : null
+            if (dlg && node) setDialogue({ dialogueId: dlg.id, nodeId: node.id, npcId: def.id })
+            else toast(`${def.name} has nothing to say.`)
             return
           }
         }
@@ -1820,12 +1834,13 @@ export function DungeonMapper({
     // Generated story content (NPCs, quest, events, items) joins the ruleset so
     // the map's dialogue, levers, journal entries, and relics work out of the box.
     const mergeWorld = (base: Ruleset): Ruleset =>
-      world && (world.npcs.length || world.quests.length || world.events.length || world.items.length)
+      world && (world.npcs.length || world.quests.length || world.events.length || world.items.length || world.dialogues.length)
         ? {
             ...base,
             npcs: [...(base.npcs ?? []).filter(n => !world.npcs.some(w => w.id === n.id)), ...world.npcs],
             quests: [...(base.quests ?? []).filter(q => !world.quests.some(w => w.id === q.id)), ...world.quests],
             events: [...(base.events ?? []).filter(e => !world.events.some(w => w.id === e.id)), ...world.events],
+            dialogues: [...(base.dialogues ?? []).filter(d => !world.dialogues.some(w => w.id === d.id)), ...world.dialogues],
             items: [...base.items.filter(i => !world.items.some(w => w.id === i.id)), ...world.items],
           }
         : base
@@ -2715,32 +2730,46 @@ export function DungeonMapper({
       )}
       </div>{/* end Map workspace */}
 
-      {/* NPC dialogue (listening) overlay */}
+      {/* Branching NPC dialogue overlay */}
       {dialogue && activeMap && (() => {
-        const npcDef = (ruleset.npcs ?? []).find(n => n.id === dialogue.npcId)
-        const line = npcDef?.lines.find(l => l.id === dialogue.lineId)
-        if (!npcDef || !line) return null
+        const dlg = (ruleset.dialogues ?? []).find(d => d.id === dialogue.dialogueId)
+        const node = dlg ? dialogueNodeById(dlg, dialogue.nodeId) : null
+        if (!dlg || !node) return null
+        const npcDef = dialogue.npcId ? (ruleset.npcs ?? []).find(n => n.id === dialogue.npcId) : undefined
+        const speaker = node.speaker ?? npcDef?.name ?? dlg.name
+        const choices = eligibleChoices(node, makeEventContext()).map(c => ({ label: c.choice.label, index: c.index }))
         return (
           <DialogueOverlay
-            npc={npcDef}
-            line={line}
+            speaker={speaker}
+            portrait={npcDef?.portrait ?? '🧑'}
+            node={node}
+            choices={choices}
             mc={mc}
-            onFinish={() => {
+            onChoose={(index) => {
+              const choice = node.choices?.[index]
+              if (!choice) { setDialogue(null); return }
               const cell = activeMap.cells[`${activeMap.playerX},${activeMap.playerY}`] ?? null
-              applyExploreEffect(finishNpcLine(npcDef, line, cell, makeEventContext(), ruleset))
-              setDialogue(null)
+              const eff = applyDialogueChoice(choice, cell, makeEventContext(), ruleset)
+              applyExploreEffect(eff)
+              const nextNode = choice.goto ? dialogueNodeById(dlg, choice.goto) : null
+              if (nextNode) setDialogue({ ...dialogue, nodeId: nextNode.id })
+              else setDialogue(null)
             }}
+            onClose={() => setDialogue(null)}
           />
         )
       })()}
 
-      {/* Wall inscription overlay */}
+      {/* Wall inscription overlay (text-only reuse of the dialogue box) */}
       {inscription && (
         <DialogueOverlay
-          npc={{ id: '_inscription', name: 'Inscription', portrait: '🪨', lines: [] }}
-          line={{ id: '_insc', text: inscription }}
+          speaker="Inscription"
+          portrait="🪨"
+          node={{ id: '_insc', text: inscription }}
+          choices={[]}
           mc={mc}
-          onFinish={() => setInscription(null)}
+          onChoose={() => setInscription(null)}
+          onClose={() => setInscription(null)}
         />
       )}
 

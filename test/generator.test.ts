@@ -47,12 +47,14 @@ test('vault puzzle: sealed doors requiring exactly the two lever flags', () => {
   assert.deepEqual(switches.map(b => b.switch!.flag).sort(), [...flags].sort())
 })
 
-test('story content: quest, unseal event, and a placed hermit with lines', () => {
+test('story content: quest, unseal event, and a placed hermit with a dialogue tree', () => {
   assert.equal(world.quests.length, 2)   // vault + depths
   assert.equal(world.quests[0].stages.length, 3)
   assert.ok(world.events.some(e => e.trigger === 'onFlag'))
   const hermit = world.npcs.find(n => n.name === 'Old Hermit')
-  assert.ok(hermit && hermit.lines.length >= 3)
+  const hermitDlg = world.dialogues.find(d => d.id === hermit?.dialogue)
+  assert.ok(hermit && hermitDlg && hermitDlg.nodes.length >= 2, 'hermit has no dialogue tree')
+  assert.ok(hermitDlg!.nodes.some(n => (n.choices?.length ?? 0) > 0), 'hermit dialogue has no branching')
   const placed = Object.values(world.map.cells).some(c =>
     c.entities?.some(e => e.t === 'object' && e.object.kind === 'npc' && e.object.npc === hermit!.id))
   assert.ok(placed, 'hermit defined but not placed on the map')
@@ -110,7 +112,11 @@ test('showcase: relics, torchbearer, inn, and the gameEnd finale', () => {
 
   const torchbearer = world.npcs.find(n => n.name === 'Torchbearer')
   assert.ok(torchbearer, 'no torchbearer NPC')
-  assert.ok(torchbearer!.lines.some(l => l.effects?.some(e => e.t === 'giveItem' && e.item === 'item.torch')), 'torchbearer gives no torches')
+  const torchDlg = world.dialogues.find(d => d.id === torchbearer!.dialogue)
+  const givesTorch = torchDlg?.nodes.some(n =>
+    n.effects?.some(e => e.t === 'giveItem' && e.item === 'item.torch') ||
+    n.choices?.some(c => c.effects?.some(e => e.t === 'giveItem' && e.item === 'item.torch')))
+  assert.ok(givesTorch, 'torchbearer dialogue gives no torches')
 
   assert.ok(Object.values(world.map.cells).some(c =>
     c.entities?.some(e => e.t === 'object' && e.object.kind === 'inn')), 'no inn placed')
@@ -243,7 +249,10 @@ test('systems showcase: one working example of every world system is generated',
       if (b.damage) bFeat.add('damage'); if (b.onPass) bFeat.add('onPass')
     }
   }
-  for (const n of w.npcs) for (const l of n.lines ?? []) { scanE(l.effects); scanC(l.conditions) }
+  for (const d of w.dialogues) for (const node of d.nodes) {
+    scanE(node.effects)
+    for (const c of node.choices ?? []) { scanE(c.effects); scanC(c.conditions) }
+  }
   for (const ev of w.events) { scanE(ev.effects); scanC(ev.conditions) }
   for (const it of w.items) scanE(it.onUse)
 
@@ -279,7 +288,7 @@ test('systems showcase: one working example of every world system is generated',
   // Any NPC a `recruit` effect targets must be flagged recruitable — otherwise
   // the 🤝 marker is off and the authoring UI shows it as "(not recruitable)".
   const recruitTargets = new Set<string>()
-  for (const n of w.npcs) for (const l of n.lines ?? []) for (const e of l.effects ?? []) if (e.t === 'recruit') recruitTargets.add(e.npc)
+  for (const d of w.dialogues) for (const node of d.nodes) for (const c of node.choices ?? []) for (const e of c.effects ?? []) if (e.t === 'recruit') recruitTargets.add(e.npc)
   assert.ok(recruitTargets.size >= 1, 'no recruit effect generated')
   for (const id of recruitTargets) {
     const def = w.npcs.find(n => n.id === id)

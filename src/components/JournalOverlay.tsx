@@ -9,7 +9,7 @@
 import { useEffect, useState } from 'react'
 import { ScrollText, BookOpen, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { questStageFlagKey, npcLineHeardFlagKey } from '@/lib/event-engine'
+import { questStageFlagKey, dialogueSeenFlagKey } from '@/lib/event-engine'
 import type { Ruleset } from '@/lib/engine-types'
 import { resolveText, type TextActor } from '@/lib/text-tokens'
 
@@ -38,10 +38,10 @@ export function JournalOverlay({ ruleset, flags, mc, onClose }: {
   const active = quests.filter(x => x.stage >= 1 && !x.done)
   const completed = quests.filter(x => x.done)
 
-  const lore = (ruleset.npcs ?? []).map(npc => ({
-    npc,
-    heard: (npc.lines ?? []).filter(l => flags[npcLineHeardFlagKey(npc.id, l.id)]),
-  })).filter(x => x.heard.length > 0)
+  const lore = (ruleset.npcs ?? []).map(npc => {
+    const dlg = npc.dialogue ? (ruleset.dialogues ?? []).find(d => d.id === npc.dialogue) : undefined
+    return { npc, heard: dlg ? dlg.nodes.filter(n => flags[dialogueSeenFlagKey(dlg.id, n.id)]) : [] }
+  }).filter(x => x.heard.length > 0)
 
   return (
     <div className="absolute inset-0 z-30 grid place-items-center bg-black/60" onClick={onClose}>

@@ -6,7 +6,7 @@
 
 import { BASE, EDGE, OVERLAY, CHUNK_SIZE, boundaryKey } from './constants'
 import type { CellMap, MapData, EdgeDir, SubcubeObject, SubcubePos } from './types'
-import type { BoundaryData, CellEntity, EventDef, ItemDef, NpcDef, QuestDef, Ruleset } from './engine-types'
+import type { BoundaryData, CellEntity, DialogueDef, DialogueNode, EventDef, ItemDef, NpcDef, QuestDef, Ruleset } from './engine-types'
 import { uid } from './utils'
 
 /** Everything a generated map contributes: the map itself plus the ruleset
@@ -17,6 +17,7 @@ export interface GeneratedWorld {
   extraMaps: MapData[]
   npcs: NpcDef[]
   quests: QuestDef[]
+  dialogues: DialogueDef[]
   events: EventDef[]
   /** Generated ruleset items the placed content references (cursed loot, scrolls). */
   items: ItemDef[]
@@ -597,6 +598,7 @@ export function buildGeneratedWorld(name: string, config: NewMapConfig, ruleset:
   const npcs: NpcDef[] = []
   const quests: QuestDef[] = []
   const events: EventDef[] = []
+  const dialogues: DialogueDef[] = []
   const OPP: Record<EdgeDir, EdgeDir> = { N: 'S', S: 'N', E: 'W', W: 'E' }
   const inRect = (r: Rect, x: number, y: number) => x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h
 
@@ -702,28 +704,24 @@ export function buildGeneratedWorld(name: string, config: NewMapConfig, ruleset:
 
       // The hermit who starts it all, placed beside the party start
       const hermitId = `npc.hermit_${seedTag}`
+      const hermitDlg = `dlg.hermit_${seedTag}`
+      dialogues.push({
+        id: hermitDlg, name: 'Old Hermit', start: 'greet',
+        nodes: [
+          { id: 'greet', text: ['…another one comes. What do you seek in the deep?'], choices: [
+            { label: 'Tell me of the sealed vault.', goto: 'rumor' },
+            { label: 'Have I done well?', conditions: [{ c: 'questStage', quest: qid, min: 3 }], goto: 'done' },
+            { label: 'Nothing from you.' },
+          ] },
+          { id: 'rumor', text: ['A vault lies sealed in these halls.', 'Twin levers, twin rooms. Throw them both, and the stone will yield.'],
+            effects: [{ t: 'questStage', quest: qid, stage: 1 }] },
+          { id: 'done', text: ['You woke the vault and claimed what was owed. Spend it well, wanderer.'] },
+        ],
+      })
       npcs.push({
         id: hermitId, name: 'Old Hermit', portrait: '🧙', sprite: 'cr_hermit',
         description: 'A stooped figure who has watched these halls too long.',
-        level: 3, attributes: {},
-        lines: [
-          { id: 'hail', text: ['…another one comes.'], bark: true, once: true },
-          {
-            id: 'rumor',
-            text: ['A vault lies sealed in these halls.', 'Twin levers, twin rooms. Throw them both, and the stone will yield.'],
-            effects: [{ t: 'questStage', quest: qid, stage: 1 }],
-          },
-          {
-            id: 'opened', priority: 5,
-            text: ['You woke the vault. Claim what is owed — before something else does.'],
-            conditions: [{ c: 'questStage', quest: qid, min: 2 }],
-          },
-          {
-            id: 'done', priority: 9,
-            text: ['Spend it well, wanderer.'],
-            conditions: [{ c: 'questStage', quest: qid, min: 3 }],
-          },
-        ],
+        level: 3, attributes: {}, dialogue: hermitDlg, barks: ['…another one comes.'],
       })
       const hermitSpots = [
         `${startC.x + 1},${startC.y}`, `${startC.x - 1},${startC.y}`,
@@ -743,14 +741,15 @@ export function buildGeneratedWorld(name: string, config: NewMapConfig, ruleset:
   if (sideRooms.length > 0 && rng() < 0.6) {
     const seedTag = config.seed >>> 0
     const wandererId = `npc.wanderer_${seedTag}`
+    const wandererDlg = `dlg.wanderer_${seedTag}`
+    dialogues.push({
+      id: wandererDlg, name: 'Wanderer', start: 'talk',
+      nodes: [{ id: 'talk', text: ['These halls change when levers turn.', 'I have heard doors sigh open three rooms away.'] }],
+    })
     npcs.push({
       id: wandererId, name: 'Wanderer', portrait: '🧝', sprite: 'cr_hooded',
       description: 'A traveller with no destination left.',
-      level: 1, attributes: {},
-      lines: [
-        { id: 'hail', text: ['Keep your torch lit.'], bark: true, once: true },
-        { id: 'talk', text: ['These halls change when levers turn.', 'I have heard doors sigh open three rooms away.'] },
-      ],
+      level: 1, attributes: {}, dialogue: wandererDlg, barks: ['Keep your torch lit.'],
     })
     const wl = pickRandom(rng, sideRooms)
     const wc = center(wl.room)
@@ -886,23 +885,29 @@ export function buildGeneratedWorld(name: string, config: NewMapConfig, ruleset:
 
     // ── Torchbearer NPC guards the stairs and hands out fire ──
     const torchbearerId = `npc.torchbearer_${seedTag}`
+    const torchDlg = `dlg.torchbearer_${seedTag}`
+    dialogues.push({
+      id: torchDlg, name: 'Torchbearer', start: 'greet',
+      nodes: [
+        { id: 'greet', text: ['Take light. The dark below is hungry.', 'The pit takes the careless faster than the stairs take the brave.'], choices: [
+          // Gift is offered only before the descent quest begins (stage 0); once
+          // taken it advances the quest, so the offer disappears next time.
+          { label: 'Spare a light for the dark?', conditions: [{ c: 'questStage', quest: dqid, equals: 0 }], goto: 'gift' },
+          { label: 'Any light left to spare?', conditions: [{ c: 'questStage', quest: dqid, min: 1 }], goto: 'none' },
+          { label: 'Farewell.' },
+        ] },
+        { id: 'gift', text: ['Here — my last torches. Do not waste them.', 'And mark the floor. Some stones are lies.'], effects: [
+          { t: 'giveItem', item: 'item.torch', qty: 2 },
+          { t: 'giveItem', item: 'item.lantern', qty: 1 },
+          { t: 'questStage', quest: dqid, stage: 1 },
+        ] },
+        { id: 'none', text: ['I have none left. Guard the flame you carry.'] },
+      ],
+    })
     npcs.push({
       id: torchbearerId, name: 'Torchbearer', portrait: '🕯️', sprite: 'cr_guard',
       description: 'Keeps the last lit brazier above the Depths.',
-      level: 4, attributes: {},
-      lines: [
-        { id: 'hail', text: ['Take light. The dark below is hungry.'], bark: true, once: true },
-        {
-          id: 'gift', once: true,
-          text: ['Here — my last torches. Do not waste them.', 'And mark the floor. Some stones are lies.'],
-          effects: [
-            { t: 'giveItem', item: 'item.torch', qty: 2 },
-            { t: 'giveItem', item: 'item.lantern', qty: 1 },
-            { t: 'questStage', quest: dqid, stage: 1 },
-          ],
-        },
-        { id: 'talk', priority: -1, text: ['The pit takes the careless faster than the stairs take the brave.'] },
-      ],
+      level: 4, attributes: {}, dialogue: torchDlg, barks: ['Take light. The dark below is hungry.'],
     })
     if (stairsDownKey) {
       const [sx, sy] = stairsDownKey.split(',').map(Number)
@@ -1161,8 +1166,13 @@ export function buildGeneratedWorld(name: string, config: NewMapConfig, ruleset:
 
     const encTable = encTableIds.length > 0 ? encTableIds[0] : null
     const someLoot = () => (lootIds.length > 0 ? { loot: pickRandom(rng, lootIds) } : {})
-    const mkNpc = (id: string, name: string, portrait: string, sprite: string, description: string, lines: NpcDef['lines']): NpcDef =>
-      ({ id, name, portrait, sprite, description, level: 2, attributes: {}, lines })
+    // Register a dialogue tree + an NPC that references it (barks are ambient).
+    const mkTalker = (id: string, name: string, portrait: string, sprite: string, description: string,
+      nodes: DialogueNode[], barks: string[], extra: Partial<NpcDef> = {}) => {
+      const dlgId = `dlg.${id}`
+      dialogues.push({ id: dlgId, name, start: nodes[0].id, nodes })
+      npcs.push({ id, name, portrait, sprite, description, level: 2, attributes: {}, dialogue: dlgId, barks, ...extra })
+    }
 
     // Player-start entity (companion to the PLAYER_START overlay).
     sAddEnt(startKey, { t: 'partyStart' })
@@ -1177,10 +1187,12 @@ export function buildGeneratedWorld(name: string, config: NewMapConfig, ruleset:
       addSubcube(k, 'banner', { x: side(), y: 1, z: 2 })
       if (shopCells[1]) {
         const peddlerId = `npc.peddler_${tag}`
-        npcs.push(mkNpc(peddlerId, 'Wandering Peddler', '🧺', 'cr_hooded', 'Sells what the dead no longer need.', [
-          { id: 'hail', text: ['Coin for steel? Step closer.'], bark: true, once: true },
-          { id: 'shop', text: ['Have a look at my wares.'], effects: [{ t: 'openShop', shop: 'shop.healer' }] },
-        ]))
+        mkTalker(peddlerId, 'Wandering Peddler', '🧺', 'cr_hooded', 'Sells what the dead no longer need.',
+          [{ id: 'greet', text: ['Coin for steel? Step closer.'], choices: [
+            { label: 'Show me your wares.', effects: [{ t: 'openShop', shop: 'shop.healer' }] },
+            { label: 'Maybe later.' },
+          ] }],
+          ['Coin for steel?'])
         sAddEnt(shopCells[1], { t: 'object', object: { kind: 'npc', id: uid(), npc: peddlerId } })
         putOverlay(shopCells[1], OVERLAY.NPC)
       }
@@ -1190,15 +1202,14 @@ export function buildGeneratedWorld(name: string, config: NewMapConfig, ruleset:
     const recRoom = nextRoom()
     if (recRoom) {
       const sellswordId = `npc.sellsword_${tag}`
-      npcs.push({
-        ...mkNpc(sellswordId, 'Lost Sellsword', '🗡️', 'cr_guard', 'A blade with no banner left to follow.', [
-          { id: 'hail', text: ['You there — you look like you can hold a line.'], bark: true, once: true },
-          { id: 'join', text: ['I have no cause left.', 'Lend me yours, and my blade is yours.'], effects: [{ t: 'recruit', npc: sellswordId }] },
-          { id: 'joined', priority: 5, text: ['Lead on.'], conditions: [{ c: 'flag', flag: `npc.recruited.${sellswordId}`, equals: true }] },
-        ]),
-        classId: 'class.fighter', raceId: 'race.human', level: 3,
-        recruitable: true, // marks the 🤝 flag so the recruit effect authors/reads correctly
-      })
+      // Recruit via a player choice; the NPC's placement vanishes once he joins.
+      mkTalker(sellswordId, 'Lost Sellsword', '🗡️', 'cr_guard', 'A blade with no banner left to follow.',
+        [{ id: 'greet', text: ['I have no cause left.', 'Lend me yours, and my blade is yours.'], choices: [
+          { label: 'Join me.', effects: [{ t: 'recruit', npc: sellswordId }] },
+          { label: 'Not now.' },
+        ] }],
+        ['You there — you look like you can hold a line.'],
+        { classId: 'class.fighter', raceId: 'race.human', level: 3, recruitable: true })
       sAddEnt(recRoom.keys[0], { t: 'object', object: { kind: 'npc', id: uid(), npc: sellswordId } })
       putOverlay(recRoom.keys[0], OVERLAY.NPC)
     }
@@ -1283,9 +1294,8 @@ export function buildGeneratedWorld(name: string, config: NewMapConfig, ruleset:
     const shadeRoom = nextRoom()
     const leverRoom = nextRoom()
     if (shadeRoom && leverRoom) {
-      npcs.push(mkNpc(shadeId, 'Restless Shade', '👻', 'cr_hooded', 'It drifts where the levers send it.', [
-        { id: 'talk', text: ['…cold… the lever… moved me…'] },
-      ]))
+      mkTalker(shadeId, 'Restless Shade', '👻', 'cr_hooded', 'It drifts where the levers send it.',
+        [{ id: 'talk', text: ['…cold… the lever… moved me…'] }], ['…cold…'])
       sAddEnt(shadeRoom.keys[0], { t: 'object', object: { kind: 'npc', id: uid(), npc: shadeId } })
       sAddEnt(leverRoom.keys[0], { t: 'object', object: { kind: 'lever', id: uid(), onInteract: [
         { t: 'setFlag', flag: leverFlag, value: true }, { t: 'message', text: 'The lever grinds home. Somewhere, something shifts.' },
@@ -1397,6 +1407,7 @@ export function buildGeneratedWorld(name: string, config: NewMapConfig, ruleset:
     npcs,
     quests,
     events,
+    dialogues,
     items,
   }
 }

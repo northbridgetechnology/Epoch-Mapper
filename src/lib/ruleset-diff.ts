@@ -35,7 +35,7 @@ import { makeDefaultRuleset } from './default-ruleset'
 const TABLE_KEYS = [
   'attributes', 'classes', 'races', 'weaponTypes', 'armorTypes', 'spellSchools',
   'audioTracks', 'items', 'spells', 'skills', 'statusEffects', 'enemies',
-  'encounterTables', 'lootTables', 'shops', 'events', 'npcs', 'quests',
+  'encounterTables', 'lootTables', 'shops', 'events', 'npcs', 'quests', 'dialogues',
 ] as const
 
 type TableKey = (typeof TABLE_KEYS)[number]

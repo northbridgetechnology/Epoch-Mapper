@@ -1,17 +1,18 @@
 'use client'
 
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
-import { Plus, Trash2, Copy, Crown, Package, List, Skull, Swords, Sparkles, Zap, Store, Puzzle, ScrollText, Shield, Sword, Shirt, Music, BookOpen, Flame, Upload, Play, Square } from 'lucide-react'
+import { Plus, Trash2, Copy, Crown, Package, List, Skull, Swords, Sparkles, Zap, Store, Puzzle, ScrollText, Shield, Sword, Shirt, Music, BookOpen, Flame, Upload, Play, Square, MessageSquare } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
-import type { ClassDef, ItemSlot, DamageType, WeaponTypeDef, ArmorTypeDef, AudioTrackDef, SpellSchoolDef, SkillDef, Effect, EnemyAbility, EnemyDef, EncounterTableDef, EventDef, ItemDef, LootTableDef, QuestDef, ShopDef, SpellDef, StatusEffectDef, Ruleset } from '@/lib/engine-types'
+import type { ClassDef, ItemSlot, DamageType, WeaponTypeDef, ArmorTypeDef, AudioTrackDef, SpellSchoolDef, SkillDef, Effect, EnemyAbility, EnemyDef, EncounterTableDef, EventDef, ItemDef, LootTableDef, QuestDef, ShopDef, SpellDef, StatusEffectDef, DialogueDef, Ruleset } from '@/lib/engine-types'
 import { CLASS_SCHEMA, blankClass } from '@/lib/class-schema'
 import { WEAPON_TYPE_SCHEMA, ARMOR_TYPE_SCHEMA, DAMAGE_TYPE_OPTIONS, blankWeaponType, blankArmorType } from '@/lib/type-schema'
 import { blankAudioTrack } from '@/lib/music'
 import { SKILL_SCHEMA, blankSkill, skillGroups, type SkillSort } from '@/lib/skill-schema'
 import { putTrack, deleteTrack, hasTrack } from '@/lib/audio-store'
 import { music } from '@/lib/audio-controller'
-import { EVENT_SCHEMA, QUEST_SCHEMA, blankEventDef, blankQuest } from '@/lib/npc-schema'
+import { EVENT_SCHEMA, QUEST_SCHEMA, blankEventDef, blankQuest, blankDialogue } from '@/lib/npc-schema'
+import { DialogueEditor } from '../forms/DialogueEditor'
 import { ConditionBuilder } from '@/components/CellInspector'
 import { SimulatePanel } from '@/components/SimulatePanel'
 import { SchemaForm } from '../forms/SchemaForm'
@@ -21,7 +22,7 @@ import { ENEMY_SCHEMA, ENCOUNTER_TABLE_SCHEMA, blankEnemy, duplicateEnemy, elite
 import { SPELL_SCHEMA, STATUS_SCHEMA, STATUS_KINDS, SPELL_SCHOOL_SCHEMA, blankSpell, blankStatusEffect, blankSpellSchool, sortSpells, sortStatuses, spellLearnLevel, type SpellSort, type StatusSort } from '@/lib/spell-schema'
 import { SHOP_SCHEMA, blankShop } from '@/lib/shop-schema'
 
-type Category = 'items' | 'weapon_types' | 'armor_types' | 'spell_schools' | 'skills' | 'audio' | 'loot_tables' | 'bestiary' | 'encounters' | 'spells' | 'status_effects' | 'shops' | 'classes' | 'events' | 'quests'
+type Category = 'items' | 'weapon_types' | 'armor_types' | 'spell_schools' | 'skills' | 'audio' | 'loot_tables' | 'bestiary' | 'encounters' | 'spells' | 'status_effects' | 'shops' | 'classes' | 'events' | 'quests' | 'dialogues'
 
 const CATEGORIES: { id: Category; icon: React.ReactNode; label: string }[] = [
   { id: 'items',          icon: <Package className="w-4 h-4" />,  label: 'Items' },
@@ -39,6 +40,7 @@ const CATEGORIES: { id: Category; icon: React.ReactNode; label: string }[] = [
   { id: 'shops',          icon: <Store className="w-4 h-4" />,    label: 'Shops' },
   { id: 'events',         icon: <Puzzle className="w-4 h-4" />,     label: 'Events' },
   { id: 'quests',         icon: <ScrollText className="w-4 h-4" />, label: 'Quests' },
+  { id: 'dialogues',      icon: <MessageSquare className="w-4 h-4" />, label: 'Dialogue' },
 ]
 
 // ── Item entry list ───────────────────────────────────────────────────────────
@@ -2070,6 +2072,7 @@ export function DatabaseWorkspace({ ruleset, onRulesetChange }: DatabaseWorkspac
 
   const selectedEvent = (ruleset.events ?? []).find(e => e.id === selectedId) ?? null
   const selectedQuest = (ruleset.quests ?? []).find(q => q.id === selectedId) ?? null
+  const selectedDialogue = (ruleset.dialogues ?? []).find(d => d.id === selectedId) ?? null
 
   function addEventDef() {
     const id = `ev.event_${(ruleset.events ?? []).length + 1}_${Date.now() % 1000}`
@@ -2099,6 +2102,20 @@ export function DatabaseWorkspace({ ruleset, onRulesetChange }: DatabaseWorkspac
     if (selectedId === id) setSelectedId(next[0]?.id ?? null)
   }
 
+  function addDialogue() {
+    const id = `dlg.dialogue_${(ruleset.dialogues ?? []).length + 1}_${Date.now() % 1000}`
+    onRulesetChange({ ...ruleset, dialogues: [...(ruleset.dialogues ?? []), blankDialogue(id)] })
+    setSelectedId(id); setCategory('dialogues')
+  }
+  function updateDialogue(d: DialogueDef) {
+    onRulesetChange({ ...ruleset, dialogues: (ruleset.dialogues ?? []).map(x => x.id === d.id ? d : x) })
+  }
+  function deleteDialogue(id: string) {
+    const next = (ruleset.dialogues ?? []).filter(d => d.id !== id)
+    onRulesetChange({ ...ruleset, dialogues: next })
+    if (selectedId === id) setSelectedId(next[0]?.id ?? null)
+  }
+
   function handleCategoryChange(cat: Category) {
     setCategory(cat)
     if (cat === 'items')          setSelectedId(ruleset.items[0]?.id ?? null)
@@ -2116,6 +2133,7 @@ export function DatabaseWorkspace({ ruleset, onRulesetChange }: DatabaseWorkspac
     if (cat === 'classes')        setSelectedId(ruleset.classes[0]?.id ?? null)
     if (cat === 'events')         setSelectedId((ruleset.events ?? [])[0]?.id ?? null)
     if (cat === 'quests')         setSelectedId((ruleset.quests ?? [])[0]?.id ?? null)
+    if (cat === 'dialogues')      setSelectedId((ruleset.dialogues ?? [])[0]?.id ?? null)
   }
 
   return (
@@ -2194,6 +2212,10 @@ export function DatabaseWorkspace({ ruleset, onRulesetChange }: DatabaseWorkspac
           <GenericDefList label="Quests" entries={(ruleset.quests ?? []).map(q => ({ id: q.id, icon: '📜', name: q.name }))}
             selectedId={selectedId} onSelect={setSelectedId} onAdd={addQuest} onDelete={deleteQuest} />
         )}
+        {category === 'dialogues' && (
+          <GenericDefList label="Dialogue" entries={(ruleset.dialogues ?? []).map(d => ({ id: d.id, icon: '💬', name: d.name }))}
+            selectedId={selectedId} onSelect={setSelectedId} onAdd={addDialogue} onDelete={deleteDialogue} />
+        )}
       </div>
 
       {/* Detail editor */}
@@ -2234,6 +2256,8 @@ export function DatabaseWorkspace({ ruleset, onRulesetChange }: DatabaseWorkspac
           <EventDefEditor def={selectedEvent} ruleset={ruleset} onChange={updateEventDef} />
         ) : category === 'quests' && selectedQuest ? (
           <QuestEditor quest={selectedQuest} ruleset={ruleset} onChange={updateQuest} />
+        ) : category === 'dialogues' && selectedDialogue ? (
+          <DialogueEditor dialogue={selectedDialogue} ruleset={ruleset} onChange={updateDialogue} />
         ) : (
           <div className="h-full flex items-center justify-center text-white/20 text-sm flex-col gap-2">
             <Package className="w-8 h-8 opacity-30" />

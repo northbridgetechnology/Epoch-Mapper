@@ -217,7 +217,7 @@ export type { TrickMoveResult, RestResult, FoeRuntime } from './lib/exploration'
 // World grid — edge-link crossing (open-world seams)
 export { mapBounds, resolveEdgeCrossing, oppositeEdge } from './lib/world'
 export type { MapBounds, EdgeCrossing } from './lib/world'
-export type { ResolvedEncounter, EnemyInstance, CellEntity, ObjectInstance, Condition, CellEvent, BoundaryData, DoorDef, DoorState, Facing, SwitchDef, InscriptionDef, TrickKind, EventDef, NpcDef, NpcLine, QuestDef, QuestStage } from './lib/engine-types'
+export type { ResolvedEncounter, EnemyInstance, CellEntity, ObjectInstance, Condition, CellEvent, BoundaryData, DoorDef, DoorState, Facing, SwitchDef, InscriptionDef, TrickKind, EventDef, NpcDef, DialogueDef, DialogueNode, DialogueChoice, QuestDef, QuestStage } from './lib/engine-types'
 
 // Encounter modal (Phase E3)
 export { EncounterModal } from './components/EncounterModal'
@@ -265,9 +265,12 @@ export {
   applyFlagWriteWithReactions,
   applyExploreHarm,
   questStageFlagKey,
-  pickNpcLine,
-  finishNpcLine,
-  npcLineHeardFlagKey,
+  dialogueSeenFlagKey,
+  dialogueStartNode,
+  dialogueNodeById,
+  eligibleChoices,
+  enterDialogueNode,
+  applyDialogueChoice,
   npcRecruitedFlagKey,
 } from './lib/event-engine'
 export type { EventContext, ExploreEffect, PartyHarm } from './lib/event-engine'

@@ -23,7 +23,7 @@ import { Portrait } from '@/lib/portraits'
 import { applyConsumable, applyEffectToChar } from '@/lib/apply-effects'
 import { canEquip } from '@/lib/equipment'
 import { itemDisplayName } from '@/lib/item-schema'
-import { questStageFlagKey, npcLineHeardFlagKey } from '@/lib/event-engine'
+import { questStageFlagKey, dialogueSeenFlagKey } from '@/lib/event-engine'
 import { resolveText } from '@/lib/text-tokens'
 import { listSaveSlots } from '@/lib/save-state'
 import { music } from '@/lib/audio-controller'
@@ -845,7 +845,10 @@ function JournalScreen({ ruleset, flags, mc, onExit }: {
     const stage = Number(flags[questStageFlagKey(q.id)] ?? 0)
     return { q, stage, done: q.stages.length > 0 && stage >= q.stages.length }
   }).filter(x => x.stage >= 1)
-  const lore = (ruleset.npcs ?? []).map(npc => ({ npc, heard: (npc.lines ?? []).filter(l => flags[npcLineHeardFlagKey(npc.id, l.id)]) })).filter(x => x.heard.length > 0)
+  const lore = (ruleset.npcs ?? []).map(npc => {
+    const dlg = npc.dialogue ? (ruleset.dialogues ?? []).find(d => d.id === npc.dialogue) : undefined
+    return { npc, heard: dlg ? dlg.nodes.filter(n => flags[dialogueSeenFlagKey(dlg.id, n.id)]) : [] }
+  }).filter(x => x.heard.length > 0)
 
   return (
     <div ref={scroller} className="space-y-4 text-sm overflow-y-auto max-h-full pr-1">

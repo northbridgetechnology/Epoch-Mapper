@@ -33,7 +33,6 @@ test('npcToCharacter: mirrors the def into a runtime Character', () => {
     classId: cls.id, raceId: race.id, level: 5,
     attributes: { [attrId]: 14 },
     knownSpells: spell ? [spell] : [],
-    lines: [],
     recruitable: true,
   }
   const ch = npcToCharacter(def, ruleset)
@@ -50,7 +49,7 @@ test('npcToCharacter: mirrors the def into a runtime Character', () => {
 })
 
 test('npcToCharacter: missing attributes fall back to class/race defaults', () => {
-  const def: NpcDef = { id: 'npc.b', name: 'Bran', classId: cls.id, raceId: race.id, lines: [] }
+  const def: NpcDef = { id: 'npc.b', name: 'Bran', classId: cls.id, raceId: race.id }
   const ch = npcToCharacter(def, ruleset)
   const short = attrId.replace('attr.', '')
   const expected = Math.min(
@@ -82,8 +81,7 @@ test('recruit effect: de-duplicates repeated recruits of the same npc', () => {
 test('npcToCharacter: recruits above level 1 get class growth baked in', () => {
   const fighter = ruleset.classes.find(c => c.id === 'class.fighter')!
   const def: NpcDef = {
-    id: 'npc.vet', name: 'Veteran', classId: fighter.id, raceId: race.id, level: 5,
-    lines: [], recruitable: true,
+    id: 'npc.vet', name: 'Veteran', classId: fighter.id, raceId: race.id, level: 5, recruitable: true,
   }
   const ch = npcToCharacter(def, ruleset)
   // default 10 + class mod 2 + human race mod 1 + growth 1×4 levels
@@ -93,7 +91,7 @@ test('npcToCharacter: recruits above level 1 get class growth baked in', () => {
 
 test('npcToCharacter: seeds class skills up to the recruit level', () => {
   const fighter = ruleset.classes.find(c => c.id === 'class.fighter')!
-  const def: NpcDef = { id: 'npc.brute', name: 'Brute', classId: fighter.id, raceId: race.id, level: 5, lines: [], recruitable: true }
+  const def: NpcDef = { id: 'npc.brute', name: 'Brute', classId: fighter.id, raceId: race.id, level: 5, recruitable: true }
   const ch = npcToCharacter(def, ruleset)
   assert.ok(ch.knownSkills?.includes('skill.power_strike'))  // lv1
   assert.ok(ch.knownSkills?.includes('skill.cleave'))        // lv4

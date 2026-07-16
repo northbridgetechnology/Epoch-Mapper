@@ -9,6 +9,7 @@ import type { CellData } from './types'
 import type {
   CellEvent, Condition, ObjectInstance, Effect, ItemInstance,
   Character, Ruleset, Facing, DamageType,
+  DialogueDef, DialogueNode, DialogueChoice,
 } from './engine-types'
 
 /** Save-flag key holding a quest's current stage (1-based number). */
@@ -67,7 +68,8 @@ export interface ExploreEffect {
   questUpdates: { quest: string; stage: number }[]
   /** NPC placements to relocate (cross-map when mapId is set). */
   npcMoves: { npc: string; mapId?: string; x: number; y: number }[]
-  /** NPC to open the dialogue overlay for (first dialogue effect wins). */
+  /** DialogueDef id to open the conversation overlay for (first `dialogue`
+   *  effect wins). */
   dialogueNode?: string
   /** Reveal every unidentified item the party carries. */
   identifyAll?: boolean
@@ -442,49 +444,63 @@ export function expandReactive(
   }
 }
 
-// ── NPC dialogue lines ────────────────────────────────────────────────────────
+// ── Dialogue trees ────────────────────────────────────────────────────────────
 
-/** Save-flag marking a line as heard (drives once-gating and the lore journal). */
-export function npcLineHeardFlagKey(npcId: string, lineId: string): string {
-  return `npcline.${npcId}.${lineId}`
+/** Save-flag marking a dialogue node as seen (drives the lore journal). */
+export function dialogueSeenFlagKey(dialogueId: string, nodeId: string): string {
+  return `dlg.${dialogueId}.${nodeId}`
 }
 
-/**
- * Pick the line an NPC speaks right now: among lines of the requested kind
- * (bark or spoken) whose conditions pass and whose once-flag isn't spent,
- * the highest priority wins; array order breaks ties.
- */
-export function pickNpcLine(
-  npc: import('./engine-types').NpcDef,
+/** The node a conversation opens on (falls back to the first node). */
+export function dialogueStartNode(def: DialogueDef): DialogueNode | null {
+  return def.nodes.find(n => n.id === def.start) ?? def.nodes[0] ?? null
+}
+
+export function dialogueNodeById(def: DialogueDef, id: string | undefined): DialogueNode | null {
+  if (!id) return null
+  return def.nodes.find(n => n.id === id) ?? null
+}
+
+/** The choices offered at a node right now: those whose conditions all pass.
+ *  The original index is preserved so callers can apply the exact choice. */
+export function eligibleChoices(
+  node: DialogueNode,
   ctx: EventContext,
-  opts?: { bark?: boolean },
   rng: () => number = Math.random,
-): import('./engine-types').NpcLine | null {
-  const wantBark = opts?.bark ?? false
-  const eligible = (npc.lines ?? []).filter(l =>
-    (l.bark ?? false) === wantBark &&
-    !(l.once && ctx.flags[npcLineHeardFlagKey(npc.id, l.id)]) &&
-    checkConditions(l.conditions, ctx, rng),
-  )
-  if (eligible.length === 0) return null
-  return eligible.reduce((best, l) => ((l.priority ?? 0) > (best.priority ?? 0) ? l : best), eligible[0])
+): { choice: DialogueChoice; index: number }[] {
+  return (node.choices ?? [])
+    .map((choice, index) => ({ choice, index }))
+    .filter(({ choice }) => checkConditions(choice.conditions, ctx, rng))
 }
 
-/**
- * Wrap up a spoken/barked line: mark it heard (lore journal), apply its
- * effects, and expand reactive onFlag consequences.
- */
-export function finishNpcLine(
-  npc: import('./engine-types').NpcDef,
-  line: import('./engine-types').NpcLine,
+/** Enter a node: mark it seen (lore journal) and apply its on-enter effects
+ *  plus any reactive onFlag consequences. */
+export function enterDialogueNode(
+  def: DialogueDef,
+  node: DialogueNode,
   cell: CellData | null,
   ctx: EventContext,
   ruleset: Ruleset,
   rng: () => number = Math.random,
 ): ExploreEffect {
   const acc = emptyExploreEffect()
-  acc.flagSets[npcLineHeardFlagKey(npc.id, line.id)] = true
-  if (line.effects?.length) applyEffectsInto(acc, line.effects, ctx, ruleset, rng, 0)
+  acc.flagSets[dialogueSeenFlagKey(def.id, node.id)] = true
+  if (node.effects?.length) applyEffectsInto(acc, node.effects, ctx, ruleset, rng, 0)
+  expandReactive(acc, cell, ctx, ruleset, rng)
+  return acc
+}
+
+/** Take a choice: apply its effects and reactive consequences. The caller
+ *  follows `choice.goto` to the next node (or ends the conversation). */
+export function applyDialogueChoice(
+  choice: DialogueChoice,
+  cell: CellData | null,
+  ctx: EventContext,
+  ruleset: Ruleset,
+  rng: () => number = Math.random,
+): ExploreEffect {
+  const acc = emptyExploreEffect()
+  if (choice.effects?.length) applyEffectsInto(acc, choice.effects, ctx, ruleset, rng, 0)
   expandReactive(acc, cell, ctx, ruleset, rng)
   return acc
 }

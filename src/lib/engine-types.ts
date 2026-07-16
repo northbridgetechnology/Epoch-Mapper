@@ -349,17 +349,36 @@ export interface EventDef extends Definition {
 
 /** One thing an NPC can say. The highest-priority line whose conditions pass
  *  is spoken on interact; bark lines instead play when the NPC comes into view. */
-export interface NpcLine {
+/** One branch a player can pick at a dialogue node. */
+export interface DialogueChoice {
+  label: string
+  /** The option is hidden unless every condition passes. */
+  conditions?: Condition[]
+  /** Applied when the choice is taken (before jumping to `goto`). */
+  effects?: Effect[]
+  /** Node id to jump to next; absent = end the conversation. */
+  goto?: string
+}
+
+/** A single beat of a dialogue tree: text pages, on-enter effects, and the
+ *  choices offered afterwards (absent/empty = the conversation ends here). */
+export interface DialogueNode {
   id: string
+  /** Speaker name override for this node (defaults to the NPC's name). */
+  speaker?: string
   /** Pages of text, advanced one at a time. */
   text: string[]
-  conditions?: Condition[]
-  priority?: number
-  once?: boolean
-  /** Plays automatically when the NPC enters the player's view. */
-  bark?: boolean
-  /** Applied after the final page is dismissed. */
+  /** Applied when the node is entered. */
   effects?: Effect[]
+  choices?: DialogueChoice[]
+}
+
+/** A referenceable, branching conversation. A shared Database entry that any
+ *  NPC can point at via `NpcDef.dialogue`. */
+export interface DialogueDef extends Definition {
+  /** Node id the conversation opens on. */
+  start: string
+  nodes: DialogueNode[]
 }
 
 /** A character-shaped NPC. Stats mirror the player Character model so NPCs
@@ -374,7 +393,10 @@ export interface NpcDef extends Definition {
   attributes?: Record<string, number>
   equipment?: Partial<Record<ItemSlot, ItemInstance>>
   knownSpells?: DefRef<SpellDef>[]
-  lines: NpcLine[]
+  /** Interactive conversation shown on interact — a referenced dialogue tree. */
+  dialogue?: DefRef<DialogueDef>
+  /** Ambient one-liners; a random one is spoken when the NPC comes into view. */
+  barks?: string[]
   /** Can join the party (via a `recruit` effect). Placements vanish once recruited. */
   recruitable?: boolean
   /** Instantiated into the party at New Game (alongside the player's Main Character). */
@@ -504,6 +526,7 @@ export interface Ruleset {
   events: EventDef[]
   npcs: NpcDef[]
   quests: QuestDef[]
+  dialogues: DialogueDef[]
   formulas?: FormulaOverrides
   combatTuning?: CombatTuning
 }

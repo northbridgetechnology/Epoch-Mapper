@@ -2940,6 +2940,7 @@ export function normalizeRuleset(r: Ruleset): Ruleset {
     events: r.events ?? [],
     npcs: r.npcs ?? [],
     quests: r.quests ?? [],
+    dialogues: r.dialogues ?? [],
   }
 }
 
@@ -2973,6 +2974,7 @@ export function makeDefaultRuleset(startMapId = 'map1'): Ruleset {
     events: [],
     npcs: [],
     quests: [],
+    dialogues: [],
     shops: DEFAULT_SHOPS,
   }
 }

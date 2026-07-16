@@ -3,7 +3,7 @@
  * Lines, conditions/effects, and stages get bespoke editors in the workspace.
  */
 
-import type { FieldSchema, NpcDef, EventDef, QuestDef } from './engine-types'
+import type { FieldSchema, NpcDef, EventDef, QuestDef, DialogueDef } from './engine-types'
 
 export const NPC_SCHEMA: FieldSchema[] = [
   { key: 'id',          label: 'ID',          type: 'text',    placeholder: 'npc.short_name' },
@@ -46,12 +46,16 @@ export function blankNpc(id: string): NpcDef {
     description: '',
     level: 1,
     attributes: {},
-    lines: [],
+    barks: [],
   } as NpcDef
 }
 
 export function blankEventDef(id: string): EventDef {
   return { id, name: 'New Event', description: '', trigger: 'manual', effects: [], once: false } as EventDef
+}
+
+export function blankDialogue(id: string): DialogueDef {
+  return { id, name: 'New Dialogue', start: 'greet', nodes: [{ id: 'greet', text: ['…'] }] }
 }
 
 export function blankQuest(id: string): QuestDef {
