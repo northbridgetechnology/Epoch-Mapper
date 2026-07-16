@@ -33,14 +33,18 @@ export function DialogueOverlay({ speaker, portrait, node, choices, mc, onChoose
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); onClose(); return }
+      // Swallow the key completely so the map's own keydown listener can't also
+      // act on it — otherwise the same 'e' that closes the box would re-fire
+      // "interact" on the NPC you're facing and instantly reopen the dialogue.
+      const consume = () => { e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation() }
+      if (e.key === 'Escape') { consume(); onClose(); return }
       if (showChoices) {
         const n = parseInt(e.key, 10)
-        if (n >= 1 && n <= choices.length) { e.preventDefault(); e.stopPropagation(); onChoose(choices[n - 1].index) }
+        if (n >= 1 && n <= choices.length) { consume(); onChoose(choices[n - 1].index) }
         return
       }
       if (e.key === 'e' || e.key === 'E' || e.key === 'Enter' || e.key === ' ') {
-        e.preventDefault(); e.stopPropagation()
+        consume()
         if (lastPage) onClose(); else setPage(p => p + 1)
       }
     }
