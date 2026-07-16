@@ -6,6 +6,7 @@
 import assert from 'node:assert/strict'
 import { buildGeneratedWorld, type NewMapConfig } from '../src/lib/map-generator'
 import { makeDefaultRuleset } from '../src/lib/default-ruleset'
+import { BASE, OVERLAY } from '../src/lib/constants'
 
 let passed = 0
 function test(name: string, fn: () => void) {
@@ -99,11 +100,13 @@ test('showcase Depths: tricks, FOE, fixed guard, save point, inscriptions', () =
 })
 
 test('showcase: relics, torchbearer, inn, and the gameEnd finale', () => {
-  assert.equal(world.items.length, 3)
+  // The Depths ship 3 relics; the systems-showcase pass adds a map-reveal item.
+  assert.ok(world.items.length >= 4, `expected ≥4 generated items, got ${world.items.length}`)
   const blade = world.items.find(i => i.cursed)
   assert.ok(blade?.unidentifiedName, 'cursed blade must drop unidentified')
   assert.ok(world.items.some(i => i.onUse?.some(e => e.t === 'teachSpell')), 'no teachSpell scroll')
   assert.ok(world.items.some(i => i.onUse?.some(e => e.t === 'identify') && i.onUse?.some(e => e.t === 'removeCurse')), 'no censer')
+  assert.ok(world.items.some(i => i.onUse?.some(e => e.t === 'reveal')), 'no map-reveal item')
 
   const torchbearer = world.npcs.find(n => n.name === 'Torchbearer')
   assert.ok(torchbearer, 'no torchbearer NPC')
@@ -213,6 +216,64 @@ test('styles are deterministic per seed', () => {
     // Structure must match exactly; entity/switch ids are uid()-random by design
     const scrub = (o: unknown) => JSON.parse(JSON.stringify(o).replace(/"id":"[^"]+"/g, '"id":"_"'))
     assert.deepEqual(scrub(a.map.boundaries), scrub(b.map.boundaries))
+  }
+})
+
+test('systems showcase: one working example of every world system is generated', () => {
+  // A large world should demonstrate the whole toolkit. Inventory everything the
+  // showcase pass places across the main map + the Depths.
+  const w = buildGeneratedWorld('Showcase', { name: 'Showcase', size: 'large', seed: 7, generate: true }, ruleset)
+  const objKinds = new Set<string>(), entTypes = new Set<string>(), effects = new Set<string>()
+  const conds = new Set<string>(), bases = new Set<number>(), overlays = new Set<number>(), bFeat = new Set<string>()
+  let lockedChests = 0
+  const scanE = (a?: { t: string }[]) => { for (const e of a ?? []) effects.add(e.t) }
+  const scanC = (a?: { c: string }[]) => { for (const c of a ?? []) conds.add(c.c) }
+  for (const map of [w.map, ...w.extraMaps]) {
+    for (const cell of Object.values(map.cells)) {
+      bases.add(cell.base ?? 0)
+      for (const o of cell.overlays ?? []) overlays.add(o)
+      for (const ent of cell.entities ?? []) {
+        entTypes.add(ent.t)
+        if (ent.t === 'object') { objKinds.add(ent.object.kind); if (ent.object.locked) lockedChests++; scanE(ent.object.onInteract); scanE(ent.object.trapEffects) }
+        if (ent.t === 'event') { scanE(ent.event.effects); scanC(ent.event.conditions) }
+      }
+    }
+    for (const b of Object.values(map.boundaries ?? {})) {
+      if (b.door) bFeat.add('door'); if (b.switch) bFeat.add('switch'); if (b.inscription) bFeat.add('inscription')
+      if (b.damage) bFeat.add('damage'); if (b.onPass) bFeat.add('onPass')
+    }
+  }
+  for (const n of w.npcs) for (const l of n.lines ?? []) { scanE(l.effects); scanC(l.conditions) }
+  for (const ev of w.events) { scanE(ev.effects); scanC(ev.conditions) }
+  for (const it of w.items) scanE(it.onUse)
+
+  // Object kinds a player actually interacts with (door lives on edges, not here).
+  for (const k of ['chest', 'npc', 'inn', 'shop', 'sign', 'lever', 'teleporter', 'trap']) {
+    assert.ok(objKinds.has(k), `showcase missing object kind: ${k}`)
+  }
+  assert.ok(lockedChests >= 1, 'no key-locked chest')
+  for (const t of ['trick', 'encounter', 'partyStart', 'foe', 'mapLink', 'object', 'event']) {
+    assert.ok(entTypes.has(t), `showcase missing entity type: ${t}`)
+  }
+  // Every effect the engine can apply out of combat, except the authored
+  // dialogue-node tree (not meaningfully auto-generatable).
+  for (const e of ['damage', 'heal', 'restoreMp', 'status', 'cure', 'reviveRandom', 'fullHeal',
+    'giveItem', 'takeItem', 'gold', 'setFlag', 'teleport', 'startCombat', 'message', 'openShop',
+    'reveal', 'runEvent', 'questStage', 'moveNpc', 'identify', 'removeCurse', 'teachSpell',
+    'playSound', 'gameEnd', 'recruit']) {
+    assert.ok(effects.has(e), `showcase missing effect: ${e}`)
+  }
+  for (const c of ['flag', 'hasItem', 'partyLevel', 'random', 'questStage']) {
+    assert.ok(conds.has(c), `showcase missing condition: ${c}`)
+  }
+  for (const b of ['door', 'switch', 'inscription', 'damage', 'onPass']) {
+    assert.ok(bFeat.has(b), `showcase missing boundary feature: ${b}`)
+  }
+  for (const base of [BASE.WATER, BASE.LAVA, BASE.VOID]) {
+    assert.ok(bases.has(base), `showcase missing terrain base: ${base}`)
+  }
+  for (const ov of [OVERLAY.MINI_BOSS, OVERLAY.TRAP, OVERLAY.WARP, OVERLAY.SHOP_WEAPON, OVERLAY.EVENT]) {
+    assert.ok(overlays.has(ov), `showcase missing overlay: ${ov}`)
   }
 })
 

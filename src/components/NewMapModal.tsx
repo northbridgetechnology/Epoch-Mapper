@@ -141,7 +141,8 @@ export function NewMapModal({ defaultName = 'New Map', onConfirm, onClose }: New
                 Randomly Generate &amp; Populate
               </span>
               <span className="text-[11px] text-white/30 leading-snug">
-                Two linked levels — story, quests, tricks, NPCs, a boss, and the dark Depths
+                Two linked levels showcasing every system — quests, shops, a recruit, traps,
+                teleporters, a mini-boss, hazards, a boss, and the dark Depths
               </span>
             </div>
           </label>

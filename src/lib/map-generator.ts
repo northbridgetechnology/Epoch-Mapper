@@ -1084,6 +1084,304 @@ export function buildGeneratedWorld(name: string, config: NewMapConfig, ruleset:
     })
   }
 
+  // ── Systems showcase: put one working example of every remaining engine ──────
+  //    system on the main level so a freshly-generated world demonstrates the
+  //    whole toolkit — shops, a recruit, a healing shrine, a locked chest, a
+  //    mini-boss, traps, teleporters, signs, levers, hazard terrain, damage &
+  //    warded seams, and events covering every effect/condition kind.
+  {
+    const tag = config.seed >>> 0
+    const startKey = `${startC.x},${startC.y}`
+
+    const sAddEnt = (key: string, ent: CellEntity): boolean => {
+      const c = cells[key]
+      if (!c) return false
+      cells[key] = { ...c, entities: [...(c.entities ?? []), ent] }
+      return true
+    }
+    const putOverlay = (key: string, ov: number) => {
+      const c = cells[key]
+      if (!c) return
+      cells[key] = { ...c, overlays: Array.from(new Set([...(c.overlays ?? []), ov])) }
+    }
+    const setBaseAt = (key: string, base: number) => {
+      const c = cells[key]
+      if (c) cells[key] = { ...c, base }
+    }
+    // Interior floor cells of a room with nothing on them yet (safe to dress).
+    const roomFreeCells = (room: Rect): string[] => {
+      const out: string[] = []
+      for (let yy = room.y + 1; yy < room.y + room.h - 1; yy++) {
+        for (let xx = room.x + 1; xx < room.x + room.w - 1; xx++) {
+          const k = `${xx},${yy}`
+          const c = cells[k]
+          if (!c || (c.base ?? 0) !== BASE.FLOOR || c.entities?.length || c.overlays?.length) continue
+          out.push(k)
+        }
+      }
+      return out.sort(() => rng() - 0.5)
+    }
+    // A shuffled pool of free cells drawn from every side room. Showcase features
+    // take one or two cells each (not a whole room) so even a room-scarce layout
+    // still fits the full toolkit; `takeCells` re-checks freeness as it hands out.
+    const showRooms = sideRooms.filter(l => l !== startLeaf && l !== bossLeaf)
+    const pool = Array.from(new Set(showRooms.flatMap(l => roomFreeCells(l.room)))).sort(() => rng() - 0.5)
+    let poolCursor = 0
+    const takeCells = (n: number): string[] => {
+      const out: string[] = []
+      while (out.length < n && poolCursor < pool.length) {
+        const k = pool[poolCursor++]
+        const c = cells[k]
+        if (c && !c.entities?.length && !c.overlays?.length && (c.base ?? 0) === BASE.FLOOR) out.push(k)
+      }
+      return out
+    }
+    const nextRoom = (): { keys: string[] } | null => {
+      const keys = takeCells(1)
+      return keys.length ? { keys } : null
+    }
+    // Passable seams (two adjacent floor cells with no boundary) away from start,
+    // for damage / warded-threshold demonstrations that you walk *through*.
+    const openSeams = (): string[] => {
+      const out: string[] = []
+      for (const key of Object.keys(cells)) {
+        const [x, y] = key.split(',').map(Number)
+        if (dist2(x, y, startC.x, startC.y) < 49) continue
+        const c = cells[key]
+        if (c.entities?.length || (c.base ?? 0) !== BASE.FLOOR) continue
+        for (const [nk, d] of [[`${x + 1},${y}`, 'E'], [`${x},${y + 1}`, 'S']] as const) {
+          const nc = cells[nk]
+          if (!nc || nc.entities?.length || (nc.base ?? 0) !== BASE.FLOOR) continue
+          const bk = boundaryKey(x, y, d)
+          if (!boundaries[bk]) out.push(bk)
+        }
+      }
+      return out.sort(() => rng() - 0.5)
+    }
+
+    const encTable = encTableIds.length > 0 ? encTableIds[0] : null
+    const someLoot = () => (lootIds.length > 0 ? { loot: pickRandom(rng, lootIds) } : {})
+    const mkNpc = (id: string, name: string, portrait: string, sprite: string, description: string, lines: NpcDef['lines']): NpcDef =>
+      ({ id, name, portrait, sprite, description, level: 2, attributes: {}, lines })
+
+    // Player-start entity (companion to the PLAYER_START overlay).
+    sAddEnt(startKey, { t: 'partyStart' })
+
+    // 1. Merchant (shop object → opens a shop on interact) + a peddler NPC whose
+    //    dialogue opens a shop via the openShop effect.
+    const shopCells = takeCells(2)
+    if (shopCells.length >= 1) {
+      const k = shopCells[0]
+      sAddEnt(k, { t: 'object', object: { kind: 'shop', id: uid(), shop: 'shop.armory' } })
+      putOverlay(k, OVERLAY.SHOP_WEAPON)
+      addSubcube(k, 'banner', { x: side(), y: 1, z: 2 })
+      if (shopCells[1]) {
+        const peddlerId = `npc.peddler_${tag}`
+        npcs.push(mkNpc(peddlerId, 'Wandering Peddler', '🧺', 'cr_hooded', 'Sells what the dead no longer need.', [
+          { id: 'hail', text: ['Coin for steel? Step closer.'], bark: true, once: true },
+          { id: 'shop', text: ['Have a look at my wares.'], effects: [{ t: 'openShop', shop: 'shop.healer' }] },
+        ]))
+        sAddEnt(shopCells[1], { t: 'object', object: { kind: 'npc', id: uid(), npc: peddlerId } })
+        putOverlay(shopCells[1], OVERLAY.NPC)
+      }
+    }
+
+    // 2. A recruitable companion (recruit effect grows the party).
+    const recRoom = nextRoom()
+    if (recRoom) {
+      const sellswordId = `npc.sellsword_${tag}`
+      npcs.push(mkNpc(sellswordId, 'Lost Sellsword', '🗡️', 'cr_guard', 'A blade with no banner left to follow.', [
+        { id: 'hail', text: ['You there — you look like you can hold a line.'], bark: true, once: true },
+        { id: 'join', text: ['I have no cause left.', 'Lend me yours, and my blade is yours.'], effects: [{ t: 'recruit', npc: sellswordId }] },
+        { id: 'joined', priority: 5, text: ['Lead on.'], conditions: [{ c: 'flag', flag: `npc.recruited.${sellswordId}`, equals: true }] },
+      ]))
+      sAddEnt(recRoom.keys[0], { t: 'object', object: { kind: 'npc', id: uid(), npc: sellswordId } })
+      putOverlay(recRoom.keys[0], OVERLAY.NPC)
+    }
+
+    // 3. Healing shrine — a repeatable interact that fully restores the party
+    //    (fullHeal + restoreMp + cure-all + reviveRandom + a sound cue).
+    const shrineRoom = nextRoom()
+    if (shrineRoom) {
+      const k = shrineRoom.keys[0]
+      sAddEnt(k, { t: 'event', event: {
+        id: `ev.shrine_${tag}`, name: 'Shrine of Mending', trigger: 'onInteract',
+        effects: [
+          { t: 'message', text: 'Warm light pools from the shrine; wounds close and the fallen stir.' },
+          { t: 'fullHeal' }, { t: 'restoreMp', amount: '2d8' }, { t: 'cure', status: 'all' },
+          { t: 'reviveRandom' }, { t: 'playSound', sound: 'blip' },
+        ],
+      } })
+      putOverlay(k, OVERLAY.EVENT)
+      addSubcube(k, 'altar', { x: 1, y: 0, z: 2 })
+    }
+
+    // 4. Iron Hook (gives a key) + a locked chest that requires it.
+    const keyRoom = nextRoom()
+    if (keyRoom) {
+      sAddEnt(keyRoom.keys[0], { t: 'event', event: {
+        id: `ev.hook_${tag}`, name: 'Iron Hook', trigger: 'onInteract', once: true,
+        effects: [{ t: 'message', text: 'A worn key hangs on an iron hook. You take it.' }, { t: 'giveItem', item: 'item.skeleton_key', qty: 1 }],
+      } })
+      putOverlay(keyRoom.keys[0], OVERLAY.EVENT)
+    }
+    const lockRoom = nextRoom()
+    if (lockRoom) {
+      const k = lockRoom.keys[0]
+      sAddEnt(k, { t: 'object', object: { kind: 'chest', id: uid(), locked: { key: 'item.skeleton_key' }, ...someLoot() } })
+      putOverlay(k, OVERLAY.CHEST)
+    }
+
+    // 5. Mini-boss — its own overlay + a visible fixed encounter.
+    const miniRoom = nextRoom()
+    if (miniRoom && encTable) {
+      const k = miniRoom.keys[0]
+      sAddEnt(k, { t: 'encounter', table: encTable, mode: 'fixed', oncePerVisit: true })
+      putOverlay(k, OVERLAY.MINI_BOSS)
+      addSubcube(k, 'bones', { x: 1, y: 0, z: 1 })
+    }
+
+    // 6. A floor trap (fires on entry: poison damage + status).
+    const trapRoom = nextRoom()
+    if (trapRoom) {
+      const k = trapRoom.keys[0]
+      sAddEnt(k, { t: 'object', object: { kind: 'trap', id: uid(), trapEffects: [
+        { t: 'damage', dmgType: 'poison', amount: '1d6', canCrit: false },
+        { t: 'status', status: 'status.poisoned', chance: 0.8 },
+      ] } })
+      putOverlay(k, OVERLAY.TRAP)
+    }
+
+    // 7. A pair of visible teleporters that warp between two rooms.
+    const tpA = nextRoom(); const tpB = nextRoom()
+    if (tpA && tpB) {
+      const [ax, ay] = tpA.keys[0].split(',').map(Number)
+      const [bx, by] = tpB.keys[0].split(',').map(Number)
+      sAddEnt(tpA.keys[0], { t: 'object', object: { kind: 'teleporter', id: uid(), onInteract: [
+        { t: 'message', text: 'The runes flare — the world folds.' }, { t: 'teleport', mapId: mainMapId, x: bx, y: by },
+      ] } })
+      sAddEnt(tpB.keys[0], { t: 'object', object: { kind: 'teleporter', id: uid(), onInteract: [
+        { t: 'message', text: 'The runes flare — the world folds.' }, { t: 'teleport', mapId: mainMapId, x: ax, y: ay },
+      ] } })
+      putOverlay(tpA.keys[0], OVERLAY.WARP); putOverlay(tpB.keys[0], OVERLAY.WARP)
+    }
+
+    // 8. A readable sign (object dialogue).
+    const signRoom = nextRoom()
+    if (signRoom) {
+      sAddEnt(signRoom.keys[0], { t: 'object', object: { kind: 'sign', id: uid(), dialogue: '"Turn back," it reads, in a hand long dead.' } })
+    }
+
+    // 9. A lever (setFlag) wired to an onFlag event that relocates a shade
+    //    (moveNpc) — demonstrates the lever object, setFlag, and moveNpc.
+    const leverFlag = `showcase.lever_${tag}`
+    const shadeId = `npc.shade_${tag}`
+    const shadeRoom = nextRoom()
+    const leverRoom = nextRoom()
+    if (shadeRoom && leverRoom) {
+      npcs.push(mkNpc(shadeId, 'Restless Shade', '👻', 'cr_hooded', 'It drifts where the levers send it.', [
+        { id: 'talk', text: ['…cold… the lever… moved me…'] },
+      ]))
+      sAddEnt(shadeRoom.keys[0], { t: 'object', object: { kind: 'npc', id: uid(), npc: shadeId } })
+      sAddEnt(leverRoom.keys[0], { t: 'object', object: { kind: 'lever', id: uid(), onInteract: [
+        { t: 'setFlag', flag: leverFlag, value: true }, { t: 'message', text: 'The lever grinds home. Somewhere, something shifts.' },
+      ] } })
+      events.push({
+        id: `ev.shade_move_${tag}`, name: 'The shade drifts', trigger: 'onFlag', once: true,
+        conditions: [{ c: 'flag', flag: leverFlag, equals: true }],
+        effects: [{ t: 'message', text: 'A cold draft — the shade is gone from where it stood.' }, { t: 'moveNpc', npc: shadeId, x: startC.x, y: startC.y + 1 }],
+      })
+    }
+
+    // 10. Offering niche — hasItem condition gates a takeItem/gold trade.
+    const tributeRoom = nextRoom()
+    if (tributeRoom) {
+      sAddEnt(tributeRoom.keys[0], { t: 'event', event: {
+        id: `ev.tribute_${tag}`, name: 'Offering Niche', trigger: 'onInteract', once: true,
+        conditions: [{ c: 'hasItem', item: 'item.torch' }],
+        effects: [{ t: 'message', text: 'You feed a torch to the niche; coins clatter back.' }, { t: 'takeItem', item: 'item.torch', qty: 1 }, { t: 'gold', amount: 120 }, { t: 'playSound', sound: 'blip' }],
+      } })
+      putOverlay(tributeRoom.keys[0], OVERLAY.EVENT)
+    }
+
+    // 11. Worthy cache — partyLevel condition gates a reward (a map-reveal item).
+    const chalkId = `item.gen.chalk_${tag}`
+    items.push({
+      id: chalkId, name: "Cartographer's Chalk", icon: '🗺️', color: '#38bdf8',
+      description: 'Chalk that draws the walls it cannot see.', kind: 'consumable',
+      value: 150, stackable: true, onUse: [{ t: 'reveal', radius: 6 }],
+    })
+    const cacheRoom = nextRoom()
+    if (cacheRoom) {
+      sAddEnt(cacheRoom.keys[0], { t: 'event', event: {
+        id: `ev.cache_${tag}`, name: 'Cache of the Worthy', trigger: 'onInteract', once: true,
+        conditions: [{ c: 'partyLevel', min: 2 }],
+        effects: [{ t: 'message', text: 'The seasoned are rewarded — a mapmaker\'s chalk, still warm.' }, { t: 'giveItem', item: chalkId, qty: 1 }],
+      } })
+      putOverlay(cacheRoom.keys[0], OVERLAY.EVENT)
+    }
+
+    // 12. A Font of Whispers whose interact chains to a shared library event
+    //     (runEvent → a heal/message/sound blessing not tied to any one cell).
+    events.push({
+      id: `ev.blessing_${tag}`, name: 'Whispered Blessing', trigger: 'manual',
+      effects: [{ t: 'message', text: 'A warmth settles over the party.' }, { t: 'heal', amount: '1d8' }, { t: 'playSound', sound: 'blip' }],
+    })
+    const fontRoom = nextRoom()
+    if (fontRoom) {
+      sAddEnt(fontRoom.keys[0], { t: 'event', event: {
+        id: `ev.font_${tag}`, name: 'Font of Whispers', trigger: 'onInteract',
+        effects: [{ t: 'runEvent', event: `ev.blessing_${tag}` }],
+      } })
+      putOverlay(fontRoom.keys[0], OVERLAY.EVENT)
+    }
+
+    // 13. A random-chance flavour event on a corridor.
+    const wispSeam = openSeams()
+    if (wispSeam.length > 0) {
+      const [cellPart] = wispSeam[0].split(':')
+      sAddEnt(cellPart, { t: 'event', event: {
+        id: `ev.wisp_${tag}`, name: 'Will-o-Wisp', trigger: 'onEnter', once: true,
+        conditions: [{ c: 'random', chance: 0.5 }],
+        effects: [{ t: 'message', text: 'A pale wisp bobs past and winks out — you pocket what it dropped.' }, { t: 'gold', amount: 15 }],
+      } })
+    }
+
+    // 14. A scripted ambush (startCombat effect, distinct from zone encounters).
+    if (encTable) {
+      const ambushRoom = nextRoom()
+      if (ambushRoom) {
+        sAddEnt(ambushRoom.keys[0], { t: 'event', event: {
+          id: `ev.ambush_${tag}`, name: 'Ambush!', trigger: 'onEnter', once: true,
+          effects: [{ t: 'message', text: 'Shapes drop from the dark!' }, { t: 'startCombat', encounter: encTable }],
+        } })
+      }
+    }
+
+    // 15. Hazard terrain — a still pool, a lava vein, and a void chasm (all
+    //     block movement with a bump message; here purely to show the tiles).
+    const terrainCells = takeCells(3)
+    if (terrainCells.length >= 3) {
+      setBaseAt(terrainCells[0], BASE.WATER)
+      setBaseAt(terrainCells[1], BASE.LAVA)
+      setBaseAt(terrainCells[2], BASE.VOID)
+    }
+
+    // 16. Passable hazard seams: a curtain of flame (damage on every crossing)
+    //     and a warded threshold (onPass, once).
+    const seams = openSeams()
+    if (seams.length > 0) {
+      boundaries[seams[0]] = { ...(boundaries[seams[0]] ?? {}), damage: { dice: '1d6', type: 'fire' }, label: 'Curtain of Flame' }
+    }
+    if (seams.length > 1) {
+      boundaries[seams[1]] = {
+        ...(boundaries[seams[1]] ?? {}),
+        onPass: [{ t: 'message', text: 'The ward flares as you cross — a hex settles on the party.' }, { t: 'status', status: 'status.poisoned', chance: 1 }],
+        onPassOnce: true, passedFlag: `showcase.ward_${tag}`, label: 'Warded Threshold',
+      }
+    }
+  }
+
   return {
     map: {
       id: mainMapId, name, cells, boundaries,
