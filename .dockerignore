@@ -8,3 +8,5 @@ dist
 .DS_Store
 .env*
 README.md
+dist-player
+src-tauri

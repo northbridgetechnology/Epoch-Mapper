@@ -12,7 +12,7 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Swords, Wand2, Shield, FlaskConical, Wind, ChevronLeft, Check } from 'lucide-react'
+import { Swords, Wand2, Shield, FlaskConical, Wind, ChevronLeft, Check, Zap } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import {
   type CombatState,
@@ -22,23 +22,32 @@ import {
   resolvePlayerFlee,
   resolvePlayerDefend,
   resolvePlayerUseItem,
+  resolvePlayerUseSkill,
+  canUseSkill,
   resolveEnemyTurn,
+  resolveAllOutAttack,
+  resolveSelectActor,
+  canAllOutAttack,
   upcomingTurns,
 } from '@/lib/combat-engine'
 import { buildBattlePlacements, type BattleViewState } from '@/lib/battle-scene'
-import type { Character, ItemDef, ItemInstance, Ruleset, SpellDef } from '@/lib/engine-types'
+import type { Character, ItemDef, ItemInstance, Ruleset, SkillDef, SpellDef } from '@/lib/engine-types'
 
 type Mode =
   | { k: 'menu' }
-  | { k: 'targets'; spell?: SpellDef; item?: ItemDef }
+  | { k: 'targets'; spell?: SpellDef; item?: ItemDef; equipSlot?: string; skill?: SkillDef }
   | { k: 'spells' }
   | { k: 'items' }
-  | { k: 'allies'; spell?: SpellDef; item?: ItemDef }
+  | { k: 'allies'; spell?: SpellDef; item?: ItemDef; equipSlot?: string; skill?: SkillDef }
+  | { k: 'skillList' }
 
 /** A consumable the party can still use this battle (qty net of itemsUsed). */
 export interface UsableItem {
   def: ItemDef
   remaining: number
+  /** Set when this is a charge from the current actor's equipped item
+   *  (wand/staff) rather than a shared-inventory consumable. */
+  equipSlot?: string
 }
 
 export interface BattleHudProps {
@@ -52,12 +61,21 @@ export interface BattleHudProps {
   onOpenSpells: () => void
   onChooseSpell: (spell: SpellDef) => void
   onOpenItems: () => void
-  onChooseItem: (item: ItemDef) => void
+  onChooseItem: (entry: UsableItem) => void
+  usableSkills: { def: SkillDef; ok: boolean; reason?: string }[]
+  onOpenSkills: () => void
+  onChooseSkill: (skill: SkillDef) => void
   onDefend: () => void
   onAllyTarget: (actorIdx: number) => void
   onConfirmTarget: () => void
   onFlee: () => void
   onBack: () => void
+  /** pressTurn: living party members the player may switch to this phase. */
+  selectableParty: { idx: number; name: string; icon?: string }[]
+  onSelectActor: (actorIdx: number) => void
+  /** pressTurn: All-Out Attack is available (every living enemy is down). */
+  canAllOut: boolean
+  onAllOut: () => void
 }
 
 export function useBattleController({ combat, ruleset, party, inventory, onAction }: {
@@ -100,30 +118,56 @@ export function useBattleController({ combat, ruleset, party, inventory, onActio
     }, 750)
     return () => clearTimeout(timer)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [combat?.phase, combat?.turnIdx])
+  }, [combat?.phase, combat?.turnIdx, combat?.eventSeq])
 
   const currentActor = combat ? combat.actors[combat.turnIdx] : undefined
 
   const castableSpells = useMemo<SpellDef[]>(() => {
     if (!combat || !currentActor || currentActor.kind !== 'party') return []
+    if (combat.antiMagic) return []   // anti-magic zone: Spell command is dead
     const char = party[currentActor.idx]
     if (!char) return []
+    const schoolOrder = (id: string) => { const i = (ruleset.spellSchools ?? []).findIndex(s => s.id === id); return i < 0 ? 999 : i }
     return (char.knownSpells ?? [])
       .map(id => ruleset.spells.find(s => s.id === id))
       .filter((s): s is SpellDef => !!s && s.inCombat)
+      .sort((a, b) => schoolOrder(a.school) - schoolOrder(b.school))
   }, [combat, currentActor, party, ruleset])
 
-  // Consumables with onUse effects the party still holds (net of this battle's usage)
+  // Consumables with onUse effects the party still holds (net of this battle's
+  // usage), plus the current actor's equipped charged items (wands/staves).
   const usableItems = useMemo<UsableItem[]>(() => {
     if (!combat) return []
-    return ruleset.items
+    const consumables = ruleset.items
       .filter(it => it.kind === 'consumable' && (it.onUse?.length ?? 0) > 0)
       .map(it => {
         const held = inventory.find(i => i.def === it.id)?.qty ?? 0
         return { def: it, remaining: held - (combat.itemsUsed[it.id] ?? 0) }
       })
       .filter(e => e.remaining > 0)
-  }, [combat, inventory, ruleset])
+    const actor = combat.actors[combat.turnIdx]
+    const char = actor?.kind === 'party' ? party[actor.idx] : undefined
+    const charged: UsableItem[] = []
+    for (const [slot, inst] of Object.entries(char?.equipment ?? {})) {
+      if (!inst) continue
+      const def = ruleset.items.find(i => i.id === inst.def)
+      if (!def?.charges || !def.onUse?.length) continue
+      const spent = combat.equipChargesUsed?.[`${actor!.idx}:${slot}`] ?? 0
+      const remaining = (inst.charges ?? def.charges) - spent
+      if (remaining > 0) charged.push({ def, remaining, equipSlot: slot })
+    }
+    return [...charged, ...consumables]
+  }, [combat, inventory, party, ruleset])
+
+  // Known martial skills of the current actor, gated by cost + cooldown.
+  const usableSkills = useMemo<{ def: SkillDef; ok: boolean; reason?: string }[]>(() => {
+    if (!combat || !currentActor || currentActor.kind !== 'party') return []
+    const char = party[currentActor.idx]
+    return (char?.knownSkills ?? [])
+      .map(id => (ruleset.skills ?? []).find(s => s.id === id))
+      .filter((s): s is SkillDef => !!s)
+      .map(def => ({ def, ...canUseSkill(combat, def) }))
+  }, [combat, currentActor, party, ruleset])
 
   function execAttack(targetIdx: number) {
     const cur = combatRef.current
@@ -137,23 +181,45 @@ export function useBattleController({ combat, ruleset, party, inventory, onActio
     onAction(resolvePlayerCast(cur, spell.id, targetIdxs, ruleset))
     setMode({ k: 'menu' }); setSel(null)
   }
-  function execUseItem(item: ItemDef, targetIdxs: number[]) {
+  function execUseItem(item: ItemDef, targetIdxs: number[], equipSlot?: string) {
     const cur = combatRef.current
     if (!cur) return
-    onAction(resolvePlayerUseItem(cur, item.id, targetIdxs, ruleset))
+    onAction(resolvePlayerUseItem(cur, item.id, targetIdxs, ruleset, undefined, equipSlot ? { equipSlot } : undefined))
     setMode({ k: 'menu' }); setSel(null)
   }
 
-  function enterTargets(spell?: SpellDef, item?: ItemDef) {
-    setMode({ k: 'targets', spell, item })
+  function execSkill(skill: SkillDef, targetIdxs: number[]) {
+    const cur = combatRef.current
+    if (!cur) return
+    onAction(resolvePlayerUseSkill(cur, skill.id, targetIdxs, ruleset))
+    setMode({ k: 'menu' }); setSel(null)
+  }
+
+  function enterTargets(spell?: SpellDef, item?: ItemDef, equipSlot?: string, skill?: SkillDef) {
+    setMode({ k: 'targets', spell, item, equipSlot, skill })
     setSel(aliveEnemyIdxs[0] ?? null)
   }
 
+  function chooseSkill(skill: SkillDef) {
+    const target = skill.target ?? 'enemy'
+    if (target === 'enemy') return enterTargets(undefined, undefined, undefined, skill)
+    if (target === 'allEnemies' || target === 'enemyRow') return execSkill(skill, aliveEnemyIdxs)
+    if (target === 'ally') return setMode({ k: 'allies', skill })
+    if (target === 'allAllies') {
+      const allies = combatRef.current?.actors
+        .map((a, i) => ({ a, i }))
+        .filter(({ a }) => a.kind === 'party' && a.alive)
+        .map(({ i }) => i) ?? []
+      return execSkill(skill, allies)
+    }
+    execSkill(skill, [])
+  }
+
   // Items whose effects include damage are thrown at enemies; the rest aid allies
-  function chooseItem(item: ItemDef) {
-    const offensive = item.onUse?.some(e => e.t === 'damage') ?? false
-    if (offensive) enterTargets(undefined, item)
-    else setMode({ k: 'allies', item })
+  function chooseItem(entry: UsableItem) {
+    const offensive = entry.def.onUse?.some(e => e.t === 'damage') ?? false
+    if (offensive) enterTargets(undefined, entry.def, entry.equipSlot)
+    else setMode({ k: 'allies', item: entry.def, equipSlot: entry.equipSlot })
   }
 
   function chooseSpell(spell: SpellDef) {
@@ -181,7 +247,8 @@ export function useBattleController({ combat, ruleset, party, inventory, onActio
     if (mode.k !== 'targets') return
     const target = idx ?? sel
     if (target == null) return
-    if (mode.item) execUseItem(mode.item, [target])
+    if (mode.skill) execSkill(mode.skill, [target])
+    else if (mode.item) execUseItem(mode.item, [target], mode.equipSlot)
     else if (mode.spell) execCast(mode.spell, [target])
     else execAttack(target)
   }
@@ -189,6 +256,7 @@ export function useBattleController({ combat, ruleset, party, inventory, onActio
   // Back out of targeting to the submenu it came from (spells / items / menu)
   function backOut() {
     setMode(m => {
+      if (m.k === 'targets' && m.skill) return { k: 'skillList' }
       if (m.k === 'targets' && m.spell) return { k: 'spells' }
       if (m.k === 'targets' && m.item) return { k: 'items' }
       return { k: 'menu' }
@@ -211,7 +279,7 @@ export function useBattleController({ combat, ruleset, party, inventory, onActio
         } else if (e.key === 'Escape') {
           e.preventDefault(); backOut(); setSel(null)
         }
-      } else if (mode.k === 'spells' || mode.k === 'items' || mode.k === 'allies') {
+      } else if (mode.k === 'spells' || mode.k === 'items' || mode.k === 'allies' || mode.k === 'skillList') {
         if (e.key === 'Escape') { e.preventDefault(); setMode({ k: 'menu' }) }
       }
     }
@@ -230,6 +298,7 @@ export function useBattleController({ combat, ruleset, party, inventory, onActio
     selectedIdx: mode.k === 'targets' ? sel : null,
     events: combat.events,
     eventSeq: combat.eventSeq,
+    downedIdxs: combat.downed,
     onSelectTarget: selectTarget,
   }
 
@@ -241,15 +310,25 @@ export function useBattleController({ combat, ruleset, party, inventory, onActio
     onChooseSpell: chooseSpell,
     onOpenItems: () => setMode({ k: 'items' }),
     onChooseItem: chooseItem,
+    usableSkills,
+    onOpenSkills: () => setMode({ k: 'skillList' }),
+    onChooseSkill: chooseSkill,
     onDefend: () => { const cur = combatRef.current; if (cur) onAction(resolvePlayerDefend(cur, ruleset)) },
     onAllyTarget: (idx) => {
       if (mode.k !== 'allies') return
-      if (mode.item) execUseItem(mode.item, [idx])
+      if (mode.skill) execSkill(mode.skill, [idx])
+      else if (mode.item) execUseItem(mode.item, [idx], mode.equipSlot)
       else if (mode.spell) execCast(mode.spell, [idx])
     },
     onConfirmTarget: () => confirmTarget(),
     onFlee: () => { const cur = combatRef.current; if (cur) onAction(resolvePlayerFlee(cur, ruleset)) },
     onBack: () => { backOut(); setSel(null) },
+    selectableParty: combat.mode === 'pressTurn' && combat.phase === 'player_action' && combat.activeSide === 'party'
+      ? combat.actors.map((a, i) => ({ a, i })).filter(({ a }) => a.kind === 'party' && a.alive).map(({ a, i }) => ({ idx: i, name: a.name, icon: a.icon }))
+      : [],
+    onSelectActor: (idx) => { const cur = combatRef.current; if (cur) onAction(resolveSelectActor(cur, idx)) },
+    canAllOut: canAllOutAttack(combat),
+    onAllOut: () => { const cur = combatRef.current; if (cur) onAction(resolveAllOutAttack(cur, ruleset)) },
   }
 
   return { view, hud }
@@ -283,7 +362,9 @@ function MenuButton({ icon, label, onClick, disabled, title }: {
 export function BattleHud({
   combat, mode, currentActor, castableSpells, usableItems, selectedIdx,
   onAttack, onOpenSpells, onChooseSpell, onOpenItems, onChooseItem, onDefend,
+  usableSkills, onOpenSkills, onChooseSkill,
   onAllyTarget, onConfirmTarget, onFlee, onBack,
+  selectableParty, onSelectActor, canAllOut, onAllOut,
 }: BattleHudProps) {
   const logEndRef = useRef<HTMLDivElement>(null)
   useEffect(() => { logEndRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [combat.log.length])
@@ -311,6 +392,33 @@ export function BattleHud({
           })}
         </div>
       )}
+      {combat.mode === 'pressTurn' && combat.icons && !isTerminal && (
+        <div className="flex items-center gap-1 mb-1.5">
+          <span className="text-[9px] uppercase tracking-wide text-white/30 mr-1">
+            {combat.activeSide === 'party' ? 'Your presses' : 'Enemy presses'}
+          </span>
+          {Array.from({ length: combat.icons.full }).map((_, i) => (
+            <span key={`f${i}`} className="w-2.5 h-2.5 rounded-full bg-amber-400" title="Turn icon" />
+          ))}
+          {Array.from({ length: combat.icons.blink }).map((_, i) => (
+            <span key={`b${i}`} className="w-2.5 h-2.5 rounded-full border border-amber-300 bg-amber-400/40 animate-pulse" title="Bonus (blinking) icon" />
+          ))}
+          {combat.icons.full + combat.icons.blink === 0 && <span className="text-[10px] text-white/30">—</span>}
+        </div>
+      )}
+      {isPlayerTurn && selectableParty.length > 1 && mode.k === 'menu' && (
+        <div className="flex items-center gap-1 mb-1.5">
+          <span className="text-[9px] uppercase tracking-wide text-white/30 mr-1">Act with</span>
+          {selectableParty.map(m => (
+            <button key={m.idx} onClick={() => onSelectActor(m.idx)} title={m.name}
+              className={cn(
+                'w-6 h-6 grid place-items-center rounded border text-sm leading-none',
+                m.idx === combat.turnIdx ? 'border-amber-400/80 bg-amber-950/40' : 'border-white/10 bg-zinc-900/70 opacity-70 hover:opacity-100',
+              )}
+            >{m.icon ?? '🧑'}</button>
+          ))}
+        </div>
+      )}
       <div className="flex items-stretch gap-3 w-full min-h-[92px]">
       {/* Command menu */}
       <div className="w-44 flex-shrink-0 rounded-lg border border-amber-500/25 bg-zinc-900/80 p-1.5">
@@ -323,10 +431,20 @@ export function BattleHud({
             <div className="px-2 pb-0.5 text-[10px] uppercase tracking-wide text-amber-300/70">
               {currentActor?.name}
             </div>
+            {canAllOut && (
+              <button onClick={onAllOut}
+                className="flex items-center gap-2 w-full px-2.5 py-1 rounded text-xs font-bold text-left text-amber-200 bg-amber-500/20 hover:bg-amber-500/30 animate-pulse mb-0.5">
+                <Swords className="w-3.5 h-3.5" /> All-Out Attack!
+              </button>
+            )}
             <MenuButton icon={<Swords className="w-3.5 h-3.5" />} label="Attack" onClick={onAttack} />
             <MenuButton icon={<Wand2 className="w-3.5 h-3.5" />} label="Spell"
               onClick={onOpenSpells} disabled={castableSpells.length === 0}
-              title={castableSpells.length === 0 ? 'No combat spells known' : undefined} />
+              title={combat.antiMagic ? 'An anti-magic field smothers all spellcraft here'
+                : castableSpells.length === 0 ? 'No combat spells known' : undefined} />
+            <MenuButton icon={<Zap className="w-3.5 h-3.5" />} label="Skill"
+              onClick={onOpenSkills} disabled={usableSkills.length === 0}
+              title={usableSkills.length === 0 ? 'No skills known' : undefined} />
             <MenuButton icon={<FlaskConical className="w-3.5 h-3.5" />} label="Item"
               onClick={onOpenItems} disabled={usableItems.length === 0}
               title={usableItems.length === 0 ? 'No usable items' : undefined} />
@@ -336,11 +454,11 @@ export function BattleHud({
           </div>
         ) : mode.k === 'items' ? (
           <div className="space-y-0.5 max-h-24 overflow-y-auto">
-            {usableItems.map(({ def, remaining }) => (
-              <MenuButton key={def.id}
-                icon={<span className="text-sm leading-none">{def.icon ?? '🧪'}</span>}
-                label={`${def.name} ×${remaining}`}
-                onClick={() => onChooseItem(def)} />
+            {usableItems.map(entry => (
+              <MenuButton key={`${entry.equipSlot ?? 'inv'}_${entry.def.id}`}
+                icon={<span className="text-sm leading-none">{entry.def.icon ?? '🧪'}</span>}
+                label={`${entry.def.name} ${entry.equipSlot ? `${entry.remaining}⚡` : `×${entry.remaining}`}`}
+                onClick={() => onChooseItem(entry)} />
             ))}
             <MenuButton icon={<ChevronLeft className="w-3.5 h-3.5" />} label="Back" onClick={onBack} />
           </div>
@@ -356,6 +474,16 @@ export function BattleHud({
                   title={tooPoor ? 'Not enough MP' : undefined} />
               )
             })}
+            <MenuButton icon={<ChevronLeft className="w-3.5 h-3.5" />} label="Back" onClick={onBack} />
+          </div>
+        ) : mode.k === 'skillList' ? (
+          <div className="space-y-0.5 max-h-24 overflow-y-auto">
+            {usableSkills.map(({ def, ok, reason }) => (
+              <MenuButton key={def.id}
+                icon={<span className="text-sm leading-none">{def.icon ?? '💥'}</span>}
+                label={`${def.name}${def.hpCostPct ? ` (${Math.round(def.hpCostPct * 100)}% HP)` : def.mpCost ? ` (${def.mpCost} MP)` : ''}`}
+                onClick={() => onChooseSkill(def)} disabled={!ok} title={reason} />
+            ))}
             <MenuButton icon={<ChevronLeft className="w-3.5 h-3.5" />} label="Back" onClick={onBack} />
           </div>
         ) : mode.k === 'targets' ? (

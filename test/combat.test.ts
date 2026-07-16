@@ -7,14 +7,22 @@ import assert from 'node:assert/strict'
 import {
   initCombat,
   resolvePlayerAttack,
+  resolvePlayerCast,
   resolvePlayerDefend,
   resolvePlayerUseItem,
+  resolvePlayerUseSkill,
+  canUseSkill,
   resolveEnemyTurn,
+  resolveAllOutAttack,
+  resolveSelectActor,
+  canAllOutAttack,
   consumeCombatItems,
+  applyCombatOutcome,
   upcomingTurns,
   type CombatState,
 } from '../src/lib/combat-engine'
 import { simulateEncounterTable } from '../src/lib/battle-sim'
+import { makeDefaultRuleset } from '../src/lib/default-ruleset'
 import type { Character, ItemInstance, ResolvedEncounter, Ruleset } from '../src/lib/engine-types'
 
 let passed = 0
@@ -301,6 +309,489 @@ test('simulator reports a rout for an outmatched encounter table', () => {
   assert.ok(res!.avgRounds >= 1)
   // Determinism: same config twice → identical result
   assert.deepEqual(res, simulateEncounterTable('enc.rats', simRules, { partySize: 4, level: 5, iterations: 50 }))
+})
+
+// ── Weapon/armor types feed combat ───────────────────────────────────────────
+
+const typeRules = makeDefaultRuleset()
+
+function heroWith(equipment: Record<string, { def: string; qty: number }>, attrs: Record<string, number>): Character {
+  return {
+    id: 'th', name: 'TypeHero', level: 1, hp: 30, maxHp: 30, mp: 0, maxMp: 0,
+    classId: 'class.fighter', raceId: 'race.human',
+    alive: true, statuses: [], knownSpells: [], equipment,
+    attributes: attrs,
+  } as unknown as Character
+}
+
+test('scalingAttr: a dagger scales attack off Agility, a sword off Might', () => {
+  const attrs = { might: 8, agility: 18, endurance: 10 }
+  const dagger = initCombat([heroWith({ weapon: { def: 'item.stiletto', qty: 1 } }, attrs)], encounter, { ruleset: typeRules })
+  const sword  = initCombat([heroWith({ weapon: { def: 'item.longsword', qty: 1 } }, attrs)], encounter, { ruleset: typeRules })
+  // stiletto (wtype.dagger → agility 18) out-scales longsword (wtype.sword → might 8)
+  assert.ok(dagger.actors[0].attack > sword.actors[0].attack)
+})
+
+test('weaponRange + weaponDamageType are set on the actor from the weapon type', () => {
+  const gun = initCombat([heroWith({ weapon: { def: 'item.pistol', qty: 1 } }, { agility: 12 })], encounter, { ruleset: typeRules })
+  assert.equal(gun.actors[0].weaponRange, 'ranged')
+  assert.equal(gun.actors[0].weaponDamageType, 'physical')
+})
+
+test('heavy armor applies its type speed penalty; a robe does not', () => {
+  const attrs = { agility: 12, endurance: 10 }
+  const plate = initCombat([heroWith({ body: { def: 'item.plate_armor', qty: 1 } }, attrs)], encounter, { ruleset: typeRules })
+  const robe  = initCombat([heroWith({ body: { def: 'item.mage_robe',   qty: 1 } }, attrs)], encounter, { ruleset: typeRules })
+  // atype.heavy speedMod -2; atype.robe none. Ignore item stat modifiers by
+  // comparing the two relative to each other.
+  assert.ok(plate.actors[0].speed < robe.actors[0].speed)
+})
+
+test('a fire weapon strikes a fire-weak enemy for extra damage', () => {
+  // Override a weapon to deal fire, and give the EnemyDef a fire weakness
+  // (actor resistances are sourced from ruleset.enemies, not the encounter).
+  const rules = {
+    ...typeRules,
+    items: typeRules.items.map(i => i.id === 'item.longsword' ? { ...i, damageType: 'fire' } : i),
+    enemies: [
+      ...typeRules.enemies.filter(e => e.id !== 'enemy.emberrat'),
+      { id: 'enemy.emberrat', name: 'Ember Rat', hp: 100, attack: 6, defense: 0, speed: 1, xp: 1, gold: { min: 0, max: 0 }, attributes: {}, resistances: { fire: -0.5 } },
+    ],
+  } as unknown as Ruleset
+  const weakEnc: ResolvedEncounter = {
+    ...encounter,
+    enemies: [{ ...encounter.enemies[0], defId: 'enemy.emberrat', hp: 100, maxHp: 100, defense: 0 }],
+  }
+  const hero0 = heroWith({ weapon: { def: 'item.longsword', qty: 1 } }, { might: 14, agility: 20 })
+  const s = initCombat([hero0], weakEnc, { ruleset: rules, seed: 3 })
+  const enemyIdx = s.actors.findIndex(a => a.kind === 'enemy')
+  const after = resolvePlayerAttack(s, enemyIdx, rules, () => 0.5)
+  assert.ok(after.events.some(e => e.kind === 'weak'), 'fire attack should register as a weakness hit')
+})
+
+// ── Combat modes: classic / oneMore / pressTurn ──────────────────────────────
+
+const modeRules = {
+  ...typeRules,
+  enemies: [
+    ...typeRules.enemies.filter(e => e.id !== 'enemy.weakling' && e.id !== 'enemy.tank'),
+    { id: 'enemy.weakling', name: 'Weakling', hp: 300, attack: 1, defense: 0, speed: 1, xp: 1, gold: { min: 0, max: 0 }, attributes: {}, resistances: { physical: -0.5 } },
+    { id: 'enemy.tank',     name: 'Tank',     hp: 300, attack: 1, defense: 0, speed: 1, xp: 1, gold: { min: 0, max: 0 }, attributes: {} },
+  ],
+} as unknown as Ruleset
+
+function modeEnc(defId: string): ResolvedEncounter {
+  return { tableId: 't', tableName: 't', goldReward: 0, xpReward: 0,
+    enemies: [{ defId, name: defId, hp: 300, maxHp: 300, attack: 1, defense: 0, speed: 1, xp: 1, gold: 0 }] }
+}
+function twoFastHeroes(): Character[] {
+  const mk = (id: string) => ({ ...heroWith({}, { might: 16, agility: 20, endurance: 10 }), id }) as Character
+  return [mk('h1'), mk('h2')]
+}
+const fastRng = () => 0.5 // no miss (>=0.05), no crit (>=0.1)
+
+test('classic mode: a weakness hit does not grant a bonus turn', () => {
+  const s = initCombat(twoFastHeroes(), modeEnc('enemy.weakling'), { ruleset: modeRules, combatMode: 'classic', seed: 1 })
+  const enemyIdx = s.actors.findIndex(a => a.kind === 'enemy')
+  const after = resolvePlayerAttack(s, enemyIdx, modeRules, fastRng)
+  assert.notEqual(after.turnIdx, s.turnIdx)                       // turn advanced
+  assert.ok(!after.log.some(l => l.text === 'One More!'))
+  assert.equal(after.icons, undefined)                            // no icon economy
+})
+
+test('oneMore mode: a weakness hit lets the same actor act again', () => {
+  const s = initCombat(twoFastHeroes(), modeEnc('enemy.weakling'), { ruleset: modeRules, combatMode: 'oneMore', seed: 1 })
+  assert.equal(s.actors[s.turnIdx].kind, 'party')
+  const enemyIdx = s.actors.findIndex(a => a.kind === 'enemy')
+  const after = resolvePlayerAttack(s, enemyIdx, modeRules, fastRng)
+  assert.equal(after.turnIdx, s.turnIdx)                          // same actor
+  assert.equal(after.phase, 'player_action')
+  assert.ok(after.log.some(l => l.text === 'One More!'))
+  assert.equal(after.oneMoreStreak, 1)
+})
+
+test('oneMore mode: a plain hit passes the turn normally', () => {
+  const s = initCombat(twoFastHeroes(), modeEnc('enemy.tank'), { ruleset: modeRules, combatMode: 'oneMore', seed: 1 })
+  const enemyIdx = s.actors.findIndex(a => a.kind === 'enemy')
+  const after = resolvePlayerAttack(s, enemyIdx, modeRules, fastRng)
+  assert.notEqual(after.turnIdx, s.turnIdx)
+  assert.ok(!after.log.some(l => l.text === 'One More!'))
+})
+
+test('pressTurn mode: initialises the acting side with one icon per member', () => {
+  const s = initCombat(twoFastHeroes(), modeEnc('enemy.tank'), { ruleset: modeRules, combatMode: 'pressTurn', seed: 1 })
+  assert.equal(s.activeSide, 'party')
+  assert.deepEqual(s.icons, { full: 2, blink: 0 })
+})
+
+test('pressTurn mode: a weakness hit converts a full icon into a bonus (blink)', () => {
+  const s = initCombat(twoFastHeroes(), modeEnc('enemy.weakling'), { ruleset: modeRules, combatMode: 'pressTurn', seed: 1 })
+  const enemyIdx = s.actors.findIndex(a => a.kind === 'enemy')
+  const after = resolvePlayerAttack(s, enemyIdx, modeRules, fastRng)
+  assert.deepEqual(after.icons, { full: 1, blink: 1 })           // total presses preserved (a bonus)
+  assert.equal(after.activeSide, 'party')
+  assert.equal(after.actors[after.turnIdx].kind, 'party')
+  assert.ok(after.log.some(l => l.text === 'Press turn!'))
+})
+
+test('pressTurn mode: a plain hit spends one full icon', () => {
+  const s = initCombat(twoFastHeroes(), modeEnc('enemy.tank'), { ruleset: modeRules, combatMode: 'pressTurn', seed: 1 })
+  const enemyIdx = s.actors.findIndex(a => a.kind === 'enemy')
+  const after = resolvePlayerAttack(s, enemyIdx, modeRules, fastRng)
+  assert.deepEqual(after.icons, { full: 1, blink: 0 })
+})
+
+test('pressTurn mode: a weakness knocks the enemy down, enabling All-Out', () => {
+  const s = initCombat(twoFastHeroes(), modeEnc('enemy.weakling'), { ruleset: modeRules, combatMode: 'pressTurn', seed: 1 })
+  const enemyIdx = s.actors.findIndex(a => a.kind === 'enemy')
+  assert.equal(canAllOutAttack(s), false)
+  const after = resolvePlayerAttack(s, enemyIdx, modeRules, fastRng)
+  assert.deepEqual(after.downed, [enemyIdx])
+  assert.equal(canAllOutAttack(after), true)
+})
+
+test('pressTurn mode: All-Out Attack damages all enemies and ends the party phase', () => {
+  const s0 = initCombat(twoFastHeroes(), modeEnc('enemy.weakling'), { ruleset: modeRules, combatMode: 'pressTurn', seed: 1 })
+  const enemyIdx = s0.actors.findIndex(a => a.kind === 'enemy')
+  const s1 = resolvePlayerAttack(s0, enemyIdx, modeRules, fastRng)
+  const hpBefore = s1.actors[enemyIdx].hp
+  const s2 = resolveAllOutAttack(s1, modeRules, fastRng)
+  assert.ok(s2.actors[enemyIdx].hp < hpBefore)
+  assert.deepEqual(s2.downed, [])
+  assert.equal(s2.activeSide, 'enemy')
+  assert.equal(s2.phase, 'enemy_turn')
+  assert.ok(s2.log.some(l => l.text === 'All-Out Attack!'))
+})
+
+test('pressTurn mode: All-Out is rejected when enemies are not all down', () => {
+  const s = initCombat(twoFastHeroes(), modeEnc('enemy.tank'), { ruleset: modeRules, combatMode: 'pressTurn', seed: 1 })
+  assert.equal(canAllOutAttack(s), false)
+  assert.equal(resolveAllOutAttack(s, modeRules, fastRng), s) // no-op
+})
+
+test('pressTurn mode: resolveSelectActor switches to another living party member', () => {
+  const s = initCombat(twoFastHeroes(), modeEnc('enemy.tank'), { ruleset: modeRules, combatMode: 'pressTurn', seed: 1 })
+  const other = s.turnIdx === 0 ? 1 : 0
+  const after = resolveSelectActor(s, other)
+  assert.equal(after.turnIdx, other)
+  // classic mode ignores member selection
+  const classic = initCombat(twoFastHeroes(), modeEnc('enemy.tank'), { ruleset: modeRules, combatMode: 'classic', seed: 1 })
+  assert.equal(resolveSelectActor(classic, other).turnIdx, classic.turnIdx)
+})
+
+
+// ── Level-up: hybrid growth + banked points ───────────────────────────────────
+
+test('level-up applies class attrGrowth, banks levelPoints, clamps at attr max', () => {
+  const rules = makeDefaultRuleset()
+  const hero0 = {
+    id: 'lv', name: 'Climber', classId: 'class.fighter', raceId: 'race.human',
+    level: 1, xp: 49, alive: true, statuses: [], knownSpells: [], equipment: {},
+    attributes: { 'attr.might': 10, 'attr.endurance': 29, 'attr.agility': 10 },
+    hp: 20, maxHp: 30, mp: 0, maxMp: 0,
+  } as unknown as Character
+  const state = {
+    phase: 'victory', xpReward: 100, drops: [], goldReward: 0, itemsUsed: {},
+    actors: [{ kind: 'party', idx: 0, hp: 20, alive: true, mp: 0, statuses: [] }],
+  } as unknown as CombatState
+  const { party: after, levelUps } = applyCombatOutcome([hero0], state, rules)
+  assert.deepEqual(levelUps, ['Climber'])
+  assert.equal(after[0].level, 2)
+  assert.equal(after[0].attributes['attr.might'], 11)      // fighter growth +1
+  assert.equal(after[0].attributes['attr.endurance'], 30)  // clamped at max
+  assert.equal(after[0].unspentPoints, 2)                  // fighter levelPoints
+  // deriveMaxHp now reads full-id keys: hitDie 10×2 + END 30×2 = 80
+  assert.equal(after[0].maxHp, 80)
+})
+
+
+test('spell power scales with the school key attribute', () => {
+  const rules = {
+    ...makeDefaultRuleset(),
+    spellSchools: [{ id: 'arcane', name: 'Arcane', keyAttribute: 'attr.intellect' }],
+    spells: [{ id: 'sp.bolt', name: 'Bolt', school: 'arcane', level: 1, mpCost: 0, target: 'enemy', inCombat: true, outOfCombat: false, effects: [{ t: 'damage', dmgType: 'physical', amount: 10, canCrit: false }] }],
+  } as unknown as Ruleset
+  const mage = (int: number) => ({
+    id: 'm', name: 'M', classId: 'class.mage', raceId: 'race.human', level: 1, hp: 30, maxHp: 30, mp: 10, maxMp: 10,
+    alive: true, statuses: [], knownSpells: ['sp.bolt'], equipment: {},
+    attributes: { 'attr.intellect': int, 'attr.agility': 20 },
+  }) as unknown as Character
+  const cast = (int: number) => {
+    const s = initCombat([mage(int)], modeEnc('enemy.tank'), { ruleset: rules, seed: 1 })
+    const enemyIdx = s.actors.findIndex(a => a.kind === 'enemy')
+    return resolvePlayerCast(s, 'sp.bolt', [enemyIdx], rules, () => 0.99).actors[enemyIdx].hp
+  }
+  // INT 10 → +0 bonus → 300-10; INT 20 → +5 → 300-15
+  assert.equal(cast(10), 290)
+  assert.equal(cast(20), 285)
+})
+
+
+test('equipped wand charges: use fires effects, spends a charge, survives combat end', () => {
+  const rules = makeDefaultRuleset()
+  const caster = {
+    ...heroWith({ weapon: { def: 'item.staff_fire', qty: 1 } }, { might: 10, agility: 20, endurance: 10 }),
+    id: 'wz', name: 'Wizzo',
+  } as Character
+  const s0 = initCombat([caster], modeEnc('enemy.tank'), { ruleset: rules, seed: 2 })
+  const enemyIdx = s0.actors.findIndex(a => a.kind === 'enemy')
+  const s1 = resolvePlayerUseItem(s0, 'item.staff_fire', [enemyIdx], rules, () => 0.5, { equipSlot: 'weapon' })
+  assert.ok(s1.actors[enemyIdx].hp < 300)                       // fire damage landed
+  assert.equal(s1.equipChargesUsed?.['0:weapon'], 1)            // charge recorded
+  assert.equal(s1.itemsUsed['item.staff_fire'], undefined)      // inventory untouched
+  // Non-equip path still refuses non-consumables
+  assert.equal(resolvePlayerUseItem(s0, 'item.staff_fire', [enemyIdx], rules, () => 0.5), s0)
+  // Combat end applies the spend to the equipped instance (12 → 11)
+  const { party: after } = applyCombatOutcome([caster], { ...s1, phase: 'victory', xpReward: 0 }, rules)
+  assert.equal(after[0].equipment.weapon?.charges, 11)
+})
+
+
+test('pressTurn: upcomingTurns previews only the active side', () => {
+  const s = initCombat(twoFastHeroes(), modeEnc('enemy.tank'), { ruleset: modeRules, combatMode: 'pressTurn', seed: 1 })
+  const preview = upcomingTurns(s, 6)
+  assert.ok(preview.length > 0)
+  assert.ok(preview.every(i => s.actors[i].kind === 'party'))
+  // classic still interleaves both sides
+  const c = initCombat(twoFastHeroes(), modeEnc('enemy.tank'), { ruleset: modeRules, combatMode: 'classic', seed: 1 })
+  assert.ok(upcomingTurns(c, 6).some(i => c.actors[i].kind === 'enemy'))
+})
+
+test('press modes: enemy AI overweights weakness-hitting abilities', () => {
+  const rules = {
+    ...makeDefaultRuleset(),
+    races: [{ id: 'race.human', name: 'Human', attrModifiers: {}, resistances: { fire: -0.5 } }],
+    enemies: [{ id: 'enemy.pyro', name: 'Pyro', hp: 300, attack: 6, defense: 0, speed: 1, xp: 1, gold: { min: 0, max: 0 },
+      abilities: [
+        { weight: 1, effects: [{ t: 'damage', dmgType: 'fire', amount: 5, canCrit: false }], target: 'enemy' },
+        { weight: 1, effects: [{ t: 'damage', dmgType: 'ice', amount: 5, canCrit: false }], target: 'enemy' },
+      ] }],
+  } as unknown as Ruleset
+  const enc = { tableId: 't', tableName: 't', goldReward: 0, xpReward: 0,
+    enemies: [{ defId: 'enemy.pyro', name: 'Pyro', hp: 300, maxHp: 300, attack: 6, defense: 0, speed: 99, xp: 1, gold: 0 }] } as ResolvedEncounter
+  const hero0 = heroWith({}, { might: 10, agility: 1, endurance: 10 })
+  const run = (mode: 'classic' | 'pressTurn') => {
+    const s = initCombat([hero0], enc, { ruleset: rules, combatMode: mode, seed: 1 })
+    assert.equal(s.phase, 'enemy_turn')
+    // rand 0.6: classic total=2 → pick 1.2 lands on ice; press total=4 (fire ×3) → pick 2.4 lands on fire
+    return resolveEnemyTurn(s, rules, () => 0.6)
+  }
+  assert.ok(!run('classic').events.some(e => e.kind === 'weak'))
+  assert.ok(run('pressTurn').events.some(e => e.kind === 'weak'))
+})
+
+
+// ── Skills ────────────────────────────────────────────────────────────────────
+
+test('skill use: pays HP cost, damages, sets cooldown, blocks until ready', () => {
+  const rules = makeDefaultRuleset()
+  const bruiser = {
+    ...heroWith({}, { might: 14, agility: 20, endurance: 10 }),
+    id: 'br', name: 'Bruiser', knownSkills: ['skill.deadeye'],
+  } as Character
+  const s0 = initCombat([bruiser], modeEnc('enemy.tank'), { ruleset: rules, seed: 3 })
+  const enemyIdx = s0.actors.findIndex(a => a.kind === 'enemy')
+  const hpBefore = s0.actors[s0.turnIdx].hp
+  const maxHp = s0.actors[s0.turnIdx].maxHp
+  const s1 = resolvePlayerUseSkill(s0, 'skill.deadeye', [enemyIdx], rules, () => 0.5)
+  const userIdx = s0.turnIdx
+  assert.equal(s1.actors[userIdx].hp, hpBefore - Math.ceil(maxHp * 0.08))  // 8% HP paid
+  assert.ok(s1.actors[enemyIdx].hp < 300)                                  // damage landed
+  assert.equal(s1.skillCooldowns?.[`${userIdx}:skill.deadeye`], s0.round + 2)
+  const gate = canUseSkill({ ...s1, turnIdx: userIdx, phase: 'player_action' }, rules.skills.find(s => s.id === 'skill.deadeye')!)
+  assert.equal(gate.ok, false)
+  assert.match(gate.reason ?? '', /Ready in/)
+})
+
+test('level-up auto-learns class skills (fighter → Cleave at 4)', () => {
+  const rules = makeDefaultRuleset()
+  const vet = {
+    id: 'v', name: 'Vet', classId: 'class.fighter', raceId: 'race.human',
+    level: 3, xp: Math.round(50 * Math.pow(3, 1.5)) - 1, alive: true, statuses: [],
+    knownSpells: [], knownSkills: ['skill.power_strike'], equipment: {},
+    attributes: { 'attr.might': 12, 'attr.endurance': 12 }, hp: 20, maxHp: 40, mp: 0, maxMp: 0,
+  } as unknown as Character
+  const state = {
+    phase: 'victory', xpReward: 10, drops: [], goldReward: 0, itemsUsed: {},
+    actors: [{ kind: 'party', idx: 0, hp: 20, alive: true, mp: 0, statuses: [] }],
+  } as unknown as CombatState
+  const { party: after } = applyCombatOutcome([vet], state, rules)
+  assert.equal(after[0].level, 4)
+  assert.ok(after[0].knownSkills?.includes('skill.cleave'))
+})
+
+
+// ── Charge (empower-next) + status stat modifiers ─────────────────────────────
+
+test('Charge doubles the next physical attack and is consumed', () => {
+  const rules = makeDefaultRuleset()
+  const mk = () => ({ ...heroWith({}, { might: 14, agility: 20, endurance: 10 }), id: 'ch', name: 'Charger' }) as Character
+  const plain = (() => {
+    const s = initCombat([mk()], modeEnc('enemy.tank'), { ruleset: rules, seed: 5 })
+    const e = s.actors.findIndex(a => a.kind === 'enemy')
+    return 300 - resolvePlayerAttack(s, e, rules, () => 0.5).actors[e].hp
+  })()
+  const s0 = initCombat([mk()], modeEnc('enemy.tank'), { ruleset: rules, seed: 5 })
+  const e = s0.actors.findIndex(a => a.kind === 'enemy')
+  const charged = { ...s0, actors: s0.actors.map((a, i) => i === s0.turnIdx ? { ...a, statuses: [{ def: 'status.charged', remaining: 3 }] } : a) }
+  const after = resolvePlayerAttack(charged, e, rules, () => 0.5)
+  assert.equal(300 - after.actors[e].hp, plain * 2)                    // doubled
+  assert.ok(!after.actors.some(a => a.statuses.some(st => st.def === 'status.charged')))  // consumed
+})
+
+test('physical Charge does not boost spells; Concentrate does', () => {
+  const rules = {
+    ...makeDefaultRuleset(),
+    spellSchools: [{ id: 'arcane', name: 'Arcane' }],  // no keyAttribute → flat
+    spells: [{ id: 'sp.bolt', name: 'Bolt', school: 'arcane', level: 1, mpCost: 0, target: 'enemy', inCombat: true, outOfCombat: false, effects: [{ t: 'damage', dmgType: 'physical', amount: 10, canCrit: false }] }],
+  } as unknown as Ruleset
+  const mk = (statusId: string) => {
+    const s0 = initCombat([{ ...heroWith({}, { agility: 20 }), knownSpells: ['sp.bolt'], mp: 10, maxMp: 10 } as unknown as Character],
+      modeEnc('enemy.tank'), { ruleset: rules, seed: 1 })
+    return { ...s0, actors: s0.actors.map((a, i) => i === s0.turnIdx ? { ...a, statuses: [{ def: statusId, remaining: 3 }] } : a) }
+  }
+  const e = 1
+  const withPhys = resolvePlayerCast(mk('status.charged'), 'sp.bolt', [e], rules, () => 0.99)
+  assert.equal(300 - withPhys.actors[e].hp, 10)   // untouched by physical charge
+  const withMag = resolvePlayerCast(mk('status.concentrated'), 'sp.bolt', [e], rules, () => 0.99)
+  assert.equal(300 - withMag.actors[e].hp, 20)    // doubled by Concentrate
+})
+
+test('status modifiers now shape combat stats (Armor Broken → more damage)', () => {
+  const rules = makeDefaultRuleset()
+  const armored = {
+    ...modeEnc('enemy.tank'),
+    enemies: [{ ...modeEnc('enemy.tank').enemies[0], defense: 10 }],
+  }
+  const mk = () => ({ ...heroWith({}, { might: 14, agility: 20 }), id: 'ab' }) as Character
+  const run = (broken: boolean) => {
+    const s0 = initCombat([mk()], armored, { ruleset: rules, seed: 7 })
+    const e = s0.actors.findIndex(a => a.kind === 'enemy')
+    const s = broken
+      ? { ...s0, actors: s0.actors.map((a, i) => i === e ? { ...a, statuses: [{ def: 'status.armor_break', remaining: 3 }] } : a) }
+      : s0
+    return 300 - resolvePlayerAttack(s, e, rules, () => 0.5).actors[e].hp
+  }
+  assert.ok(run(true) > run(false))   // -6 defense bites
+})
+
+
+// ── Charge anti-cheese: no stacking, one boost per action ────────────────────
+
+test('re-applying Charge neither stacks nor refreshes — wasted action is logged', () => {
+  const rules = makeDefaultRuleset()
+  const mk = () => ({ ...heroWith({}, { might: 14, agility: 20 }), id: 'nc', knownSkills: ['skill.charge'] }) as Character
+  const s0 = initCombat([mk()], modeEnc('enemy.tank'), { ruleset: rules, seed: 9 })
+  const primed = { ...s0, actors: s0.actors.map((a, i) => i === s0.turnIdx ? { ...a, statuses: [{ def: 'status.charged', remaining: 3 }] } : a) }
+  const after = resolvePlayerUseSkill(primed, 'skill.charge', [], rules, () => 0.5)
+  const me = after.actors.filter(a => a.kind === 'party')[0]
+  assert.equal(me.statuses.filter(st => st.def === 'status.charged').length, 1)  // still exactly one
+  assert.ok(after.log.some(l => l.text.includes('already')))                     // waste is visible
+})
+
+test('two boost statuses never multiply together — one consumed per attack', () => {
+  const rules = {
+    ...makeDefaultRuleset(),
+    statusEffects: [
+      ...makeDefaultRuleset().statusEffects,
+      { id: 'status.overdrive', name: 'Overdrive', kind: 'buff', durationTurns: 3, blocksAction: false, boostScope: 'physical', boostMult: 3 },
+    ],
+  } as unknown as Ruleset
+  const mk = () => ({ ...heroWith({}, { might: 14, agility: 20 }), id: 'db' }) as Character
+  const enemyIdxOf = (s: CombatState) => s.actors.findIndex(a => a.kind === 'enemy')
+  const plainState = initCombat([mk()], modeEnc('enemy.tank'), { ruleset: rules, seed: 11 })
+  const plain = 300 - resolvePlayerAttack(plainState, enemyIdxOf(plainState), rules, () => 0.5).actors[enemyIdxOf(plainState)].hp
+  const s0 = initCombat([mk()], modeEnc('enemy.tank'), { ruleset: rules, seed: 11 })
+  const doubled = { ...s0, actors: s0.actors.map((a, i) => i === s0.turnIdx
+    ? { ...a, statuses: [{ def: 'status.charged', remaining: 3 }, { def: 'status.overdrive', remaining: 3 }] } : a) }
+  const after = resolvePlayerAttack(doubled, enemyIdxOf(s0), rules, () => 0.5)
+  assert.equal(300 - after.actors[enemyIdxOf(s0)].hp, plain * 2)                 // ×2 only, never ×6
+  const me = after.actors.filter(a => a.kind === 'party')[0]
+  assert.ok(!me.statuses.some(st => st.def === 'status.charged'))               // charged consumed
+  assert.ok(me.statuses.some(st => st.def === 'status.overdrive'))             // overdrive survives for a LATER attack
+})
+
+test('Charged and Concentrated coexist but never double-dip one action', () => {
+  const rules = makeDefaultRuleset()
+  const mk = () => ({ ...heroWith({}, { might: 14, agility: 20 }), id: 'cc' }) as Character
+  const s0 = initCombat([mk()], modeEnc('enemy.tank'), { ruleset: rules, seed: 13 })
+  const both = { ...s0, actors: s0.actors.map((a, i) => i === s0.turnIdx
+    ? { ...a, statuses: [{ def: 'status.concentrated', remaining: 3 }, { def: 'status.charged', remaining: 3 }] } : a) }
+  const after = resolvePlayerAttack(both, s0.actors.findIndex(a => a.kind === 'enemy'), rules, () => 0.5)
+  const me = after.actors.filter(a => a.kind === 'party')[0]
+  assert.ok(!me.statuses.some(st => st.def === 'status.charged'))               // physical attack ate the physical boost
+  assert.ok(me.statuses.some(st => st.def === 'status.concentrated'))          // magical boost untouched
+})
+
+// ── Enemy own-side targeting ─────────────────────────────────────────────────
+
+const medicRuleset = (target: 'ally' | 'allAllies') => ({
+  ...ruleset,
+  enemies: [{
+    id: 'enemy.medic', name: 'Medic', hp: 30, attack: 5, defense: 0, speed: 1, xp: 0, gold: { min: 0, max: 0 },
+    abilities: [{ weight: 1, target, effects: [{ t: 'heal', amount: 10 }] }],
+  }],
+}) as unknown as Ruleset
+
+const medicEncounter = (): ResolvedEncounter => ({
+  tableId: 'enc.medics', tableName: 'Medics', goldReward: 0, xpReward: 0,
+  enemies: [
+    { defId: 'enemy.medic', name: 'Medic A', hp: 30, maxHp: 30, attack: 5, defense: 0, speed: 2, xp: 0, gold: 0 },
+    { defId: 'enemy.medic', name: 'Medic B', hp: 10, maxHp: 30, attack: 5, defense: 0, speed: 1, xp: 0, gold: 0 },
+  ],
+})
+
+test("enemy 'ally' heal lands on its own most-wounded side, never the party", () => {
+  const rs = medicRuleset('ally')
+  const s0 = initCombat([{ ...hero, hp: 20 } as Character], medicEncounter())
+  const heroIdx = s0.actors.findIndex(a => a.kind === 'party')
+  const aIdx = s0.actors.findIndex(a => a.name === 'Medic A')
+  const bIdx = s0.actors.findIndex(a => a.name === 'Medic B')
+  const s = resolveEnemyTurn({ ...s0, turnIdx: aIdx, phase: 'enemy_turn' }, rs, rng)
+  assert.equal(s.actors[heroIdx].hp, s0.actors[heroIdx].hp)   // party untouched
+  assert.equal(s.actors[bIdx].hp, 20)                          // wounded medic healed 10 → 20
+  assert.equal(s.actors[aIdx].hp, 30)                          // healthy one skipped
+})
+
+test("enemy 'allAllies' heal restores its whole side, not the heroes", () => {
+  const rs = medicRuleset('allAllies')
+  const s0 = initCombat([{ ...hero, hp: 20 } as Character], medicEncounter())
+  const wounded = { ...s0, actors: s0.actors.map(a => a.name === 'Medic A' ? { ...a, hp: 15 } : a) }
+  const heroIdx = wounded.actors.findIndex(a => a.kind === 'party')
+  const aIdx = wounded.actors.findIndex(a => a.name === 'Medic A')
+  const bIdx = wounded.actors.findIndex(a => a.name === 'Medic B')
+  const s = resolveEnemyTurn({ ...wounded, turnIdx: aIdx, phase: 'enemy_turn' }, rs, rng)
+  assert.equal(s.actors[heroIdx].hp, wounded.actors[heroIdx].hp)   // party untouched
+  assert.equal(s.actors[aIdx].hp, 25)                               // 15 + 10
+  assert.equal(s.actors[bIdx].hp, 20)                               // 10 + 10
+})
+
+test('enemy ability log lines use the ability name — refs say casts, customs say uses', () => {
+  const rs = {
+    ...ruleset,
+    spells: [{ id: 'spell.bio', name: 'Bio', school: 'element', level: 4, mpCost: 9, target: 'enemy',
+      inCombat: true, outOfCombat: false, effects: [{ t: 'damage', dmgType: 'poison', amount: 5, canCrit: false }] }],
+    enemies: [
+      { id: 'enemy.caster', name: 'Caster', hp: 30, attack: 5, defense: 0, speed: 1, xp: 0, gold: { min: 0, max: 0 },
+        abilities: [{ weight: 1, spell: 'spell.bio' }] },
+      { id: 'enemy.brawler', name: 'Brawler', hp: 30, attack: 5, defense: 0, speed: 1, xp: 0, gold: { min: 0, max: 0 },
+        abilities: [{ weight: 1, name: 'Haymaker', target: 'enemy', effects: [{ t: 'damage', dmgType: 'physical', amount: 5, canCrit: false }] }] },
+    ],
+  } as unknown as Ruleset
+  const enc: ResolvedEncounter = {
+    tableId: 'enc.t', tableName: 'T', goldReward: 0, xpReward: 0,
+    enemies: [
+      { defId: 'enemy.caster', name: 'Caster', hp: 30, maxHp: 30, attack: 5, defense: 0, speed: 2, xp: 0, gold: 0 },
+      { defId: 'enemy.brawler', name: 'Brawler', hp: 30, maxHp: 30, attack: 5, defense: 0, speed: 1, xp: 0, gold: 0 },
+    ],
+  }
+  const s0 = initCombat([hero], enc)
+  const casterIdx = s0.actors.findIndex(a => a.name === 'Caster')
+  const brawlerIdx = s0.actors.findIndex(a => a.name === 'Brawler')
+  const s1 = resolveEnemyTurn({ ...s0, turnIdx: casterIdx, phase: 'enemy_turn' }, rs, rng)
+  assert.ok(s1.log.some(e => e.text === 'Caster casts Bio!'), 'spell ref logs by name')
+  const s2 = resolveEnemyTurn({ ...s0, turnIdx: brawlerIdx, phase: 'enemy_turn' }, rs, rng)
+  assert.ok(s2.log.some(e => e.text === 'Brawler uses Haymaker!'), 'named custom logs by name')
 })
 
 console.log(`\n${passed} passed`)

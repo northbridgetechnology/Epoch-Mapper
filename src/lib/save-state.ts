@@ -6,7 +6,7 @@
  */
 
 import { gzipSync, gunzipSync, strToU8, strFromU8 } from 'fflate'
-import type { Character, ClassDef, Formation, Ruleset, SaveState } from './engine-types'
+import type { Character, ClassDef, Formation, NpcDef, Pronoun, Ruleset, SaveState } from './engine-types'
 import { deriveMaxHp, deriveMaxMp } from './engine-types'
 import { uid } from './utils'
 
@@ -43,6 +43,70 @@ export function deleteDraft(mapHash: string): void {
   } catch {
     // ignore
   }
+}
+
+// ── Named save slots (play mode) ──────────────────────────────────────────────
+
+export const SAVE_SLOT_COUNT = 3
+const SLOT_PREFIX = 'epochengine.slot.'
+
+export interface SaveSlotInfo {
+  slot: number
+  at: number
+  mapId: string
+  partySummary: string
+  gold: number
+}
+
+export function saveToSlot(slot: number, state: SaveState): void {
+  try {
+    localStorage.setItem(`${SLOT_PREFIX}${slot}`, JSON.stringify({ at: Date.now(), state }))
+  } catch {
+    // storage full or unavailable
+  }
+}
+
+export function loadFromSlot(slot: number): SaveState | null {
+  try {
+    const raw = localStorage.getItem(`${SLOT_PREFIX}${slot}`)
+    if (!raw) return null
+    return (JSON.parse(raw) as { state: SaveState }).state
+  } catch {
+    return null
+  }
+}
+
+export function deleteSlot(slot: number): void {
+  try {
+    localStorage.removeItem(`${SLOT_PREFIX}${slot}`)
+  } catch {
+    // ignore
+  }
+}
+
+/** Wipe every slot — used by permadeath on a party wipe. */
+export function deleteAllSlots(): void {
+  for (let i = 0; i < SAVE_SLOT_COUNT; i++) deleteSlot(i)
+}
+
+export function listSaveSlots(): (SaveSlotInfo | null)[] {
+  return Array.from({ length: SAVE_SLOT_COUNT }, (_, slot) => {
+    try {
+      const raw = localStorage.getItem(`${SLOT_PREFIX}${slot}`)
+      if (!raw) return null
+      const { at, state } = JSON.parse(raw) as { at: number; state: SaveState }
+      const alive = state.party.filter(c => c.alive).length
+      const lvl = Math.max(1, ...state.party.map(c => c.level))
+      return {
+        slot, at,
+        mapId: state.position.mapId,
+        partySummary: `${alive}/${state.party.length} alive · Lv ${lvl}`,
+        gold: state.gold,
+      }
+    } catch {
+      return null
+    }
+  })
 }
 
 // ── .epochsave binary format ──────────────────────────────────────────────────
@@ -89,18 +153,29 @@ export function downloadSaveState(state: SaveState, filename?: string): void {
 
 // ── Character factory ─────────────────────────────────────────────────────────
 
+/** Optional identity + attribute overrides used by the player Character Builder. */
+export interface NewCharacterOpts {
+  /** Pre-modifier attribute scores by id (from point-buy). Missing attrs use `default`. */
+  attrBase?: Record<string, number>
+  portrait?: string
+  pronoun?: Pronoun
+  bio?: string
+  isMc?: boolean
+}
+
 export function newCharacter(
   name: string,
   classId: string,
   raceId: string,
   ruleset: Ruleset,
+  opts: NewCharacterOpts = {},
 ): Character {
   const cls = ruleset.classes.find(c => c.id === classId) ?? ruleset.classes[0]
   const race = ruleset.races.find(r => r.id === raceId) ?? ruleset.races[0]
 
   const attributes: Record<string, number> = {}
   for (const attr of ruleset.attributes) {
-    const base = attr.default
+    const base = opts.attrBase?.[attr.id] ?? attr.default
     const classMod = (cls.attrModifiers[attr.id] ?? cls.attrModifiers[attr.id.replace('attr.', '')] ?? 0)
     const raceMod = (race.attrModifiers[attr.id] ?? race.attrModifiers[attr.id.replace('attr.', '')] ?? 0)
     attributes[attr.id] = Math.min(attr.max, Math.max(attr.min, base + classMod + raceMod))
@@ -126,8 +201,15 @@ export function newCharacter(
     maxMp: 0,
     equipment: {},
     knownSpells: [],
+    knownSkills: (ruleset.skills ?? [])
+      .filter(sk => sk.learn?.some(l => l.classId === classId && l.level <= 1))
+      .map(sk => sk.id),
     statuses: [],
     alive: true,
+    ...(opts.portrait ? { portrait: opts.portrait } : {}),
+    ...(opts.pronoun ? { pronoun: opts.pronoun } : {}),
+    ...(opts.bio ? { bio: opts.bio } : {}),
+    ...(opts.isMc ? { isMc: true } : {}),
   }
 
   char.maxHp = deriveMaxHp({ level: 1, attributes: attrByShort }, cls as ClassDef)
@@ -135,6 +217,67 @@ export function newCharacter(
   char.maxMp = deriveMaxMp({ level: 1, attributes: attrByShort }, cls as ClassDef)
   char.mp = char.maxMp
 
+  return char
+}
+
+/**
+ * Instantiate a runtime `Character` from an `NpcDef` — the bridge that lets an
+ * authored NPC join the party (recruitment) or be seeded at New Game
+ * (`startsInParty`). Explicit `def.attributes` are authoritative; missing ones
+ * fall back to class/race-modified defaults. HP/MP derive at the NPC's level.
+ */
+export function npcToCharacter(def: NpcDef, ruleset: Ruleset): Character {
+  const classId = def.classId ?? ruleset.classes[0]?.id ?? ''
+  const raceId = def.raceId ?? ruleset.races[0]?.id ?? ''
+  const cls = ruleset.classes.find(c => c.id === classId) ?? ruleset.classes[0]
+  const race = ruleset.races.find(r => r.id === raceId) ?? ruleset.races[0]
+  const level = Math.max(1, def.level ?? 1)
+
+  const attributes: Record<string, number> = {}
+  for (const attr of ruleset.attributes) {
+    const short = attr.id.replace('attr.', '')
+    const explicit = def.attributes?.[attr.id] ?? def.attributes?.[short]
+    // Recruits above level 1 get their class growth baked in, so a level-5
+    // hire matches a member leveled from 1 (explicit stats always win).
+    const growth = (cls.attrGrowth[attr.id] ?? cls.attrGrowth[short] ?? 0) * (level - 1)
+    const raw = explicit !== undefined
+      ? explicit
+      : attr.default
+        + (cls.attrModifiers[attr.id] ?? cls.attrModifiers[short] ?? 0)
+        + (race.attrModifiers[attr.id] ?? race.attrModifiers[short] ?? 0)
+        + growth
+    attributes[attr.id] = Math.min(attr.max, Math.max(attr.min, raw))
+  }
+
+  const attrByShort: Record<string, number> = {}
+  for (const [k, v] of Object.entries(attributes)) attrByShort[k.replace('attr.', '')] = v
+
+  const char: Character = {
+    id: uid(),
+    name: def.name,
+    classId,
+    raceId,
+    level,
+    xp: 0,
+    attributes,
+    hp: 0,
+    maxHp: 0,
+    mp: 0,
+    maxMp: 0,
+    equipment: def.equipment ? { ...def.equipment } : {},
+    knownSpells: [...(def.knownSpells ?? [])],
+    knownSkills: (ruleset.skills ?? [])
+      .filter(sk => sk.learn?.some(l => l.classId === classId && l.level <= level))
+      .map(sk => sk.id),
+    statuses: [],
+    alive: true,
+    sourceNpc: def.id,
+    ...(def.portrait ? { portrait: def.portrait } : {}),
+  }
+  char.maxHp = deriveMaxHp({ level, attributes: attrByShort }, cls as ClassDef)
+  char.hp = char.maxHp
+  char.maxMp = deriveMaxMp({ level, attributes: attrByShort }, cls as ClassDef)
+  char.mp = char.maxMp
   return char
 }
 
@@ -160,20 +303,30 @@ export function newSaveState(ruleset: Ruleset, mapHash = ''): SaveState {
 
 const PARTY_DRAFT_KEY = 'epochengine.partyTemplate'
 
-export function savePartyTemplate(party: Character[], formation: Formation): void {
+export function savePartyTemplate(party: Character[], formation: Formation, reserve: Character[] = []): void {
   try {
-    localStorage.setItem(PARTY_DRAFT_KEY, JSON.stringify({ party, formation }))
+    localStorage.setItem(PARTY_DRAFT_KEY, JSON.stringify({ party, formation, reserve }))
   } catch {
     // ignore
   }
 }
 
-export function loadPartyTemplate(): { party: Character[]; formation: Formation } | null {
+export function loadPartyTemplate(): { party: Character[]; formation: Formation; reserve: Character[] } | null {
   try {
     const raw = localStorage.getItem(PARTY_DRAFT_KEY)
     if (!raw) return null
-    return JSON.parse(raw)
+    const parsed = JSON.parse(raw) as { party: Character[]; formation: Formation; reserve?: Character[] }
+    return { ...parsed, reserve: parsed.reserve ?? [] }
   } catch {
     return null
+  }
+}
+
+/** Forget the persisted party template (clean-slate on New Session). */
+export function clearPartyTemplate(): void {
+  try {
+    localStorage.removeItem(PARTY_DRAFT_KEY)
+  } catch {
+    // ignore
   }
 }

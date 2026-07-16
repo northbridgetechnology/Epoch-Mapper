@@ -1,7 +1,7 @@
 {
   "name": "@northbridgetechnology/epoch-mapper",
   "version": "1.13.0",
-  "description": "Epoch Mapper — a free, open-source dungeon and world map editor for retro gaming. Standalone web app + reusable React component and .epochmap binary codec.",
+  "description": "Epoch \u2014 a free, open-source first-person dungeon-crawler engine and map authoring tool. Standalone web app + reusable React component and .epochmap binary codec.",
   "license": "MIT",
   "homepage": "https://github.com/northbridgetechnology/epoch-mapper",
   "repository": {
@@ -42,12 +42,17 @@
   "sideEffects": false,
   "scripts": {
     "dev": "next dev -p 3100",
-    "build": "next build",
+    "build": "npm run build:player && next build",
     "start": "next start -p 3100",
     "lint": "eslint .",
     "build:lib": "tsup && node scripts/add-use-client.mjs",
+    "build:player": "node scripts/build-player.mjs",
+    "bake:game": "node scripts/bake-game.mjs",
+    "desktop:dev": "npx @tauri-apps/cli@2 dev",
+    "desktop:build": "npm run build:player && npx @tauri-apps/cli@2 build",
+    "desktop:icon": "npx @tauri-apps/cli@2 icon",
     "prepare": "node -e \"process.exit(require('fs').existsSync('node_modules/tsup')?0:1)\" && npm run build:lib || echo \"skip build:lib (devDeps absent)\"",
-    "test": "tsx test/codec.test.ts && tsx test/markers.test.ts && tsx test/combat.test.ts",
+    "test": "tsx test/codec.test.ts && tsx test/ruleset-diff.test.ts && tsx test/markers.test.ts && tsx test/combat.test.ts && tsx test/switches.test.ts && tsx test/events.test.ts && tsx test/generator.test.ts && tsx test/sprites.test.ts && tsx test/exploration.test.ts && tsx test/story.test.ts && tsx test/recruit.test.ts && tsx test/equipment.test.ts && tsx test/music.test.ts && tsx test/formula.test.ts && tsx test/spell-sort.test.ts && tsx test/bestiary.test.ts && tsx test/chiptune.test.ts && tsx test/world.test.ts",
     "test:codec": "tsx test/codec.test.ts",
     "test:markers": "tsx test/markers.test.ts",
     "prepublishOnly": "npm run build:lib"
@@ -73,6 +78,7 @@
     "@typescript-eslint/eslint-plugin": "^8.62.0",
     "@typescript-eslint/parser": "^8.62.0",
     "autoprefixer": "^10.4.20",
+    "esbuild": "^0.27.0",
     "eslint": "^9",
     "eslint-config-next": "^15.1.0",
     "next": "^15.1.0",

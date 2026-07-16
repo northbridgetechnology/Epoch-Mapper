@@ -14,6 +14,14 @@ export { Toolbar } from './components/Toolbar'
 // PDF export
 export { exportMapsAsPdf } from './lib/dungeon-export'
 
+// Built-in pixel sprite library (EotB-style billboards)
+export { pixelSprite, pixelSpriteRect, hasPixelSprite, spriteAspect, resolveCreatureSprite, creatureSprite, bitmapSprite, isBitmapSprite, bitmapFrames, spriteKinds } from './lib/pixel-sprites'
+export { fileToSpriteDataUri, fileToImageDataUri, builtinSpritePng, downloadSpriteTemplate, SPRITE_MAX_DIM, SPRITE_MAX_BYTES, SPRITE_ACCEPT_TYPES, SPRITE_ACCEPT_ATTR, IMAGE_ACCEPT_TYPES, IMAGE_ACCEPT_ATTR } from './lib/sprite-upload'
+
+// Procedural generation
+export { buildBaseMap, buildGeneratedMap, buildGeneratedWorld, layoutDim, SIZE_DIM, EOTB_DIM } from './lib/map-generator'
+export type { NewMapConfig, MapSize, GeneratedWorld, LayoutStyle } from './lib/map-generator'
+
 // .epochmap codec
 export {
   parseDotEpochmap,
@@ -71,6 +79,7 @@ export type {
   RaceDef,
   ItemDef,
   SpellDef,
+  SkillDef,
   StatusEffectDef,
   EnemyDef,
   EncounterTableDef,
@@ -93,11 +102,13 @@ export type {
   Definition,
   FieldSchema,
   FieldType,
+  Pronoun,
+  OpeningStory,
 } from './lib/engine-types'
 export { deriveMaxHp, deriveMaxMp, xpToNextLevel } from './lib/engine-types'
 
 // Default ruleset
-export { makeDefaultRuleset, DEFAULT_ATTRIBUTES, DEFAULT_CLASSES, DEFAULT_RACES, DEFAULT_SPELLS, DEFAULT_STATUS_EFFECTS } from './lib/default-ruleset'
+export { makeDefaultRuleset, normalizeRuleset, DEFAULT_ATTRIBUTES, DEFAULT_CLASSES, DEFAULT_RACES, DEFAULT_SPELLS, DEFAULT_STATUS_EFFECTS, DEFAULT_AUDIO_TRACKS, DEFAULT_MUSIC_SLOTS } from './lib/default-ruleset'
 
 // .epochsave codec + party persistence
 export {
@@ -109,9 +120,18 @@ export {
   deleteDraft,
   savePartyTemplate,
   loadPartyTemplate,
+  clearPartyTemplate,
+  saveToSlot,
+  loadFromSlot,
+  deleteSlot,
+  deleteAllSlots,
+  listSaveSlots,
+  SAVE_SLOT_COUNT,
   newSaveState,
   newCharacter,
+  npcToCharacter,
   SaveStateParseError,
+  type NewCharacterOpts,
 } from './lib/save-state'
 
 // Schema-driven form generator
@@ -122,24 +142,82 @@ export { EffectBuilder } from './components/forms/EffectBuilder'
 
 // Workspaces
 export { PartyWorkspace } from './components/workspaces/PartyWorkspace'
+export { CharactersWorkspace } from './components/workspaces/CharactersWorkspace'
+export { NpcEditor } from './components/forms/NpcEditor'
 export { DatabaseWorkspace } from './components/workspaces/DatabaseWorkspace'
 export { PlayWorkspace } from './components/workspaces/PlayWorkspace'
+export { GameMenu } from './components/GameMenu'
+export { GamePlayer, type GamePlayerProps } from './components/GamePlayer'
 
 // Item schema helpers
-export { ITEM_SCHEMA, LOOT_TABLE_SCHEMA, blankItem, blankLootTable } from './lib/item-schema'
+export { ITEM_SCHEMA, ITEM_KINDS, LOOT_TABLE_SCHEMA, blankItem, blankLootTable, itemDisplayName, itemGroups } from './lib/item-schema'
+export type { ItemSort } from './lib/item-schema'
+
+// Skill schema helpers
+export { SKILL_SCHEMA, blankSkill, skillGroups } from './lib/skill-schema'
+export type { SkillSort } from './lib/skill-schema'
+
+// Class schema helpers
+export { CLASS_SCHEMA, blankClass } from './lib/class-schema'
+
+// Weapon/armor type schema helpers
+export { WEAPON_TYPE_SCHEMA, ARMOR_TYPE_SCHEMA, DAMAGE_TYPE_OPTIONS, blankWeaponType, blankArmorType } from './lib/type-schema'
+
+// Audio subsystem — music resolution, controller, and blob store
+export { resolveMusicId, resolveTrack, trackById, blankAudioTrack } from './lib/music'
+export type { MusicContext } from './lib/music'
+export { music } from './lib/audio-controller'
+export { putTrack, getTrack, deleteTrack, hasTrack, listTrackIds, gatherAudioBlobs, restoreAudioBlobs } from './lib/audio-store'
+
+// Built-in chiptune library (synthesized music + SFX, zero assets)
+export { CHIP_TRACKS, CHIP_BOSS_INTRO, composeChip, chipSpecById, isBuiltinTrackId, renderChip, renderSfx, SFX_DEFS } from './lib/chiptune'
+export type { ChipSpec, ChipScore, SfxName } from './lib/chiptune'
+
+// Player notifications — FF alert window inside the Tab menu, toasts elsewhere
+export { notify, setNotifySink } from './lib/notify'
+export type { NotifyKind, NotifySink } from './lib/notify'
 
 // Enemy + encounter-table schema helpers (Phase E3)
-export { ENEMY_SCHEMA, ENCOUNTER_TABLE_SCHEMA, blankEnemy, blankEncounterTable } from './lib/enemy-schema'
+export { ENEMY_SCHEMA, ENCOUNTER_TABLE_SCHEMA, blankEnemy, blankEncounterTable, duplicateEnemy, eliteEnemy } from './lib/enemy-schema'
+
+// NPC / global event / quest schema helpers
+export { NPC_SCHEMA, EVENT_SCHEMA, QUEST_SCHEMA, blankNpc, blankEventDef, blankQuest } from './lib/npc-schema'
+export { DialogueOverlay } from './components/DialogueOverlay'
+export { JournalOverlay } from './components/JournalOverlay'
+export { Minimap } from './components/Minimap'
+
+// Story & protagonist (Batch F)
+export { resolveText, resolveTextList, type TextActor } from './lib/text-tokens'
+export { Portrait, portraitIds, portraitLabel, isBuiltinPortrait, suggestPortrait, portraitGrid } from './lib/portraits'
+export {
+  DEFAULT_POINT_POOL, pointPool, emptyAlloc, attrScore, pointsSpent, pointsRemaining,
+  canRaise, canLower, raise, lower, buildCharacter, type BuildDraft,
+} from './lib/char-build'
+export { CharacterBuilder } from './components/CharacterBuilder'
+export { OpeningStoryOverlay } from './components/OpeningStory'
 
 // Spell + status-effect schema helpers (Phase E5)
-export { SPELL_SCHEMA, STATUS_SCHEMA, blankSpell, blankStatusEffect } from './lib/spell-schema'
+export { SPELL_SCHEMA, STATUS_SCHEMA, STATUS_KINDS, blankSpell, blankStatusEffect, SPELL_SCHOOL_SCHEMA, blankSpellSchool, sortSpells, sortStatuses, spellLearnLevel } from './lib/spell-schema'
+export type { SpellSort, StatusSort } from './lib/spell-schema'
 
 // Out-of-combat effect resolver
 export { applyEffectToChar, applyConsumable } from './lib/apply-effects'
 
+// Equip proficiency gate
+export { canEquip } from './lib/equipment'
+export type { EquipCheck } from './lib/equipment'
+
 // Encounter engine (Phase E3)
-export { resolveEncounterTable, checkCellForEncounter, visitedFlagKey } from './lib/encounter-engine'
-export type { ResolvedEncounter, EnemyInstance, CellEntity, ObjectInstance, Condition, CellEvent, BoundaryData, DoorDef, DoorState, Facing } from './lib/engine-types'
+export { resolveEncounterTable, checkCellForEncounter, makeFixedEncounter, visitedFlagKey } from './lib/encounter-engine'
+
+// Exploration mechanics: trick tiles + party light (dark maps)
+export { applyMoveTricks, getTricks, cellHasTrick, computeLightRadius, tickLightBurn, restParty, listFoes, advanceFoes, foeFlagKey, seenCellsFrom, chartWalkedCell, DARK_BASE_RADIUS } from './lib/exploration'
+export type { TrickMoveResult, RestResult, FoeRuntime } from './lib/exploration'
+
+// World grid — edge-link crossing (open-world seams)
+export { mapBounds, resolveEdgeCrossing, oppositeEdge } from './lib/world'
+export type { MapBounds, EdgeCrossing } from './lib/world'
+export type { ResolvedEncounter, EnemyInstance, CellEntity, ObjectInstance, Condition, CellEvent, BoundaryData, DoorDef, DoorState, Facing, SwitchDef, InscriptionDef, TrickKind, EventDef, NpcDef, DialogueDef, DialogueNode, DialogueChoice, QuestDef, QuestStage } from './lib/engine-types'
 
 // Encounter modal (Phase E3)
 export { EncounterModal } from './components/EncounterModal'
@@ -152,12 +230,15 @@ export {
   resolvePlayerFlee,
   resolvePlayerDefend,
   resolvePlayerUseItem,
+  resolvePlayerUseSkill,
+  canUseSkill,
   resolveEnemyTurn,
+  resolveEnemyAbility,
   applyCombatOutcome,
   consumeCombatItems,
   upcomingTurns,
 } from './lib/combat-engine'
-export type { CombatActor, CombatEvent, CombatLogEntry, CombatPhase, CombatState, InitCombatOpts } from './lib/combat-engine'
+export type { CombatActor, CombatEvent, CombatLogEntry, CombatPhase, CombatState, InitCombatOpts, ResolvedAbility } from './lib/combat-engine'
 
 // Balance simulator (headless, uses the real combat engine)
 export { simulateEncounterTable, makeSimParty } from './lib/battle-sim'
@@ -178,8 +259,21 @@ export {
   visitedEventFlagKey,
   objectUsedFlagKey,
   resolveLootTable,
+  effectiveDoorState,
+  runCellEvents,
+  expandReactive,
+  applyFlagWriteWithReactions,
+  applyExploreHarm,
+  questStageFlagKey,
+  dialogueSeenFlagKey,
+  dialogueStartNode,
+  dialogueNodeById,
+  eligibleChoices,
+  enterDialogueNode,
+  applyDialogueChoice,
+  npcRecruitedFlagKey,
 } from './lib/event-engine'
-export type { EventContext, ExploreEffect } from './lib/event-engine'
+export type { EventContext, ExploreEffect, PartyHarm } from './lib/event-engine'
 
 // Shop schema helpers (Phase E6)
 export { SHOP_SCHEMA, blankShop } from './lib/shop-schema'

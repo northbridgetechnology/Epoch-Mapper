@@ -13,6 +13,13 @@ const ENTITY_ICONS: Record<CellEntity['t'], string> = {
   mapLink: '🚪',
   object: '📦',
   event: '⚡',
+  trick: '🌀',
+  foe: '👹',
+}
+
+const TRICK_LABELS: Record<string, string> = {
+  spinner: 'Spinner', pit: 'Pit', silentTeleport: 'Silent Teleport',
+  antiMagic: 'Anti-Magic Zone', darkness: 'Darkness Zone', safeRoom: 'Safe Room',
 }
 
 function entityLabel(ent: CellEntity): string {
@@ -22,10 +29,16 @@ function entityLabel(ent: CellEntity): string {
     case 'mapLink': return 'Map Link'
     case 'object': return ent.object.kind.charAt(0).toUpperCase() + ent.object.kind.slice(1)
     case 'event': return `Event (${ent.event.trigger})`
+    case 'trick': return TRICK_LABELS[ent.kind] ?? 'Trick'
+    case 'foe': return 'FOE Patrol'
   }
 }
 
 function boundaryLabel(b: BoundaryData): string {
+  if (b.switch) {
+    const base = b.door ? `Door (${b.door.state})` : b.wall !== undefined ? edgeDef(b.wall).label : 'Wall'
+    return `${base} · Switch`
+  }
   if (b.door) return `Door (${b.door.state})`
   if (b.wall !== undefined) return edgeDef(b.wall).label
   if (b.blocked) return 'Impassable'

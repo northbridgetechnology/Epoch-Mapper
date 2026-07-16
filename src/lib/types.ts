@@ -1,5 +1,5 @@
 /**
- * Epoch Mapper — shared type definitions.
+ * Epoch — shared type definitions.
  *
  * The in-memory model is built directly on the numeric type-ID taxonomy
  * defined by the `.epochmap` binary format (see EPOCH_MAPPER_SPEC.md §4.3).
@@ -68,6 +68,13 @@ export interface MapData {
    */
   revealedChunks?: string[]
   /**
+   * Per-cell fog reveal for the Play-mode minimap (`"x,y"` keys). Unlike the
+   * chunk-based editor fog (`revealedChunks`), these are revealed strictly by
+   * exploration — a cell only appears once the party has actually seen it via
+   * cardinal line-of-sight from a walked cell (see `seenCellsFrom`).
+   */
+  seenCells?: string[]
+  /**
    * Boundary data keyed by canonical key from `boundaryKey()`.
    * Keys are of the form `"x,y:S"` or `"x,y:E"` — only south and east faces are
    * stored; north/west lookups are redirected by `boundaryKey()` automatically.
@@ -77,6 +84,26 @@ export interface MapData {
   seed?: number
   /** Visual theme ID — keys into THEMES in @/lib/themes. Defaults to 'stone_dungeon'. */
   theme?: string
+  /** Dark map: view distance collapses to the party's light radius (torches,
+   *  lanterns, light spells). Absent/false = fully lit (classic behavior). */
+  dark?: boolean
+  /** Looping background track for this level (AudioTrackDef id). Absent = fall
+   *  back to the game's default track (GameMeta.defaultMusicId). */
+  musicId?: string
+  /** @deprecated Combat mode is now a global rule (GameMeta.combatMode). This
+   *  legacy per-map value is honored only when the global one is unset. */
+  combatMode?: import('./engine-types').CombatMode
+  /**
+   * World-grid edge connections. Stepping off an edge of this map crosses into
+   * the linked map, arriving at the opposite edge with the cross-axis position
+   * preserved (walk east at y=7 → arrive on the neighbour's west edge at y=7).
+   * Chaining these builds the illusion of one large open world from a lattice
+   * of maps (Creation Engine-style cell seams). Default transition: 'seamless'.
+   */
+  edgeLinks?: Partial<Record<EdgeDir, {
+    mapId: string
+    transition?: import('./engine-types').TransitionStyle
+  }>>
 }
 
 /** A user-defined cell type or overlay icon. IDs are 128–255. */
@@ -97,6 +124,10 @@ export interface EpochmapFile {
   maps: MapData[]
   /** L1 ruleset — present in v2 files and in localStorage drafts. */
   ruleset?: import('./engine-types').Ruleset
+  /** Uploaded audio blobs baked into the .epochmap, keyed by AudioTrackDef id
+   *  and base64-encoded. Gathered from IndexedDB on export and written back on
+   *  import; never part of the localStorage draft (which stays lean). */
+  audioBlobs?: Record<string, string>
 }
 
 /** Built-in marker definition (base / overlay / edge tables). */

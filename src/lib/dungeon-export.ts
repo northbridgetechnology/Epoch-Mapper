@@ -237,7 +237,7 @@ function drawFooter(ctx: CanvasRenderingContext2D, pageNum: number, total: numbe
   ctx.fillText(`— ${pageNum} of ${total} —`, PW / 2, y)
   ctx.font = '11px "Cinzel", Georgia, serif'
   ctx.fillStyle = 'rgba(80,50,20,0.30)'
-  ctx.fillText('Epoch Mapper', PW / 2, y + 16)
+  ctx.fillText('Epoch', PW / 2, y + 16)
 }
 
 // ── Used-type collection ───────────────────────────────────────────────────────

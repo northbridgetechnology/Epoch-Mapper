@@ -1,6 +1,7 @@
 'use client'
 
 import { Plus, Trash2 } from 'lucide-react'
+import { SFX_DEFS } from '@/lib/chiptune'
 import { cn } from '@/lib/utils'
 import type { DamageType, Effect, Ruleset } from '@/lib/engine-types'
 
@@ -22,6 +23,9 @@ const ALL_VERBS = [
   { t: 'giveItem',    label: '📦 Give Item',          group: 'Items' },
   { t: 'takeItem',    label: '📤 Take Item',          group: 'Items' },
   { t: 'gold',        label: '🪙 Give Gold',          group: 'Items' },
+  { t: 'identify',    label: '🔍 Identify All',       group: 'Items' },
+  { t: 'removeCurse', label: '⛓️ Remove Curse',       group: 'Items' },
+  { t: 'teachSpell',  label: '📖 Teach Spell',        group: 'Items' },
   // World
   { t: 'setFlag',     label: '🚩 Set Flag',           group: 'World' },
   { t: 'teleport',    label: '🌀 Teleport',           group: 'World' },
@@ -29,6 +33,14 @@ const ALL_VERBS = [
   { t: 'openShop',    label: '🏪 Open Shop',          group: 'World' },
   // Narrative
   { t: 'message',     label: '💬 Message',            group: 'Narrative' },
+  { t: 'playSound',   label: '🔊 Play Sound',         group: 'Narrative' },
+  { t: 'dialogue',    label: '🗣️ NPC Speaks',         group: 'Narrative' },
+  // Scripting
+  { t: 'runEvent',    label: '🧩 Run Event',          group: 'Scripting' },
+  { t: 'questStage',  label: '📜 Quest Stage',        group: 'Scripting' },
+  { t: 'moveNpc',     label: '🚶 Move NPC',           group: 'Scripting' },
+  { t: 'recruit',     label: '🤝 Recruit NPC',        group: 'Scripting' },
+  { t: 'gameEnd',     label: '🏆 End Game (credits)', group: 'Scripting' },
 ] as const
 
 type Verb = typeof ALL_VERBS[number]['t']
@@ -51,6 +63,16 @@ function blankEffect(verb: Verb): Effect {
     case 'reveal':       return { t: 'reveal', radius: 3 }
     case 'openShop':     return { t: 'openShop', shop: '' }
     case 'message':      return { t: 'message', text: '' }
+    case 'playSound':    return { t: 'playSound', sound: 'blip' }
+    case 'dialogue':     return { t: 'dialogue', node: '' }
+    case 'runEvent':     return { t: 'runEvent', event: '' }
+    case 'questStage':   return { t: 'questStage', quest: '', stage: 1 }
+    case 'moveNpc':      return { t: 'moveNpc', npc: '', x: 0, y: 0 }
+    case 'recruit':      return { t: 'recruit', npc: '' }
+    case 'identify':     return { t: 'identify' }
+    case 'removeCurse':  return { t: 'removeCurse' }
+    case 'teachSpell':   return { t: 'teachSpell', spell: '' }
+    case 'gameEnd':      return { t: 'gameEnd', text: '' }
     default:             return { t: 'message', text: '' }
   }
 }
@@ -80,6 +102,13 @@ function effectLabel(e: Effect, ruleset: Ruleset): string {
       return `Take ${name} ×${e.qty ?? 1}`
     }
     case 'gold':      return `Give ${e.amount} gold`
+    case 'identify':  return 'Identify all carried items'
+    case 'removeCurse': return 'Remove curses from equipment'
+    case 'teachSpell': {
+      const name = ruleset.spells.find(s => s.id === e.spell)?.name ?? e.spell
+      return `Teach spell: ${name}`
+    }
+    case 'gameEnd':   return `End game${e.text ? ` — "${e.text.slice(0, 20)}…"` : ''}`
     case 'setFlag':   return `Set flag "${e.flag}" = ${JSON.stringify(e.value)}`
     case 'teleport':  return `Teleport to ${e.mapId} (${e.x},${e.y})`
     case 'reveal':    return `Reveal radius ${e.radius}`
@@ -88,6 +117,27 @@ function effectLabel(e: Effect, ruleset: Ruleset): string {
       return `Open shop: ${name}`
     }
     case 'message':   return `Message: "${e.text?.slice(0, 24)}"`
+    case 'playSound': return `Sound: ${e.sound}`
+    case 'dialogue': {
+      const name = ruleset.npcs?.find(n => n.id === e.node)?.name ?? e.node
+      return `NPC speaks: ${name}`
+    }
+    case 'runEvent': {
+      const name = ruleset.events?.find(ev => ev.id === e.event)?.name ?? e.event
+      return `Run event: ${name}`
+    }
+    case 'questStage': {
+      const name = ruleset.quests?.find(q => q.id === e.quest)?.name ?? e.quest
+      return `Quest "${name}" → stage ${e.stage}`
+    }
+    case 'moveNpc': {
+      const name = ruleset.npcs?.find(n => n.id === e.npc)?.name ?? e.npc
+      return `Move ${name} to ${e.mapId ? `${e.mapId} ` : ''}(${e.x},${e.y})`
+    }
+    case 'recruit': {
+      const name = ruleset.npcs?.find(n => n.id === e.npc)?.name ?? e.npc
+      return `Recruit ${name} into the party`
+    }
     default:          return (e as Effect).t
   }
 }
@@ -117,6 +167,77 @@ function EffectRow({ effect, ruleset, onChange, onRemove }: EffectRowProps) {
 
       {/* Param fields */}
       <div className="flex-1 flex flex-wrap gap-2 min-w-0">
+        {e.t === 'runEvent' && (
+          <select value={e.event} onChange={ev => onChange({ ...e, event: ev.target.value })}
+            className={cn(INPUT_CLS, 'min-w-[10rem]')}>
+            <option value="">— pick event —</option>
+            {(ruleset.events ?? []).map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
+          </select>
+        )}
+        {e.t === 'questStage' && (
+          <>
+            <select value={e.quest} onChange={ev => onChange({ ...e, quest: ev.target.value })}
+              className={cn(INPUT_CLS, 'min-w-[9rem]')}>
+              <option value="">— pick quest —</option>
+              {(ruleset.quests ?? []).map(q => <option key={q.id} value={q.id}>{q.name}</option>)}
+            </select>
+            <div className="flex items-center gap-1">
+              <span className="text-xs text-white/40">Stage</span>
+              <input type="number" min={1} value={e.stage}
+                onChange={ev => onChange({ ...e, stage: Math.max(1, ev.target.valueAsNumber || 1) })}
+                className={cn(INPUT_CLS, 'w-14')} />
+            </div>
+          </>
+        )}
+        {e.t === 'dialogue' && (
+          <select value={e.node} onChange={ev => onChange({ ...e, node: ev.target.value })}
+            className={cn(INPUT_CLS, 'min-w-[9rem]')}>
+            <option value="">— pick NPC —</option>
+            {(ruleset.npcs ?? []).map(n => <option key={n.id} value={n.id}>{n.portrait ?? ''} {n.name}</option>)}
+          </select>
+        )}
+        {e.t === 'moveNpc' && (
+          <>
+            <select value={e.npc} onChange={ev => onChange({ ...e, npc: ev.target.value })}
+              className={cn(INPUT_CLS, 'min-w-[9rem]')}>
+              <option value="">— pick NPC —</option>
+              {(ruleset.npcs ?? []).map(n => <option key={n.id} value={n.id}>{n.portrait ?? ''} {n.name}</option>)}
+            </select>
+            <input type="text" value={e.mapId ?? ''} placeholder="map id (blank = any)"
+              onChange={ev => onChange({ ...e, mapId: ev.target.value || undefined })}
+              className={cn(INPUT_CLS, 'w-32')} />
+            <div className="flex items-center gap-1">
+              <span className="text-xs text-white/40">X</span>
+              <input type="number" value={e.x} onChange={ev => onChange({ ...e, x: ev.target.valueAsNumber || 0 })} className={cn(INPUT_CLS, 'w-14')} />
+              <span className="text-xs text-white/40">Y</span>
+              <input type="number" value={e.y} onChange={ev => onChange({ ...e, y: ev.target.valueAsNumber || 0 })} className={cn(INPUT_CLS, 'w-14')} />
+            </div>
+          </>
+        )}
+
+        {e.t === 'recruit' && (
+          <select value={e.npc} onChange={ev => onChange({ ...e, npc: ev.target.value })}
+            className={cn(INPUT_CLS, 'min-w-[9rem]')}>
+            <option value="">— pick NPC —</option>
+            {(ruleset.npcs ?? []).map(n => (
+              <option key={n.id} value={n.id}>{n.portrait ?? ''} {n.name}{n.recruitable ? '' : ' (not recruitable)'}</option>
+            ))}
+          </select>
+        )}
+
+        {e.t === 'teachSpell' && (
+          <select value={e.spell} onChange={ev => onChange({ ...e, spell: ev.target.value })}
+            className={cn(INPUT_CLS, 'min-w-[9rem]')}>
+            <option value="">— pick spell —</option>
+            {ruleset.spells.map(s => <option key={s.id} value={s.id}>{s.icon ?? ''} {s.name}</option>)}
+          </select>
+        )}
+        {e.t === 'gameEnd' && (
+          <input type="text" value={e.text ?? ''} placeholder="epilogue text (optional)"
+            onChange={ev => onChange({ ...e, text: ev.target.value || undefined })}
+            className={cn(INPUT_CLS, 'flex-1 min-w-[10rem]')} />
+        )}
+
         {/* Dice amount: heal / restoreMp */}
         {(e.t === 'heal' || e.t === 'restoreMp') && (
           <div className="flex items-center gap-1">
@@ -325,6 +446,14 @@ function EffectRow({ effect, ruleset, onChange, onRemove }: EffectRowProps) {
             placeholder="Text shown to player…"
             className={cn(INPUT_CLS, 'flex-1')}
           />
+        )}
+
+        {/* playSound */}
+        {e.t === 'playSound' && (
+          <select value={e.sound} onChange={ev => onChange({ ...e, sound: ev.target.value })}
+            className="px-1.5 py-0.5 rounded bg-zinc-700 border border-white/10 text-xs text-white/90 focus:outline-none">
+            {Object.keys(SFX_DEFS).map(n => <option key={n} value={n}>{n}</option>)}
+          </select>
         )}
 
         {/* No-param effects */}

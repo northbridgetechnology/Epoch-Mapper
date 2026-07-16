@@ -3,7 +3,7 @@
  * No DOM, no React. All mutations return new state objects.
  */
 
-import type { Character, ActiveStatus, CombatTuning, EnemyAbility, Effect, Formation, ItemInstance, Ruleset } from './engine-types'
+import type { Character, ActiveStatus, CombatMode, CombatTuning, EnemyAbility, Effect, Formation, ItemInstance, Ruleset, SkillDef, SpellTarget } from './engine-types'
 import { resolveLootTable } from './event-engine'
 import { deriveMaxHp, deriveMaxMp, xpToNextLevel } from './engine-types'
 import type { ResolvedEncounter } from './engine-types'
@@ -41,6 +41,15 @@ export interface CombatActor {
   /** Damage-type reduction fractions (negative = weakness, ≥1 = immune).
    *  Enemies: from EnemyDef.resistances; party: from RaceDef.resistances. */
   resistances?: Partial<Record<string, number>>
+  /** Damage element of this actor's basic attack (from the equipped weapon's
+   *  type, or an item override). Absent = 'physical'. */
+  weaponDamageType?: string
+  /** Reach of this actor's basic attack. Ranged attacks ignore back-rank
+   *  penalties. Absent = 'melee'. */
+  weaponRange?: 'melee' | 'ranged'
+  /** Party only: post-equipment attribute snapshot — drives spell-school
+   *  power scaling (SpellSchoolDef.keyAttribute). */
+  attrs?: Record<string, number>
 }
 
 /** A discrete thing that happened during one action — drives view feedback
@@ -68,6 +77,10 @@ export interface CombatState {
    *  inventory by consumeCombatItems() when combat ends — used items stay
    *  used even on flee or defeat. */
   itemsUsed: Record<string, number>
+  /** Charges spent from equipped items (wands/staves) this battle, keyed
+   *  `${memberIdx}:${slot}` — applied to party equipment by
+   *  applyCombatOutcome(), spent even on flee or defeat. */
+  equipChargesUsed?: Record<string, number>
   /** Seeded PRNG stream state — battles are deterministic given the same
    *  initial seed and action sequence (callers may still inject an rng). */
   rngState: number
@@ -79,6 +92,25 @@ export interface CombatState {
   drops: { item: string; qty: number }[]
   /** Battle round (1-based); advances when the turn order wraps around. */
   round: number
+  /** Battle takes place in an anti-magic zone: party casting is disabled. */
+  antiMagic?: boolean
+  /** Turn system in effect (from the map). Absent = 'classic'. */
+  mode?: CombatMode
+  /** oneMore mode: consecutive bonus actions the current actor has taken this
+   *  turn (capped to prevent runaway chains). */
+  oneMoreStreak?: number
+  /** pressTurn mode: which side is currently acting. */
+  activeSide?: 'party' | 'enemy'
+  /** pressTurn mode: the acting side's remaining turn icons. `full` are whole
+   *  icons; `blink` are half/bonus icons earned by weakness & crits. The phase
+   *  ends when both reach zero. */
+  icons?: { full: number; blink: number }
+  /** pressTurn mode: enemy actor indices knocked down by a weakness/crit this
+   *  party phase. When every living enemy is down, the party may All-Out Attack.
+   *  Enemies stand back up (cleared) when the enemy phase begins. */
+  downed?: number[]
+  /** Skill cooldowns: `${actorIdx}:${skillId}` → round it is usable again. */
+  skillCooldowns?: Record<string, number>
 }
 
 // ── Seeded RNG (mulberry32) ───────────────────────────────────────────────────
@@ -125,6 +157,53 @@ function rollDice(dice: number | string, rng: () => number): number {
 
 // ── Actor construction ────────────────────────────────────────────────────────
 
+/** Character attribute maps are keyed inconsistently across the codebase —
+ *  runtime characters use the full id ('attr.might') while some seed data uses
+ *  the short form ('might'). Read an attribute robustly under either key. */
+function readAttr(attrs: Record<string, number>, attrId: string, fallback: number): number {
+  return attrs[attrId] ?? attrs[attrId.replace('attr.', '')] ?? fallback
+}
+
+
+/** Effective combat stat: the actor's base plus active status modifiers.
+ *  Derived keys (attack/defense/speed) apply directly; attribute keys map to
+ *  their derived stat (might→attack, agility→speed, endurance→defense at the
+ *  same ratio the derive formulas use). */
+function effStat(actor: CombatActor, ruleset: Ruleset, key: 'attack' | 'defense' | 'speed'): number {
+  let v = actor[key]
+  const ATTR_MAP: Record<string, { key: 'attack' | 'defense' | 'speed'; scale: number }> = {
+    might: { key: 'attack', scale: 1 }, agility: { key: 'speed', scale: 1 }, endurance: { key: 'defense', scale: 0.5 },
+  }
+  for (const st of actor.statuses) {
+    const def = ruleset.statusEffects.find(s => s.id === st.def)
+    for (const m of def?.modifiers ?? []) {
+      if (m.target === 'derived' && m.key === key) {
+        v = m.op === 'mul' ? v * m.amount : v + m.amount
+      } else if (m.target === 'attribute') {
+        const map = ATTR_MAP[m.key.replace('attr.', '')]
+        if (map?.key === key && m.op === 'add') v += m.amount * map.scale
+      }
+    }
+  }
+  return Math.max(0, Math.round(v))
+}
+
+/** Charge mechanic: the first active status granting a boost for this action
+ *  scope. The caller multiplies its damage and strips the status (consumed). */
+function findBoost(actor: CombatActor, ruleset: Ruleset, scope: 'physical' | 'magical'): { mult: number; statusId: string } | null {
+  for (const st of actor.statuses) {
+    const def = ruleset.statusEffects.find(s => s.id === st.def)
+    if (def?.boostMult && def.boostScope && (def.boostScope === 'any' || def.boostScope === scope)) {
+      return { mult: def.boostMult, statusId: def.id }
+    }
+  }
+  return null
+}
+
+function stripStatus(actors: CombatActor[], idx: number, statusId: string): CombatActor[] {
+  return actors.map((a, i) => i === idx ? { ...a, statuses: a.statuses.filter(s => s.def !== statusId) } : a)
+}
+
 function partyActorFromChar(
   char: Character,
   originalIdx: number,
@@ -135,6 +214,7 @@ function partyActorFromChar(
   // derived modifiers (attack/defense/speed) adjust the computed values
   const attrs: Record<string, number> = { ...char.attributes }
   const derived: { key: string; op: 'add' | 'mul'; amount: number }[] = []
+  let armorSpeedMod = 0
   for (const inst of Object.values(char.equipment ?? {})) {
     if (!inst) continue
     const item = ruleset?.items.find(i => i.id === inst.def)
@@ -147,10 +227,24 @@ function partyActorFromChar(
         derived.push(m)
       }
     }
+    // Armor pieces carry a passive initiative modifier via their type
+    if (item?.kind === 'armor' && item.armorType) {
+      armorSpeedMod += ruleset?.armorTypes.find(t => t.id === item.armorType)?.speedMod ?? 0
+    }
   }
-  let attack = (attrs['might'] ?? 10) + Math.floor(char.level * 0.5)
-  let defense = Math.floor((attrs['endurance'] ?? 10) / 2)
-  let speed = attrs['agility'] ?? 10
+
+  // The equipped weapon's type drives which attribute scales attack, the basic
+  // attack's damage element, and its reach (melee/ranged).
+  const weaponInst = char.equipment?.weapon
+  const weaponItem = weaponInst ? ruleset?.items.find(i => i.id === weaponInst.def) : undefined
+  const wtype = weaponItem?.weaponType ? ruleset?.weaponTypes.find(t => t.id === weaponItem.weaponType) : undefined
+  const scalingAttrId = wtype?.scalingAttr ?? 'attr.might'
+  const weaponDamageType = weaponItem?.damageType ?? wtype?.damageType ?? 'physical'
+  const weaponRange: 'melee' | 'ranged' = wtype?.range ?? 'melee'
+
+  let attack = readAttr(attrs, scalingAttrId, 10) + Math.floor(char.level * 0.5)
+  let defense = Math.floor(readAttr(attrs, 'attr.endurance', 10) / 2)
+  let speed = readAttr(attrs, 'attr.agility', 10) + armorSpeedMod
   for (const m of derived) {
     if (m.key === 'attack')       attack  = m.op === 'mul' ? Math.round(attack * m.amount)  : attack + m.amount
     else if (m.key === 'defense') defense = m.op === 'mul' ? Math.round(defense * m.amount) : defense + m.amount
@@ -174,6 +268,9 @@ function partyActorFromChar(
     statuses: char.statuses ?? [],
     rank,
     resistances: ruleset?.races.find(r => r.id === char.raceId)?.resistances,
+    weaponDamageType,
+    weaponRange,
+    attrs,
   }
 }
 
@@ -186,6 +283,10 @@ function resolveCombatEffects(
   actors: CombatActor[],
   ruleset: Ruleset,
   rng: () => number,
+  /** Flat power added to damage/heal rolls (spell-school attribute scaling). */
+  powerBonus = 0,
+  /** Damage multiplier (charge mechanic). Applies to damage only, not heals. */
+  damageMult = 1,
 ): { actors: CombatActor[]; log: CombatLogEntry[]; events: CombatEvent[] } {
   let cur = [...actors]
   const log: CombatLogEntry[] = []
@@ -202,7 +303,7 @@ function resolveCombatEffects(
 
       if (eff.t === 'damage') {
         if (!target.alive) continue
-        const base = rollDice(eff.amount, rng)
+        const base = Math.round((rollDice(eff.amount, rng) + powerBonus) * damageMult)
         const crit = eff.canCrit !== false && rng() < t.critChance
         const raw = Math.max(1, Math.round(base * (crit ? t.critMult : 1)))
         // Resistance is the fraction blocked; negative values are weaknesses
@@ -232,7 +333,7 @@ function resolveCombatEffects(
 
       } else if (eff.t === 'heal') {
         if (!target.alive) continue
-        const amount = rollDice(eff.amount, rng)
+        const amount = rollDice(eff.amount, rng) + powerBonus
         const newHp = Math.min(target.maxHp, target.hp + amount)
         const gained = newHp - target.hp
         cur = cur.map((a, i) => i === tIdx ? { ...a, hp: newHp } : a)
@@ -258,7 +359,11 @@ function resolveCombatEffects(
         }
         const def = ruleset.statusEffects.find(s => s.id === eff.status)
         if (!def) continue
-        if (!target.statuses.some(s => s.def === eff.status)) {
+        if (target.statuses.some(s => s.def === eff.status)) {
+          // No stacking and no timer refresh — re-applying (e.g. spamming
+          // Charge!) wastes the action. Say so.
+          log.push({ text: `${target.name} is already ${def.name}.`, kind: 'info' })
+        } else {
           const remaining = def.durationTurns > 0 ? def.durationTurns : 999
           cur = cur.map((a, i) =>
             i === tIdx
@@ -392,7 +497,126 @@ function advanceTurn(state: CombatState, ruleset: Ruleset, rng: () => number): C
     return advanceTurn({ ...state, actors: tickedActors, log: [...newLog, blockedEntry], turnIdx: nextIdx, phase, round }, ruleset, rng)
   }
 
-  return { ...state, actors: tickedActors, log: newLog, turnIdx: nextIdx, phase, round }
+  // A fresh actor is up — any oneMore bonus streak resets here.
+  return { ...state, actors: tickedActors, log: newLog, turnIdx: nextIdx, phase, round, oneMoreStreak: 0 }
+}
+
+// ── Turn advancement by mode (classic / oneMore / pressTurn) ──────────────────
+
+/** What an action's result costs the acting side in press-turn / earns in
+ *  oneMore. Derived once per action from its hit result or effect events. */
+interface ActionOutcome { weak?: boolean; crit?: boolean; miss?: boolean }
+
+const ONE_MORE_CAP = 8 // safety bound on runaway 1-More chains
+
+type IconCost = 'normal' | 'half' | 'double'
+
+function aliveOnSide(actors: CombatActor[], side: 'party' | 'enemy'): number {
+  return actors.filter(a => a.alive && a.kind === side).length
+}
+function firstAliveOnSide(actors: CombatActor[], side: 'party' | 'enemy'): number {
+  return actors.findIndex(a => a.alive && a.kind === side)
+}
+function nextAliveOnSide(actors: CombatActor[], fromIdx: number, side: 'party' | 'enemy'): number {
+  const n = actors.length
+  for (let i = 1; i <= n; i++) {
+    const idx = (fromIdx + i) % n
+    if (actors[idx].alive && actors[idx].kind === side) return idx
+  }
+  return fromIdx
+}
+
+/** Spend from a side's icon pool. Weakness/crit ('half') turns a full icon into
+ *  a blinking bonus icon (or consumes a blink); miss/null ('double') burns two;
+ *  everything else spends one. Returns whether the side is now out of icons. */
+function spendIcons(icons: { full: number; blink: number }, cost: IconCost): { icons: { full: number; blink: number }; ended: boolean } {
+  let { full, blink } = icons
+  if (cost === 'half') {
+    if (blink > 0) blink -= 1
+    else if (full > 0) { full -= 1; blink += 1 }
+  } else {
+    let rem = cost === 'double' ? 2 : 1
+    while (rem > 0 && (blink > 0 || full > 0)) {
+      if (blink > 0) blink -= 1; else full -= 1
+      rem -= 1
+    }
+  }
+  return { icons: { full, blink }, ended: full + blink <= 0 }
+}
+
+/** Press-turn advancement: spend icons, keep the side acting while it has any,
+ *  otherwise hand control (and a fresh pool) to the other side. */
+function advancePressTurn(state: CombatState, ruleset: Ruleset, rng: () => number, cost: IconCost): CombatState {
+  if (checkEndConditions(state.actors)) return advanceTurn(state, ruleset, rng)
+  const side = state.activeSide ?? 'party'
+  const { icons, ended } = spendIcons(state.icons ?? { full: 0, blink: 0 }, cost)
+  const pressLog: CombatLogEntry[] = cost === 'half' ? [{ text: 'Press turn!', kind: 'info' }] : []
+
+  const settle = (target: 'same' | 'switch'): CombatState => {
+    const nextSide = target === 'same' ? side : (side === 'party' ? 'enemy' : 'party')
+    if (target === 'switch' && aliveOnSide(state.actors, nextSide) === 0) return advanceTurn(state, ruleset, rng)
+    const nextIdx = target === 'same'
+      ? nextAliveOnSide(state.actors, state.turnIdx, side)
+      : firstAliveOnSide(state.actors, nextSide)
+    const phase: CombatPhase = nextSide === 'party' ? 'player_action' : 'enemy_turn'
+    const round = target === 'switch' && nextSide === 'party' ? state.round + 1 : state.round
+    const pool = target === 'same' ? icons : { full: aliveOnSide(state.actors, nextSide), blink: 0 }
+    const { actors: ticked, log: tickLog, blocked } = tickStatuses(nextIdx, state.actors, ruleset, rng)
+    const tickedActors = ticked.map((a, i) => (i === nextIdx && a.defending ? { ...a, defending: false } : a))
+    const base: CombatState = {
+      ...state, activeSide: nextSide, icons: pool, turnIdx: nextIdx, phase, round,
+      actors: tickedActors, log: [...state.log, ...pressLog, ...tickLog],
+      // Enemies stand back up when their side takes over.
+      downed: target === 'switch' && nextSide === 'enemy' ? [] : state.downed,
+    }
+    // A stunned/frozen actor forfeits — that costs the side a normal icon.
+    if (blocked) return advancePressTurn(base, ruleset, rng, 'normal')
+    return base
+  }
+
+  return ended ? settle('switch') : settle('same')
+}
+
+/** pressTurn: record enemies knocked down by a weakness/crit this action. */
+function withDowned(state: CombatState, events: CombatEvent[]): CombatState {
+  if (state.mode !== 'pressTurn') return state
+  const add = events
+    .filter(e => (e.kind === 'weak' || e.kind === 'crit') && state.actors[e.target]?.kind === 'enemy')
+    .map(e => e.target)
+  if (add.length === 0) return state
+  return { ...state, downed: Array.from(new Set([...(state.downed ?? []), ...add])) }
+}
+
+/** Whether the party may launch an All-Out Attack right now (pressTurn only). */
+export function canAllOutAttack(state: CombatState): boolean {
+  if (state.mode !== 'pressTurn' || state.activeSide !== 'party' || state.phase !== 'player_action') return false
+  const living = state.actors.map((a, i) => ({ a, i })).filter(({ a }) => a.kind === 'enemy' && a.alive)
+  if (living.length === 0) return false
+  const down = new Set(state.downed ?? [])
+  return living.every(({ i }) => down.has(i))
+}
+
+/** Dispatch turn advancement by the battle's combat mode. */
+function proceedAfterAction(state: CombatState, ruleset: Ruleset, rng: () => number, outcome: ActionOutcome): CombatState {
+  const mode = state.mode ?? 'classic'
+  if (mode === 'classic') return advanceTurn(state, ruleset, rng)
+  // A lethal blow ends the battle regardless of any pending bonus.
+  if (checkEndConditions(state.actors)) return advanceTurn(state, ruleset, rng)
+
+  if (mode === 'oneMore') {
+    const earned = !outcome.miss && (outcome.weak || outcome.crit)
+    const streak = state.oneMoreStreak ?? 0
+    const actor = state.actors[state.turnIdx]
+    if (earned && streak < ONE_MORE_CAP && actor?.alive) {
+      const phase: CombatPhase = actor.kind === 'party' ? 'player_action' : 'enemy_turn'
+      return { ...state, phase, oneMoreStreak: streak + 1, log: [...state.log, { text: 'One More!', kind: 'info' }] }
+    }
+    return advanceTurn(state, ruleset, rng)
+  }
+
+  // pressTurn
+  const cost: IconCost = outcome.miss ? 'double' : (outcome.weak || outcome.crit) ? 'half' : 'normal'
+  return advancePressTurn(state, ruleset, rng, cost)
 }
 
 /** Stamp an action's results onto the outgoing state: advance the RNG stream,
@@ -415,19 +639,27 @@ function calcHit(
   defender: CombatActor,
   rng: () => number,
   t: Required<CombatTuning>,
+  ruleset?: Ruleset,
 ): HitResult {
-  const missChance = defender.defense > attacker.attack * 1.5 ? t.outmatchedMissChance : t.baseMissChance
+  // Status buffs/debuffs (Attack Up, Armor Broken…) shape the effective stats.
+  const atk = ruleset ? effStat(attacker, ruleset, 'attack') : attacker.attack
+  const dfn = ruleset ? effStat(defender, ruleset, 'defense') : defender.defense
+  const missChance = dfn > atk * 1.5 ? t.outmatchedMissChance : t.baseMissChance
   if (rng() < missChance) return { damage: 0, crit: false, miss: true }
   const crit = rng() < t.critChance
-  const base = Math.max(1, attacker.attack - Math.floor(defender.defense / 2))
+  const base = Math.max(1, atk - Math.floor(dfn / 2))
   const variance = rng() * t.variance
   let raw = Math.max(1, Math.round(base * (1 + variance) * (crit ? t.critMult : 1)))
-  // Row rules: melee dealt from the back rank and melee taken in the back
-  // rank are each reduced (spells/effects ignore rank)
-  if (attacker.rank === 1) raw = Math.max(1, Math.floor(raw * t.backRankMeleeMult))
-  if (defender.rank === 1) raw = Math.max(1, Math.floor(raw * t.backRankMeleeMult))
-  // Physical resistance (negative = weakness, ≥1 = immune)
-  const resist = defender.resistances?.['physical'] ?? 0
+  // Row rules: melee dealt from the back rank and melee taken in the back rank
+  // are each reduced. Ranged weapons (bows/guns) ignore rank entirely; spells
+  // and effects also ignore rank (handled elsewhere).
+  const isMelee = (attacker.weaponRange ?? 'melee') === 'melee'
+  if (isMelee && attacker.rank === 1) raw = Math.max(1, Math.floor(raw * t.backRankMeleeMult))
+  if (isMelee && defender.rank === 1) raw = Math.max(1, Math.floor(raw * t.backRankMeleeMult))
+  // Elemental resistance keyed to the weapon's damage type (negative = weakness,
+  // ≥1 = immune). Most weapons are 'physical'; a Flamebrand deals 'fire', etc.
+  const dmgType = attacker.weaponDamageType ?? 'physical'
+  const resist = defender.resistances?.[dmgType] ?? 0
   raw = Math.max(0, Math.round(raw * (1 - resist)))
   const damage = defender.defending && raw > 0 ? Math.max(1, Math.floor(raw * t.defendMult)) : raw
   return { damage, crit, miss: false, weak: resist < 0, resisted: resist > 0 }
@@ -442,6 +674,10 @@ export interface InitCombatOpts {
   formation?: Formation
   /** Used for enemy size lookup (large enemies straddle both ranks) */
   ruleset?: Ruleset
+  /** The encounter cell is an anti-magic zone: spells cannot be cast. */
+  antiMagic?: boolean
+  /** Turn system for this battle (from the map). Default 'classic'. */
+  combatMode?: CombatMode
 }
 
 export function initCombat(
@@ -505,10 +741,18 @@ export function initCombat(
   const firstIdx = actors.findIndex(a => a.alive)
   const firstPhase: CombatPhase = actors[firstIdx]?.kind === 'party' ? 'player_action' : 'enemy_turn'
 
+  const mode: CombatMode = opts?.combatMode ?? 'classic'
+  const activeSide = actors[Math.max(0, firstIdx)]?.kind === 'enemy' ? 'enemy' : 'party'
+
   return {
     actors,
     turnIdx: Math.max(0, firstIdx),
     phase: firstPhase,
+    mode,
+    oneMoreStreak: 0,
+    ...(mode === 'pressTurn'
+      ? { activeSide, icons: { full: aliveOnSide(actors, activeSide), blink: 0 } }
+      : {}),
     log: [{ text: `A wild encounter with ${encounter.tableName}!`, kind: 'info' }],
     fleeAttempts: 0,
     xpReward: encounter.xpReward,
@@ -519,6 +763,7 @@ export function initCombat(
     eventSeq: 0,
     drops: [],
     round: 1,
+    antiMagic: opts?.antiMagic || undefined,
   }
 }
 
@@ -536,13 +781,18 @@ export function resolvePlayerAttack(
 
   const box = { s: state.rngState }
   const rand = rng ?? (() => nextRand(box))
-  const result = calcHit(attacker, defender, rand, tuning(ruleset))
-  const newHp = Math.max(0, defender.hp - result.damage)
+  const result = calcHit(attacker, defender, rand, tuning(ruleset), ruleset)
+  // Charge (empower-next): a stored physical boost doubles this hit, consumed.
+  const boost = findBoost(attacker, ruleset, 'physical')
+  const dmg = !result.miss && boost ? Math.round(result.damage * boost.mult) : result.damage
+  const newHp = Math.max(0, defender.hp - dmg)
   const died = newHp === 0
 
-  const newActors = state.actors.map((a, i) =>
+  let newActors = state.actors.map((a, i) =>
     i === targetActorIdx ? { ...a, hp: newHp, alive: !died } : a,
   )
+  if (!result.miss && boost) newActors = stripStatus(newActors, state.turnIdx, boost.statusId)
+  result.damage = dmg
 
   const entry: CombatLogEntry = result.miss
     ? { text: `${attacker.name} missed ${defender.name}!`, kind: 'miss' }
@@ -564,7 +814,7 @@ export function resolvePlayerAttack(
   } else if (!result.miss && result.resisted) {
     events.push({ target: targetActorIdx, kind: 'resist' })
   }
-  return finishAction(advanceTurn({ ...state, actors: newActors, log: newLog }, ruleset, rand), box, events, state)
+  return finishAction(proceedAfterAction(withDowned({ ...state, actors: newActors, log: newLog }, events), ruleset, rand, { weak: result.weak, crit: result.crit, miss: result.miss }), box, events, state)
 }
 
 // ── Player: cast spell ────────────────────────────────────────────────────────
@@ -579,6 +829,15 @@ export function resolvePlayerCast(
   const caster = state.actors[state.turnIdx]
   if (!caster || !caster.alive) return state
 
+  if (state.antiMagic) {
+    return {
+      ...state,
+      eventSeq: state.eventSeq + 1,
+      events: [{ target: state.turnIdx, kind: 'miss' }],
+      log: [...state.log, { text: 'The magic fizzles — the anti-magic field devours the spell.', kind: 'info' }],
+    }
+  }
+
   const spell = ruleset.spells.find(s => s.id === spellId)
   if (!spell || caster.mp < spell.mpCost) return state
 
@@ -591,20 +850,34 @@ export function resolvePlayerCast(
 
   const castEntry: CombatLogEntry = { text: `${caster.name} casts ${spell.name}!`, kind: 'spell' }
 
+  // Spell-school scaling: the school's key attribute adds +1 power per 2
+  // points above 10 (schools without a keyAttribute stay flat dice).
+  const school = ruleset.spellSchools?.find(s => s.id === spell.school)
+  const keyAttr = school?.keyAttribute
+  const attrVal = keyAttr && caster.attrs
+    ? (caster.attrs[keyAttr] ?? caster.attrs[keyAttr.replace('attr.', '')] ?? 10)
+    : 10
+  const powerBonus = Math.max(0, Math.floor((attrVal - 10) / 2))
+
+  const boost = spell.effects.some(e => e.t === 'damage') ? findBoost(caster, ruleset, 'magical') : null
+  const baseActors = boost ? stripStatus(actorsAfterMp, state.turnIdx, boost.statusId) : actorsAfterMp
   const { actors: newActors, log: effectLog, events } = resolveCombatEffects(
     spell.effects,
     state.turnIdx,
     targetActorIdxs,
-    actorsAfterMp,
+    baseActors,
     ruleset,
     rand,
+    powerBonus,
+    boost?.mult ?? 1,
   )
 
   return finishAction(
-    advanceTurn(
-      { ...state, actors: newActors, log: [...state.log, castEntry, ...effectLog] },
+    proceedAfterAction(
+      withDowned({ ...state, actors: newActors, log: [...state.log, castEntry, ...effectLog] }, events),
       ruleset,
       rand,
+      { weak: events.some(e => e.kind === 'weak'), crit: events.some(e => e.kind === 'crit') },
     ),
     box, events, state,
   )
@@ -641,7 +914,7 @@ export function resolvePlayerFlee(
   }
   const failEntry: CombatLogEntry = { text: 'Failed to escape!', kind: 'flee_fail' }
   return finishAction(
-    advanceTurn({ ...state, fleeAttempts: attempts, log: [...state.log, failEntry] }, ruleset, rand),
+    proceedAfterAction({ ...state, fleeAttempts: attempts, log: [...state.log, failEntry] }, ruleset, rand, {}),
     box, [], state,
   )
 }
@@ -661,7 +934,97 @@ export function resolvePlayerDefend(
     i === state.turnIdx ? { ...a, defending: true } : a,
   )
   const entry: CombatLogEntry = { text: `${actor.name} defends.`, kind: 'info' }
-  return finishAction(advanceTurn({ ...state, actors, log: [...state.log, entry] }, ruleset, rand), box, [], state)
+  return finishAction(proceedAfterAction({ ...state, actors, log: [...state.log, entry] }, ruleset, rand, {}), box, [], state)
+}
+
+// ── Player: press-turn helpers (free member selection + all-out attack) ───────
+
+/** pressTurn: switch which living party member is the active actor. */
+export function resolveSelectActor(state: CombatState, idx: number): CombatState {
+  if (state.mode !== 'pressTurn' || state.phase !== 'player_action' || state.activeSide !== 'party') return state
+  const a = state.actors[idx]
+  if (!a || a.kind !== 'party' || !a.alive || idx === state.turnIdx) return state
+  return { ...state, turnIdx: idx }
+}
+
+/** pressTurn: unleash an All-Out Attack when every living enemy is knocked down.
+ *  Heavy party-wide burst, then the party phase ends. */
+export function resolveAllOutAttack(state: CombatState, ruleset: Ruleset, rng?: () => number): CombatState {
+  if (!canAllOutAttack(state)) return state
+  const box = { s: state.rngState }
+  const rand = rng ?? (() => nextRand(box))
+  const t = tuning(ruleset)
+
+  const partyAtk = state.actors.filter(a => a.kind === 'party' && a.alive).reduce((s, a) => s + a.attack, 0)
+  const targets = state.actors.map((a, i) => ({ a, i })).filter(({ a }) => a.kind === 'enemy' && a.alive)
+
+  const events: CombatEvent[] = []
+  const actors = state.actors.map(a => ({ ...a }))
+  for (const { i } of targets) {
+    const base = Math.max(1, Math.round(partyAtk * 1.5))
+    const dmg = Math.max(1, Math.round(base * (1 + rand() * t.variance)))
+    const newHp = Math.max(0, actors[i].hp - dmg)
+    actors[i] = { ...actors[i], hp: newHp, alive: newHp > 0 }
+    events.push({ target: i, kind: 'crit', amount: dmg })
+  }
+
+  const log: CombatLogEntry[] = [{ text: 'All-Out Attack!', kind: 'crit' }]
+  const felled = targets.filter(({ i }) => !actors[i].alive).length
+  if (felled > 0) log.push({ text: `${felled} ${felled === 1 ? 'foe is' : 'foes are'} wiped out!`, kind: 'crit' })
+
+  // The barrage exhausts the party's presses — hand over to the enemy (or end).
+  const spent: CombatState = { ...state, actors, downed: [], icons: { full: 0, blink: 0 }, log: [...state.log, ...log] }
+  return finishAction(advancePressTurn(spent, ruleset, rand, 'normal'), box, events, state)
+}
+
+// ── Player: use skill ─────────────────────────────────────────────────────────
+
+/** Whether the current actor may use `skill` right now (cost + cooldown). */
+export function canUseSkill(state: CombatState, skill: SkillDef): { ok: boolean; reason?: string } {
+  const user = state.actors[state.turnIdx]
+  if (!user || !user.alive || user.kind !== 'party') return { ok: false, reason: 'Not your turn' }
+  const hpCost = Math.ceil(user.maxHp * (skill.hpCostPct ?? 0))
+  if (hpCost > 0 && user.hp <= hpCost) return { ok: false, reason: 'Not enough HP' }
+  if ((skill.mpCost ?? 0) > user.mp) return { ok: false, reason: 'Not enough MP' }
+  const readyAt = state.skillCooldowns?.[`${state.turnIdx}:${skill.id}`] ?? 0
+  if (state.round < readyAt) return { ok: false, reason: `Ready in ${readyAt - state.round} round${readyAt - state.round === 1 ? '' : 's'}` }
+  return { ok: true }
+}
+
+export function resolvePlayerUseSkill(
+  state: CombatState,
+  skillId: string,
+  targetActorIdxs: number[],
+  ruleset: Ruleset,
+  rng?: () => number,
+): CombatState {
+  const user = state.actors[state.turnIdx]
+  const skill = (ruleset.skills ?? []).find(s => s.id === skillId)
+  if (!user || !skill || !canUseSkill(state, skill).ok) return state
+
+  const box = { s: state.rngState }
+  const rand = rng ?? (() => nextRand(box))
+  const hpCost = Math.ceil(user.maxHp * (skill.hpCostPct ?? 0))
+  const actorsAfterCost = state.actors.map((a, i) =>
+    i === state.turnIdx ? { ...a, hp: a.hp - hpCost, mp: a.mp - (skill.mpCost ?? 0) } : a,
+  )
+  const entry: CombatLogEntry = { text: `${user.name} uses ${skill.name}!`, kind: 'spell' }
+  const boost = skill.effects.some(e => e.t === 'damage') ? findBoost(user, ruleset, 'physical') : null
+  const baseActors = boost ? stripStatus(actorsAfterCost, state.turnIdx, boost.statusId) : actorsAfterCost
+  const { actors, log, events } = resolveCombatEffects(
+    skill.effects, state.turnIdx, targetActorIdxs, baseActors, ruleset, rand, 0, boost?.mult ?? 1,
+  )
+  const skillCooldowns = skill.cooldown
+    ? { ...(state.skillCooldowns ?? {}), [`${state.turnIdx}:${skill.id}`]: state.round + skill.cooldown }
+    : state.skillCooldowns
+  return finishAction(
+    proceedAfterAction(
+      withDowned({ ...state, actors, skillCooldowns, log: [...state.log, entry, ...log] }, events),
+      ruleset, rand,
+      { weak: events.some(e => e.kind === 'weak'), crit: events.some(e => e.kind === 'crit') },
+    ),
+    box, events, state,
+  )
 }
 
 // ── Player: use item ──────────────────────────────────────────────────────────
@@ -672,11 +1035,16 @@ export function resolvePlayerUseItem(
   targetActorIdxs: number[],
   ruleset: Ruleset,
   rng?: () => number,
+  /** When set, the use is a charge from the actor's equipped item in this
+   *  slot (wand/staff) rather than a consumable from the shared inventory. */
+  opts?: { equipSlot?: string },
 ): CombatState {
   const user = state.actors[state.turnIdx]
   if (!user || !user.alive) return state
   const def = ruleset.items.find(i => i.id === itemId)
-  if (!def || def.kind !== 'consumable' || !def.onUse?.length) return state
+  if (!def || !def.onUse?.length) return state
+  const fromEquip = opts?.equipSlot
+  if (fromEquip ? !def.charges : def.kind !== 'consumable') return state
 
   const box = { s: state.rngState }
   const rand = rng ?? (() => nextRand(box))
@@ -684,12 +1052,19 @@ export function resolvePlayerUseItem(
   const { actors, log, events } = resolveCombatEffects(
     def.onUse, state.turnIdx, targetActorIdxs, state.actors, ruleset, rand,
   )
-  const itemsUsed = { ...state.itemsUsed, [itemId]: (state.itemsUsed[itemId] ?? 0) + 1 }
+  const chargeKey = fromEquip ? `${user.idx}:${fromEquip}` : null
+  const equipChargesUsed = chargeKey
+    ? { ...(state.equipChargesUsed ?? {}), [chargeKey]: ((state.equipChargesUsed ?? {})[chargeKey] ?? 0) + 1 }
+    : state.equipChargesUsed
+  const itemsUsed = chargeKey
+    ? state.itemsUsed
+    : { ...state.itemsUsed, [itemId]: (state.itemsUsed[itemId] ?? 0) + 1 }
   return finishAction(
-    advanceTurn(
-      { ...state, actors, itemsUsed, log: [...state.log, useEntry, ...log] },
+    proceedAfterAction(
+      withDowned({ ...state, actors, itemsUsed, equipChargesUsed, log: [...state.log, useEntry, ...log] }, events),
       ruleset,
       rand,
+      { weak: events.some(e => e.kind === 'weak'), crit: events.some(e => e.kind === 'crit') },
     ),
     box, events, state,
   )
@@ -707,6 +1082,35 @@ export function consumeCombatItems(inventory: ItemInstance[], state: CombatState
 
 // ── Enemy turn (auto) ─────────────────────────────────────────────────────────
 
+/** An EnemyAbility with its substance resolved from its source. */
+export interface ResolvedAbility {
+  name: string
+  verb: 'casts' | 'uses'
+  effects: Effect[]
+  target: SpellTarget
+}
+
+/** Resolve an ability's substance from its source, in order: database spell,
+ *  database skill, custom inline effects. Returns null when nothing usable
+ *  resolves (dangling ref, empty effects) — the AI then falls back to the
+ *  basic physical attack rather than wasting the turn. */
+export function resolveEnemyAbility(ab: EnemyAbility, ruleset: Ruleset): ResolvedAbility | null {
+  if (ab.spell) {
+    const def = ruleset.spells.find(sp => sp.id === ab.spell)
+    if (!def || def.effects.length === 0) return null
+    return { name: ab.name ?? def.name, verb: 'casts', effects: def.effects, target: ab.target ?? def.target }
+  }
+  if (ab.skill) {
+    const def = (ruleset.skills ?? []).find(sk => sk.id === ab.skill)
+    if (!def || def.effects.length === 0) return null
+    return { name: ab.name ?? def.name, verb: 'uses', effects: def.effects, target: ab.target ?? def.target }
+  }
+  if (ab.effects && ab.effects.length > 0) {
+    return { name: ab.name ?? 'an ability', verb: 'uses', effects: ab.effects, target: ab.target ?? 'enemy' }
+  }
+  return null
+}
+
 export function resolveEnemyTurn(
   state: CombatState,
   ruleset: Ruleset,
@@ -716,7 +1120,7 @@ export function resolveEnemyTurn(
   const rand = rng ?? (() => nextRand(box))
   const enemy = state.actors[state.turnIdx]
   if (!enemy || enemy.kind !== 'enemy' || !enemy.alive) {
-    return finishAction(advanceTurn(state, ruleset, rand), box, [], state)
+    return finishAction(proceedAfterAction(state, ruleset, rand, {}), box, [], state)
   }
 
   const partyTargets = state.actors.map((a, i) => ({ a, i })).filter(({ a }) => a.kind === 'party' && a.alive)
@@ -724,62 +1128,93 @@ export function resolveEnemyTurn(
 
   // Try to use an enemy ability
   const enemyDef = enemy.defId ? ruleset.enemies.find(e => e.id === enemy.defId) : null
-  // Boss phases: abilities may be gated on the caster's HP or the round number
-  const abilities: EnemyAbility[] | undefined = enemyDef?.abilities?.filter(ab => {
-    if (!ab.when) return true
-    if (ab.when.selfHpBelow !== undefined && enemy.maxHp > 0 && enemy.hp / enemy.maxHp >= ab.when.selfHpBelow) return false
-    if (ab.when.roundAtLeast !== undefined && state.round < ab.when.roundAtLeast) return false
-    return true
-  })
+  // Boss phases: abilities may be gated on the caster's HP or the round number.
+  // Each usable ability is resolved to its substance (spell/skill/custom) —
+  // unresolvable ones drop out and the enemy falls back to a basic attack.
+  const abilities = (enemyDef?.abilities ?? [])
+    .filter(ab => {
+      if (!ab.when) return true
+      if (ab.when.selfHpBelow !== undefined && enemy.maxHp > 0 && enemy.hp / enemy.maxHp >= ab.when.selfHpBelow) return false
+      if (ab.when.roundAtLeast !== undefined && state.round < ab.when.roundAtLeast) return false
+      return true
+    })
+    .map(ab => ({ ab, res: resolveEnemyAbility(ab, ruleset) }))
+    .filter((x): x is { ab: EnemyAbility; res: ResolvedAbility } => x.res !== null)
 
-  if (abilities?.length) {
-    const totalWeight = abilities.reduce((s, a) => s + a.weight, 0)
+  // Press modes: the AI hunts weaknesses — abilities whose damage element hits
+  // a living member's weakness weigh ×3, since a weak hit earns the side a
+  // bonus press / One More.
+  const pressMode = state.mode === 'pressTurn' || state.mode === 'oneMore'
+  const hitsWeakness = (res: ResolvedAbility) => res.effects.some(e =>
+    e.t === 'damage' && partyTargets.some(({ a }) => (a.resistances?.[e.dmgType] ?? 0) < 0))
+  const abilityWeight = (x: { ab: EnemyAbility; res: ResolvedAbility }) =>
+    x.ab.weight * (pressMode && hitsWeakness(x.res) ? 3 : 1)
+
+  if (abilities.length) {
+    const totalWeight = abilities.reduce((s, a) => s + abilityWeight(a), 0)
     let pick = rand() * totalWeight
-    let chosen = abilities[abilities.length - 1]
-    for (const ab of abilities) {
-      pick -= ab.weight
-      if (pick <= 0) { chosen = ab; break }
+    let chosen = abilities[abilities.length - 1].res
+    for (const x of abilities) {
+      pick -= abilityWeight(x)
+      if (pick <= 0) { chosen = x.res; break }
     }
 
-    // Resolve target list from the ability's target type (from enemy perspective)
+    // Resolve target list from the ability's target type (from enemy perspective):
+    // 'enemy' = a hero, 'ally' = the enemy's own side (heals/buffs).
+    const sideTargets = state.actors.map((a, i) => ({ a, i })).filter(({ a }) => a.kind === 'enemy' && a.alive)
     let targetIdxs: number[]
     switch (chosen.target) {
       case 'self':
         targetIdxs = [state.turnIdx]
         break
       case 'allEnemies': // enemy's "enemies" = party
-      case 'allAllies':  // enemy's "allies" = also party in simplified model
       case 'enemyRow':
         targetIdxs = partyTargets.map(t => t.i)
         break
-      default: // 'enemy', 'ally', 'none'
+      case 'ally': // most-wounded living ally on the enemy's own side
+        targetIdxs = [sideTargets.reduce((m, t) => (t.a.hp / Math.max(1, t.a.maxHp) < m.a.hp / Math.max(1, m.a.maxHp) ? t : m), sideTargets[0]).i]
+        break
+      case 'allAllies': // the enemy's whole side
+        targetIdxs = sideTargets.map(t => t.i)
+        break
+      default: // 'enemy', 'none'
         targetIdxs = [partyTargets[Math.floor(rand() * partyTargets.length)].i]
     }
 
-    const abilityEntry: CombatLogEntry = { text: `${enemy.name} uses an ability!`, kind: 'spell' }
+    const abilityEntry: CombatLogEntry = { text: `${enemy.name} ${chosen.verb} ${chosen.name}!`, kind: 'spell' }
+    const aBoost = chosen.effects.some(e => e.t === 'damage') ? findBoost(enemy, ruleset, 'magical') : null
+    const aBase = aBoost ? stripStatus(state.actors, state.turnIdx, aBoost.statusId) : state.actors
     const { actors: newActors, log: effectLog, events } = resolveCombatEffects(
-      chosen.effects, state.turnIdx, targetIdxs, state.actors, ruleset, rand,
+      chosen.effects, state.turnIdx, targetIdxs, aBase, ruleset, rand, 0, aBoost?.mult ?? 1,
     )
     return finishAction(
-      advanceTurn(
+      proceedAfterAction(
         { ...state, actors: newActors, log: [...state.log, abilityEntry, ...effectLog] },
         ruleset, rand,
+        { weak: events.some(e => e.kind === 'weak'), crit: events.some(e => e.kind === 'crit') },
       ),
       box, events, state,
     )
   }
 
-  // Default: physical attack — targeting per EnemyDef ('weakest' hunts low HP)
+  // Default: physical attack — targeting per EnemyDef ('weakest' hunts low HP).
+  // In press modes, members weak to physical get hunted first (free presses).
+  const physWeak = pressMode ? partyTargets.filter(({ a }) => (a.resistances?.['physical'] ?? 0) < 0) : []
+  const pool = physWeak.length > 0 ? physWeak : partyTargets
   const { a: defender, i: targetIdx } = enemyDef?.targeting === 'weakest'
-    ? partyTargets.reduce((m, t) => (t.a.hp < m.a.hp ? t : m), partyTargets[0])
-    : partyTargets[Math.floor(rand() * partyTargets.length)]
-  const result = calcHit(enemy, defender, rand, tuning(ruleset))
-  const newHp = Math.max(0, defender.hp - result.damage)
+    ? pool.reduce((m, t) => (t.a.hp < m.a.hp ? t : m), pool[0])
+    : pool[Math.floor(rand() * pool.length)]
+  const result = calcHit(enemy, defender, rand, tuning(ruleset), ruleset)
+  const boost = findBoost(enemy, ruleset, 'physical')
+  const dmg = !result.miss && boost ? Math.round(result.damage * boost.mult) : result.damage
+  const newHp = Math.max(0, defender.hp - dmg)
   const died = newHp === 0
 
-  const newActors = state.actors.map((a, i) =>
+  let newActors = state.actors.map((a, i) =>
     i === targetIdx ? { ...a, hp: newHp, alive: !died } : a,
   )
+  if (!result.miss && boost) newActors = stripStatus(newActors, state.turnIdx, boost.statusId)
+  result.damage = dmg
 
   const entry: CombatLogEntry = result.miss
     ? { text: `${enemy.name} misses ${defender.name}!`, kind: 'miss' }
@@ -796,7 +1231,7 @@ export function resolveEnemyTurn(
       : { target: targetIdx, kind: result.crit ? 'crit' : 'damage', amount: result.damage },
   ]
   if (!result.miss && result.weak) events.push({ target: targetIdx, kind: 'weak' })
-  return finishAction(advanceTurn({ ...state, actors: newActors, log: newLog }, ruleset, rand), box, events, state)
+  return finishAction(proceedAfterAction(withDowned({ ...state, actors: newActors, log: newLog }, events), ruleset, rand, { weak: result.weak, crit: result.crit, miss: result.miss }), box, events, state)
 }
 
 // ── Turn preview ──────────────────────────────────────────────────────────────
@@ -807,6 +1242,18 @@ export function upcomingTurns(state: CombatState, count: number): number[] {
   const out: number[] = []
   let idx = state.turnIdx
   if (state.actors[idx]?.alive) out.push(idx)
+  // pressTurn: only the active side acts until its icons run out, so preview
+  // cycles within that side (the icon row conveys how many presses remain).
+  if (state.mode === 'pressTurn' && state.activeSide) {
+    const side = state.activeSide
+    const max = Math.min(count, aliveOnSide(state.actors, side))
+    while (out.length < max) {
+      idx = nextAliveOnSide(state.actors, idx, side)
+      if (!state.actors[idx]?.alive || out.includes(idx)) break
+      out.push(idx)
+    }
+    return out
+  }
   while (out.length < count) {
     idx = nextAliveTurn(state.actors, idx)
     if (!state.actors[idx]?.alive) break
@@ -825,7 +1272,19 @@ export function applyCombatOutcome(
   let updated = party.map((char, i) => {
     const actor = state.actors.find(a => a.kind === 'party' && a.idx === i)
     if (!actor) return char
-    return { ...char, hp: actor.hp, alive: actor.alive && actor.hp > 0, mp: actor.mp, statuses: actor.statuses }
+    let next: Character = { ...char, hp: actor.hp, alive: actor.alive && actor.hp > 0, mp: actor.mp, statuses: actor.statuses }
+    // Spend equipped-item charges (wands/staves used this battle). The item
+    // stays equipped at 0 charges — inert until the author refills it.
+    for (const [key, used] of Object.entries(state.equipChargesUsed ?? {})) {
+      const [idxStr, slot] = key.split(':')
+      if (Number(idxStr) !== i || !used) continue
+      const inst = next.equipment[slot as keyof typeof next.equipment]
+      if (!inst) continue
+      const def = ruleset.items.find(it => it.id === inst.def)
+      const remaining = Math.max(0, (inst.charges ?? def?.charges ?? 0) - used)
+      next = { ...next, equipment: { ...next.equipment, [slot]: { ...inst, charges: remaining } } }
+    }
+    return next
   })
 
   const levelUps: string[] = []
@@ -837,15 +1296,44 @@ export function applyCombatOutcome(
     updated = updated.map(char => {
       if (!char.alive || char.hp <= 0 || xpEach === 0) return char
       const newXp = char.xp + xpEach
-      const threshold = xpToNextLevel(char.level)
+      const threshold = xpToNextLevel(char.level, ruleset.formulas?.xpToNext)
       if (newXp >= threshold) {
         const cls = ruleset.classes.find(c => c.id === char.classId)
         if (!cls) return { ...char, xp: newXp }
         const newLevel = char.level + 1
-        const newMaxHp = deriveMaxHp({ level: newLevel, attributes: char.attributes }, cls)
-        const newMaxMp = deriveMaxMp({ level: newLevel, attributes: char.attributes }, cls)
+        // Automatic class growth: attrGrowth raises attributes each level,
+        // clamped to each attribute's max. Growth and character maps may key
+        // by full id or short name — resolve both.
+        const attributes = { ...char.attributes }
+        for (const attr of ruleset.attributes) {
+          const short = attr.id.replace('attr.', '')
+          const growth = cls.attrGrowth[attr.id] ?? cls.attrGrowth[short] ?? 0
+          if (!growth) continue
+          const key = attributes[attr.id] !== undefined ? attr.id
+            : attributes[short] !== undefined ? short : attr.id
+          const cur = attributes[key] ?? attr.default
+          attributes[key] = Math.min(attr.max, cur + growth)
+        }
+        // Derive HP/MP after growth so endurance/intellect gains count now.
+        const newMaxHp = deriveMaxHp({ level: newLevel, attributes }, cls)
+        const newMaxMp = deriveMaxMp({ level: newLevel, attributes }, cls)
         levelUps.push(char.name)
-        return { ...char, level: newLevel, xp: newXp - threshold, maxHp: newMaxHp, hp: newMaxHp, maxMp: newMaxMp, mp: newMaxMp }
+        // Auto-learn spells whose learn table names this class at (or below) the new level
+        const learned = ruleset.spells
+          .filter(sp => !char.knownSpells.includes(sp.id)
+            && sp.learn?.some(l => l.classId === char.classId && l.level <= newLevel))
+          .map(sp => sp.id)
+        const learnedSkills = (ruleset.skills ?? [])
+          .filter(sk => !(char.knownSkills ?? []).includes(sk.id)
+            && sk.learn?.some(l => l.classId === char.classId && l.level <= newLevel))
+          .map(sk => sk.id)
+        return {
+          ...char, level: newLevel, xp: newXp - threshold, attributes,
+          unspentPoints: (char.unspentPoints ?? 0) + (cls.levelPoints ?? 0),
+          maxHp: newMaxHp, hp: newMaxHp, maxMp: newMaxMp, mp: newMaxMp,
+          knownSpells: learned.length > 0 ? [...char.knownSpells, ...learned] : char.knownSpells,
+          knownSkills: learnedSkills.length > 0 ? [...(char.knownSkills ?? []), ...learnedSkills] : char.knownSkills,
+        }
       }
       return { ...char, xp: newXp }
     })

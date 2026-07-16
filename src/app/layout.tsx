@@ -1,9 +1,10 @@
 import type { Metadata } from 'next'
 import { Toaster } from 'sonner'
+import { BuyMeACoffee } from '@/components/BuyMeACoffee'
 import './globals.css'
 
 export const metadata: Metadata = {
-  title: 'Epoch Mapper',
+  title: 'Epoch',
   description:
     'A free, open-source dungeon and world map editor for retro gaming. Draw room layouts, mark points of interest, and export to PDF or the compact .epochmap format.',
 }
@@ -28,6 +29,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body className="antialiased">
         {children}
         <Toaster theme="dark" position="bottom-right" richColors />
+        <BuyMeACoffee />
       </body>
     </html>
   )

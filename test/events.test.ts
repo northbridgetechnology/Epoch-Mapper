@@ -1,0 +1,270 @@
+/**
+ * Tests for the event engine: sequential chaining, runEvent nesting,
+ * questStage, and reactive onFlag expansion.
+ * Run with:  tsx test/events.test.ts
+ */
+
+import assert from 'node:assert/strict'
+import {
+  runCellEvents,
+  resolveExploreEffects,
+  applyFlagWriteWithReactions,
+  questStageFlagKey,
+  visitedEventFlagKey,
+  dialogueStartNode,
+  dialogueNodeById,
+  eligibleChoices,
+  enterDialogueNode,
+  applyDialogueChoice,
+  dialogueSeenFlagKey,
+  type EventContext,
+} from '../src/lib/event-engine'
+import type { DialogueDef } from '../src/lib/engine-types'
+import type { CellData } from '../src/lib/types'
+import type { CellEvent, Ruleset } from '../src/lib/engine-types'
+
+let passed = 0
+function test(name: string, fn: () => void) {
+  try {
+    fn()
+    passed++
+    console.log(`  ✓ ${name}`)
+  } catch (err) {
+    console.error(`  ✗ ${name}`)
+    console.error(err)
+    process.exitCode = 1
+  }
+}
+
+const ctx = (flags: Record<string, boolean | number | string> = {}): EventContext => ({
+  flags, party: [], inventory: [], gold: 0,
+})
+
+const cellWith = (...events: CellEvent[]): CellData => ({
+  base: 1, overlays: [],
+  entities: events.map(event => ({ t: 'event' as const, event })),
+})
+
+const ruleset = {
+  events: [
+    { id: 'ev.treasure', name: 'Grant treasure', effects: [{ t: 'gold', amount: 100 }], once: true },
+    { id: 'ev.recurse', name: 'Recursive', effects: [{ t: 'runEvent', event: 'ev.recurse' }, { t: 'gold', amount: 1 }] },
+    {
+      id: 'ev.crypt_opens', name: 'Crypt opens', trigger: 'onFlag', once: true,
+      conditions: [
+        { c: 'flag', flag: 'switch.a', equals: true },
+        { c: 'flag', flag: 'switch.b', equals: true },
+      ],
+      effects: [{ t: 'message', text: 'A grinding of stone echoes from the crypt.' }],
+    },
+  ],
+  quests: [
+    {
+      id: 'q.crypt', name: 'The Sunken Crypt',
+      stages: [
+        { id: 's1', description: 'Find the crypt.' },
+        { id: 's2', description: 'Open it.', effects: [{ t: 'gold', amount: 50 }] },
+      ],
+    },
+  ],
+  npcs: [], items: [], spells: [], statusEffects: [], enemies: [],
+  encounterTables: [], lootTables: [], shops: [], attributes: [], classes: [], races: [],
+} as unknown as Ruleset
+
+// ── Sequential chaining ───────────────────────────────────────────────────────
+
+test('later events see earlier events\' flag writes in the same step', () => {
+  const cell = cellWith(
+    { id: 'e1', trigger: 'onEnter', effects: [{ t: 'setFlag', flag: 'x', value: true }] },
+    { id: 'e2', trigger: 'onEnter', conditions: [{ c: 'flag', flag: 'x', equals: true }], effects: [{ t: 'gold', amount: 5 }] },
+  )
+  const r = runCellEvents(cell, 'onEnter', ctx(), ruleset)
+  assert.equal(r.goldDelta, 5)
+})
+
+test('once events fire a single time and are skipped after', () => {
+  const ev: CellEvent = { id: 'e1', trigger: 'onEnter', once: true, effects: [{ t: 'gold', amount: 5 }] }
+  const first = runCellEvents(cellWith(ev), 'onEnter', ctx(), ruleset)
+  assert.equal(first.goldDelta, 5)
+  assert.equal(first.flagSets[visitedEventFlagKey('e1')], true)
+  const again = runCellEvents(cellWith(ev), 'onEnter', ctx({ [visitedEventFlagKey('e1')]: true }), ruleset)
+  assert.equal(again.goldDelta, 0)
+})
+
+// ── runEvent ──────────────────────────────────────────────────────────────────
+
+test('runEvent invokes a library event, honouring its once flag', () => {
+  const effects = [{ t: 'runEvent', event: 'ev.treasure' } as const, { t: 'runEvent', event: 'ev.treasure' } as const]
+  const r = resolveExploreEffects(effects, ctx(), Math.random, ruleset)
+  assert.equal(r.goldDelta, 100)   // second call blocked by once
+})
+
+test('self-recursive runEvent terminates at the depth cap', () => {
+  const r = resolveExploreEffects([{ t: 'runEvent', event: 'ev.recurse' }], ctx(), Math.random, ruleset)
+  assert.ok(r.goldDelta >= 1 && r.goldDelta <= 9)   // capped, not infinite
+})
+
+// ── questStage ────────────────────────────────────────────────────────────────
+
+test('questStage sets the stage flag, records the update, runs stage effects', () => {
+  const r = resolveExploreEffects([{ t: 'questStage', quest: 'q.crypt', stage: 2 }], ctx(), Math.random, ruleset)
+  assert.equal(r.flagSets[questStageFlagKey('q.crypt')], 2)
+  assert.deepEqual(r.questUpdates, [{ quest: 'q.crypt', stage: 2 }])
+  assert.equal(r.goldDelta, 50)   // stage 2 effects
+})
+
+test('quests never regress to an earlier stage', () => {
+  const r = resolveExploreEffects(
+    [{ t: 'questStage', quest: 'q.crypt', stage: 1 }],
+    ctx({ [questStageFlagKey('q.crypt')]: 2 }), Math.random, ruleset,
+  )
+  assert.equal(r.questUpdates.length, 0)
+  assert.equal(r.flagSets[questStageFlagKey('q.crypt')], undefined)
+})
+
+// ── Reactive onFlag ───────────────────────────────────────────────────────────
+
+test('a flag write edge-triggers a global onFlag event when conditions newly pass', () => {
+  // switch.a already on; throwing switch.b completes the pair
+  const r = applyFlagWriteWithReactions('switch.b', true, null, ctx({ 'switch.a': true }), ruleset)
+  assert.ok(r.messages.some(m => m.includes('grinding of stone')))
+})
+
+test('onFlag events do not fire when conditions were already passing', () => {
+  const flags = { 'switch.a': true, 'switch.b': true }
+  const r = applyFlagWriteWithReactions('unrelated', true, null, ctx(flags), ruleset)
+  assert.equal(r.messages.length, 0)
+})
+
+// ── Single-slot collisions ────────────────────────────────────────────────────
+
+test('first teleport wins when two events both teleport', () => {
+  const cell = cellWith(
+    { id: 't1', trigger: 'onEnter', effects: [{ t: 'teleport', mapId: 'm1', x: 1, y: 1 }] },
+    { id: 't2', trigger: 'onEnter', effects: [{ t: 'teleport', mapId: 'm2', x: 9, y: 9 }] },
+  )
+  const r = runCellEvents(cell, 'onEnter', ctx(), ruleset)
+  assert.equal(r.teleportTo?.mapId, 'm1')
+})
+
+// ── Dialogue trees ────────────────────────────────────────────────────────────
+
+const guardDialogue: DialogueDef = {
+  id: 'dlg.guard', name: 'Guard', start: 'greet',
+  nodes: [
+    { id: 'greet', text: ['Halt! State your business.'], choices: [
+      { label: 'The crypt is open.', conditions: [{ c: 'flag', flag: 'crypt.open', equals: true }], goto: 'reward' },
+      { label: 'Just passing.' },
+    ] },
+    { id: 'reward', text: ['Then take this and go.'], effects: [{ t: 'gold', amount: 25 }] },
+  ],
+}
+
+test('dialogueStartNode / dialogueNodeById resolve nodes', () => {
+  assert.equal(dialogueStartNode(guardDialogue)?.id, 'greet')
+  assert.equal(dialogueNodeById(guardDialogue, 'reward')?.id, 'reward')
+  assert.equal(dialogueNodeById(guardDialogue, 'nope'), null)
+})
+
+test('eligibleChoices filters by condition', () => {
+  const greet = dialogueStartNode(guardDialogue)!
+  assert.deepEqual(eligibleChoices(greet, ctx()).map(c => c.index), [1])                       // crypt shut → only "Just passing."
+  assert.deepEqual(eligibleChoices(greet, ctx({ 'crypt.open': true })).map(c => c.index), [0, 1]) // both offered
+})
+
+test('enterDialogueNode marks the node seen and applies its effects', () => {
+  const reward = dialogueNodeById(guardDialogue, 'reward')!
+  const r = enterDialogueNode(guardDialogue, reward, null, ctx(), ruleset)
+  assert.equal(r.flagSets[dialogueSeenFlagKey('dlg.guard', 'reward')], true)
+  assert.equal(r.goldDelta, 25)
+})
+
+test('applyDialogueChoice applies the chosen branch effects', () => {
+  const greet = dialogueStartNode(guardDialogue)!
+  const choice = greet.choices!.find(c => c.goto === 'reward')!
+  const r = applyDialogueChoice(choice, null, ctx({ 'crypt.open': true }), ruleset)
+  assert.equal(r.goldDelta, 0)   // the reward is on the target node, not the choice
+  assert.equal(choice.goto, 'reward')
+})
+
+// ── Exploration harm / heal / status (traps, damage tiles, hazard events) ─────
+
+import { applyExploreHarm } from '../src/lib/event-engine'
+import { makeDefaultRuleset } from '../src/lib/default-ruleset'
+import type { Character } from '../src/lib/engine-types'
+
+const rs = makeDefaultRuleset()
+function hero(over: Partial<Character> = {}): Character {
+  return {
+    id: 'h', name: 'Ana', classId: 'class.fighter', raceId: 'race.human',
+    level: 3, xp: 0, attributes: {}, hp: 20, maxHp: 20, mp: 5, maxMp: 5,
+    equipment: {}, knownSpells: [], statuses: [], alive: true, ...over,
+  }
+}
+
+test('exploration effects no longer smuggle heal signals through flags', () => {
+  const r = resolveExploreEffects(
+    [{ t: 'fullHeal' }, { t: 'heal', amount: 5 }, { t: 'restoreMp', amount: 3 }],
+    ctx(), () => 0.5, ruleset as unknown as Ruleset,
+  )
+  assert.equal(r.fullHeal, true)
+  assert.equal(r.heal, 5)
+  assert.equal(r.restoreMp, 3)
+  assert.ok(!('_fullHeal' in r.flagSets), 'no _fullHeal flag pollution')
+  assert.ok(!('_heal' in r.flagSets), 'no _heal flag pollution')
+})
+
+test('damage/status/cure/reviveRandom effects resolve out of combat', () => {
+  const r = resolveExploreEffects(
+    [{ t: 'damage', dmgType: 'fire', amount: 7 }, { t: 'status', status: 'x', chance: 1 }, { t: 'cure', status: 'all' }, { t: 'reviveRandom' }],
+    ctx(), () => 0, ruleset as unknown as Ruleset,
+  )
+  assert.deepEqual(r.partyDamage, [{ dmgType: 'fire', amount: 7 }])
+  assert.deepEqual(r.partyStatus, ['x'])
+  assert.deepEqual(r.partyCure, ['all'])
+  assert.equal(r.revive, true)
+})
+
+test('status chance gate: a 0-chance status never lands', () => {
+  const r = resolveExploreEffects([{ t: 'status', status: 'x', chance: 0 }], ctx(), () => 0.99, ruleset as unknown as Ruleset)
+  assert.equal(r.partyStatus.length, 0)
+})
+
+test('applyExploreHarm: damage bites, can wipe, honours resistances', () => {
+  const r = applyExploreHarm([hero({ hp: 5 })], rs, {
+    heal: 0, restoreMp: 0, partyDamage: [{ dmgType: 'physical', amount: 10 }], partyStatus: [], partyCure: [],
+  })
+  assert.equal(r.party[0].hp, 0)
+  assert.equal(r.party[0].alive, false)
+  assert.equal(r.wiped, true)
+
+  // A resistant race takes less (jack_frost enemies are fire-weak, but races
+  // hold resistances — use whatever the default human has, else full damage)
+  const partial = applyExploreHarm([hero({ hp: 20 })], rs, {
+    heal: 0, restoreMp: 0, partyDamage: [{ dmgType: 'physical', amount: 6 }], partyStatus: [], partyCure: [],
+  })
+  assert.ok(partial.party[0].hp <= 20 && partial.party[0].hp >= 14, 'takes up to 6 damage')
+  assert.equal(partial.wiped, false)
+})
+
+test('applyExploreHarm: heal, cure, revive, and status apply', () => {
+  const statusId = rs.statusEffects[0].id
+  const cured = applyExploreHarm([hero({ hp: 5, statuses: [{ def: statusId, remaining: 3 }] })], rs, {
+    heal: 8, restoreMp: 0, partyDamage: [], partyStatus: [], partyCure: ['all'],
+  })
+  assert.equal(cured.party[0].hp, 13)
+  assert.equal(cured.party[0].statuses.length, 0)
+
+  const afflicted = applyExploreHarm([hero()], rs, {
+    heal: 0, restoreMp: 0, partyDamage: [], partyStatus: [statusId], partyCure: [],
+  })
+  assert.equal(afflicted.party[0].statuses[0].def, statusId)
+
+  const revived = applyExploreHarm([hero({ hp: 0, alive: false })], rs, {
+    heal: 0, restoreMp: 0, partyDamage: [], partyStatus: [], partyCure: [], revive: true,
+  }, () => 0)
+  assert.equal(revived.party[0].alive, true)
+  assert.ok(revived.party[0].hp > 0)
+})
+
+console.log(`\n${passed} passed`)

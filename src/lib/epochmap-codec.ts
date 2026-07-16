@@ -1,28 +1,41 @@
 /**
  * `.epochmap` binary format codec — encode / decode.
  *
- * Implements EPOCH_MAPPER_SPEC.md §4 exactly:
- *
- *   [UNCOMPRESSED HEADER]  magic "EPKM", version, gameTitle, 64-byte romHash
- *   [GZIP COMPRESSED BODY] custom markers, maps, cells, notes, revealed chunks
+ *   [UNCOMPRESSED HEADER]  magic "EPKM", version, gameTitle, romHash
+ *   [GZIP COMPRESSED BODY] custom markers, maps, cells, notes, revealed chunks,
+ *                          (v3) audio blobs, JSON extension block
  *
  * All multi-byte integers are little-endian. The header is never gzipped so the
  * magic/version/game association can be read without decompressing.
  *
- * v1 lossiness (documented in the spec): each cell stores a single overlay byte
- * and a single edge type for all marked sides. The editor's richer in-memory
- * model (multiple overlays, per-side edge types) is preserved in the JSON
- * localStorage draft; only the compact `.epochmap` export collapses it. Per-side
- * edge types are reserved for a future v2.
+ * Version history:
+ *   v1 — visual-only: markers, maps, cells (base+overlay+legacy edge bits), notes.
+ *   v2 — adds a JSON extension block (ruleset + entities + boundaries + audio,
+ *        the audio base64-encoded inside the JSON).
+ *   v3 — shrinks the format substantially:
+ *        · the ruleset is stored as a DIFF against the built-in default ruleset
+ *          (see ruleset-diff.ts) instead of in full — ~80% of every prior file
+ *          was the unchanged default content.
+ *        · audio blobs move to a raw length-prefixed binary block (no base64's
+ *          +33%, no double-compressing text-encoded bytes).
+ *        · romHash is packed as 32 raw bytes instead of 64 hex ASCII bytes.
+ *        · dead per-cell edge bytes (always-zero mask + type) are dropped;
+ *          boundaries live in the JSON block.
+ *
+ * v1 lossiness (documented in the spec): each cell stores a single overlay byte.
+ * The editor's richer in-memory model (multiple overlays) is preserved in the
+ * JSON localStorage draft; only the compact `.epochmap` export collapses it.
  */
 
 import { gzipSync, gunzipSync } from 'fflate'
 import type { CellData, CellMap, CustomMarker, EdgeDir, EpochmapFile, MapData } from './types'
 import type { BoundaryData, CellEntity, Ruleset } from './engine-types'
+import { diffRuleset, patchRuleset, type RulesetDiff } from './ruleset-diff'
 
 export const EPOCHMAP_MAGIC = 'EPKM'
-export const EPOCHMAP_VERSION = 2  // v1 = visual-only; v2 adds ruleset + entities JSON block
-const ROM_HASH_BYTES = 64
+export const EPOCHMAP_VERSION = 3  // v1 = visual-only; v2 = +ruleset JSON; v3 = diffed ruleset + binary audio
+const ROM_HASH_HEX_BYTES = 64   // v1/v2: romHash stored as 64 hex ASCII chars
+const ROM_HASH_RAW_BYTES = 32   // v3: romHash packed as 32 raw bytes (SHA-256)
 const EDGE_DIRS: EdgeDir[] = ['N', 'S', 'E', 'W'] // bit order: N=0, S=1, E=2, W=3
 
 export class EpochmapParseError extends Error {
@@ -162,24 +175,53 @@ class ByteReader {
 
 // ── romHash helpers ────────────────────────────────────────────────────────────
 
-function writeRomHash(w: ByteWriter, romHash: string) {
+/** v3: pack a hex SHA-256 (64 hex chars) into 32 raw bytes; zeros = unknown. */
+function writeRomHashRaw(w: ByteWriter, romHash: string) {
   const hex = (romHash || '').toLowerCase()
-  const bytes = new Uint8Array(ROM_HASH_BYTES) // zero-padded (0x00) when unknown/short
-  for (let i = 0; i < Math.min(hex.length, ROM_HASH_BYTES); i++) {
-    bytes[i] = hex.charCodeAt(i) & 0xff
+  const bytes = new Uint8Array(ROM_HASH_RAW_BYTES) // all-zero when unknown/malformed
+  if (/^[0-9a-f]{64}$/.test(hex)) {
+    for (let i = 0; i < ROM_HASH_RAW_BYTES; i++) {
+      bytes[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16)
+    }
   }
   w.bytes(bytes)
 }
 
-function readRomHash(r: ByteReader): string {
-  const bytes = r.take(ROM_HASH_BYTES, 'romHash')
-  // Trim trailing 0x00 padding; all-zero means "unknown" → ''.
+function readRomHashRaw(r: ByteReader): string {
+  const bytes = r.take(ROM_HASH_RAW_BYTES, 'romHash')
+  if (bytes.every(b => b === 0)) return '' // all-zero → unknown
+  let s = ''
+  for (let i = 0; i < bytes.length; i++) s += bytes[i].toString(16).padStart(2, '0')
+  return s
+}
+
+/** v1/v2: romHash stored as 64 hex ASCII chars, 0x00-padded when unknown/short. */
+function readRomHashHex(r: ByteReader): string {
+  const bytes = r.take(ROM_HASH_HEX_BYTES, 'romHash')
   let end = bytes.length
   while (end > 0 && bytes[end - 1] === 0) end--
   if (end === 0) return ''
   let s = ''
   for (let i = 0; i < end; i++) s += String.fromCharCode(bytes[i])
   return s
+}
+
+// ── base64 ↔ bytes (audio blobs travel as base64 in memory) ─────────────────────
+
+function base64ToBytes(b64: string): Uint8Array {
+  const bin = atob(b64)
+  const out = new Uint8Array(bin.length)
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i)
+  return out
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let bin = ''
+  const CHUNK = 0x8000 // avoid arg-count limits on String.fromCharCode
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    bin += String.fromCharCode(...bytes.subarray(i, i + CHUNK))
+  }
+  return btoa(bin)
 }
 
 // ── Boundary key (inlined from constants to avoid circular import) ─────────────
@@ -237,9 +279,7 @@ export function serializeDotEpochmap(file: EpochmapFile): Uint8Array {
       body.i16(x)
       body.i16(y)
       body.u8(cell.base ?? 0)
-      body.u8(cell.overlays[0] ?? 0) // v1: single overlay byte
-      body.u8(0) // edge mask — boundaries now in JSON ext block
-      body.u8(0) // edge type — boundaries now in JSON ext block
+      body.u8(cell.overlays[0] ?? 0) // single overlay byte (boundaries in JSON ext block)
     }
 
     body.u32(noteEntries.length)
@@ -258,13 +298,27 @@ export function serializeDotEpochmap(file: EpochmapFile): Uint8Array {
     }
   }
 
-  // ----- v2 JSON extension block: ruleset + per-map cell entities + boundaries -----
-  const v2ext: {
-    ruleset?: Ruleset
+  // ----- audio block (raw binary; base64 in memory → raw bytes on disk) -----
+  const audioBlobs = file.audioBlobs ?? {}
+  const audioIds = Object.keys(audioBlobs)
+  body.u32(audioIds.length)
+  for (const id of audioIds) {
+    body.str(id, (n) => body.u16(n))
+    const bytes = base64ToBytes(audioBlobs[id])
+    body.u32(bytes.length)
+    body.bytes(bytes)
+  }
+
+  // ----- v3 JSON extension block: ruleset DIFF + per-map entities/boundaries/meta -----
+  const ext: {
+    rulesetDiff?: RulesetDiff
     mapEntities?: Array<Record<string, CellEntity[]>>
     mapBoundaries?: Array<Record<string, BoundaryData>>
+    mapMeta?: Array<{ theme?: string; dark?: boolean; seed?: number; musicId?: string; combatMode?: string; edgeLinks?: MapData['edgeLinks'] }>
   } = {}
-  if (file.ruleset) v2ext.ruleset = file.ruleset
+  if (file.ruleset) ext.rulesetDiff = diffRuleset(file.ruleset)
+  const mapMeta = maps.map(m => ({ theme: m.theme, dark: m.dark, seed: m.seed, musicId: m.musicId, combatMode: m.combatMode, edgeLinks: m.edgeLinks }))
+  if (mapMeta.some(m => m.theme !== undefined || m.dark !== undefined || m.seed !== undefined || m.musicId !== undefined || m.combatMode !== undefined || m.edgeLinks !== undefined)) ext.mapMeta = mapMeta
   const mapEntities: Array<Record<string, CellEntity[]>> = maps.map(map => {
     const ent: Record<string, CellEntity[]> = {}
     for (const [key, cell] of Object.entries(map.cells)) {
@@ -272,10 +326,10 @@ export function serializeDotEpochmap(file: EpochmapFile): Uint8Array {
     }
     return ent
   })
-  if (mapEntities.some(m => Object.keys(m).length > 0)) v2ext.mapEntities = mapEntities
+  if (mapEntities.some(m => Object.keys(m).length > 0)) ext.mapEntities = mapEntities
   const mapBoundaries = maps.map(map => map.boundaries ?? {})
-  if (mapBoundaries.some(m => Object.keys(m).length > 0)) v2ext.mapBoundaries = mapBoundaries
-  const jsonBytes = new TextEncoder().encode(JSON.stringify(v2ext))
+  if (mapBoundaries.some(m => Object.keys(m).length > 0)) ext.mapBoundaries = mapBoundaries
+  const jsonBytes = new TextEncoder().encode(JSON.stringify(ext))
   body.u32(jsonBytes.length)
   body.bytes(jsonBytes)
 
@@ -286,7 +340,7 @@ export function serializeDotEpochmap(file: EpochmapFile): Uint8Array {
   for (const ch of EPOCHMAP_MAGIC) header.u8(ch.charCodeAt(0))
   header.u8(EPOCHMAP_VERSION)
   header.str(file.gameTitle ?? '', (n) => header.u16(n))
-  writeRomHash(header, file.romHash ?? '')
+  writeRomHashRaw(header, file.romHash ?? '')
 
   const headerBytes = header.done()
   const out = new Uint8Array(headerBytes.length + gzipped.length)
@@ -309,16 +363,17 @@ export function parseDotEpochmap(buffer: ArrayBuffer | Uint8Array): EpochmapFile
   }
 
   const version = head.u8()
-  if (version !== 1 && version !== 2) {
+  if (version !== 1 && version !== 2 && version !== 3) {
     throw new EpochmapParseError(`Unsupported .epochmap version ${version}`)
   }
 
   const gameTitleLen = head.u16()
   const gameTitle = head.str(gameTitleLen)
-  const romHash = readRomHash(head)
+  const romHashBytes = version >= 3 ? ROM_HASH_RAW_BYTES : ROM_HASH_HEX_BYTES
+  const romHash = version >= 3 ? readRomHashRaw(head) : readRomHashHex(head)
 
   // The rest is the gzipped body. Slice from the current header offset.
-  const headerLen = 4 + 1 + 2 + gameTitleLen + ROM_HASH_BYTES
+  const headerLen = 4 + 1 + 2 + gameTitleLen + romHashBytes
   let bodyBytes: Uint8Array
   try {
     bodyBytes = gunzipSync(all.subarray(headerLen))
@@ -358,16 +413,19 @@ export function parseDotEpochmap(buffer: ArrayBuffer | Uint8Array): EpochmapFile
       const y = r.i16()
       const base = r.u8()
       const overlay = r.u8()
-      const mask = r.u8()
-      const edgeType = r.u8()
       cells[`${x},${y}`] = { base, overlays: overlay ? [overlay] : [] }
-      // Legacy edge bits → boundaries (backward compat for v1 files)
-      if (mask !== 0) {
-        EDGE_DIRS.forEach((dir, bit) => {
-          if (mask & (1 << bit)) {
-            boundaries[bKey(x, y, dir)] = { wall: edgeType }
-          }
-        })
+      // v1/v2 carried two always-zero edge bytes per cell (mask + type); v3
+      // dropped them. Legacy edge bits → boundaries (backward compat).
+      if (version < 3) {
+        const mask = r.u8()
+        const edgeType = r.u8()
+        if (mask !== 0) {
+          EDGE_DIRS.forEach((dir, bit) => {
+            if (mask & (1 << bit)) {
+              boundaries[bKey(x, y, dir)] = { wall: edgeType }
+            }
+          })
+        }
       }
     }
 
@@ -395,18 +453,53 @@ export function parseDotEpochmap(buffer: ArrayBuffer | Uint8Array): EpochmapFile
 
   const result: EpochmapFile = { version, gameTitle, romHash, customMarkers, maps }
 
-  // v2: read JSON extension block (ruleset + entities + boundaries)
-  if (version === 2 && r.remaining >= 4) {
+  // v3: raw audio block (sits between the maps and the JSON extension block).
+  if (version >= 3 && r.remaining >= 4) {
+    try {
+      const audioCount = r.u32()
+      if (audioCount > 0) {
+        const audioBlobs: Record<string, string> = {}
+        for (let i = 0; i < audioCount; i++) {
+          const id = r.str(r.u16())
+          const byteLen = r.u32()
+          audioBlobs[id] = bytesToBase64(r.take(byteLen, 'audio blob'))
+        }
+        result.audioBlobs = audioBlobs
+      }
+    } catch {
+      // ignore malformed audio block — degrade gracefully
+    }
+  }
+
+  // v2/v3: JSON extension block (ruleset[-diff] + entities + boundaries + meta).
+  if (version >= 2 && r.remaining >= 4) {
     try {
       const jsonLen = r.u32()
       if (jsonLen > 0 && r.remaining >= jsonLen) {
         const jsonStr = r.str(jsonLen)
         const ext = JSON.parse(jsonStr) as {
-          ruleset?: Ruleset
+          ruleset?: Ruleset          // v2: full ruleset
+          rulesetDiff?: RulesetDiff  // v3: diff against the default ruleset
           mapEntities?: Array<Record<string, CellEntity[]>>
           mapBoundaries?: Array<Record<string, BoundaryData>>
+          mapMeta?: Array<{ theme?: string; dark?: boolean; seed?: number; musicId?: string; combatMode?: string; edgeLinks?: MapData['edgeLinks'] }>
+          audioBlobs?: Record<string, string>  // v2 only (v3 uses the binary block)
         }
-        if (ext.ruleset) result.ruleset = ext.ruleset
+        if (ext.rulesetDiff) result.ruleset = patchRuleset(ext.rulesetDiff)
+        else if (ext.ruleset) result.ruleset = ext.ruleset
+        if (ext.audioBlobs && !result.audioBlobs) result.audioBlobs = ext.audioBlobs
+        if (ext.mapMeta) {
+          ext.mapMeta.forEach((meta, mi) => {
+            const map = maps[mi]
+            if (!map || !meta) return
+            if (meta.theme !== undefined) map.theme = meta.theme
+            if (meta.dark !== undefined) map.dark = meta.dark
+            if (meta.seed !== undefined) map.seed = meta.seed
+            if (meta.musicId !== undefined) map.musicId = meta.musicId
+            if (meta.combatMode === 'classic' || meta.combatMode === 'oneMore' || meta.combatMode === 'pressTurn') map.combatMode = meta.combatMode
+            if (meta.edgeLinks) map.edgeLinks = meta.edgeLinks
+          })
+        }
         if (ext.mapEntities) {
           ext.mapEntities.forEach((mapEnt, mi) => {
             const map = maps[mi]
@@ -423,7 +516,7 @@ export function parseDotEpochmap(buffer: ArrayBuffer | Uint8Array): EpochmapFile
           ext.mapBoundaries.forEach((mapBounds, mi) => {
             const map = maps[mi]
             if (!map || !mapBounds) return
-            // v2 boundaries override legacy edge-bit boundaries
+            // JSON boundaries override legacy edge-bit boundaries
             map.boundaries = { ...(map.boundaries ?? {}), ...mapBounds }
           })
         }

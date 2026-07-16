@@ -12,3 +12,11 @@
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Standalone player build outputs
+dist-player/
+public/player-template.html
+
+# Tauri build outputs
+src-tauri/target/
+src-tauri/gen/

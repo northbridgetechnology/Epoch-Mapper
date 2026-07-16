@@ -1,0 +1,17 @@
+[package]
+name = "epoch-game"
+version = "0.1.0"
+description = "A standalone Epoch Mapper game"
+edition = "2021"
+rust-version = "1.77"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+
+[profile.release]
+opt-level = "s"
+lto = true
+strip = true

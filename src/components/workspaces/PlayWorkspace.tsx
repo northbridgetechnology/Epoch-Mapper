@@ -1,17 +1,23 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ArrowUp, ArrowDown, ArrowLeft, ArrowRight, ZoomIn, ZoomOut, Coins, Map, Eye } from 'lucide-react'
+import { ArrowUp, ArrowDown, ArrowLeft, ArrowRight, ZoomIn, ZoomOut, Coins, Map, Eye, Menu } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { baseDef, overlayDef, edgeDef, boundaryKey, DEFAULT_CELL, MIN_CELL, MAX_CELL, BASE, EDGE } from '@/lib/constants'
 import type { CellData, MapData, MarkerDef, EdgeDir } from '@/lib/types'
 import { getTheme, type MapThemeDef } from '@/lib/themes'
 import { getSubcubeDef } from '@/lib/subcube-defs'
-import type { BoundaryData, CellEntity, Character, Facing, ItemInstance, Ruleset } from '@/lib/engine-types'
-import { objectUsedFlagKey } from '@/lib/event-engine'
+import { pixelSprite, pixelSpriteRect, spriteAspect, creatureSprite } from '@/lib/pixel-sprites'
+import { computeLightRadius, cellHasTrick, listFoes } from '@/lib/exploration'
+import type { BoundaryData, CellEntity, Character, Facing, Formation, ItemInstance, Ruleset } from '@/lib/engine-types'
+import { objectUsedFlagKey, effectiveDoorState, npcRecruitedFlagKey } from '@/lib/event-engine'
 import type { BattleViewState } from '@/lib/battle-scene'
 import type { CombatState } from '@/lib/combat-engine'
 import { useBattleController, BattleHud, BattleOutcomeOverlay } from '@/components/BattleHud'
+import { GameMenu } from '@/components/GameMenu'
+import { Minimap } from '@/components/Minimap'
+import { PROFILE_URL as COFFEE_URL } from '@/components/BuyMeACoffee'
+import { music } from '@/lib/audio-controller'
 
 // ── Props ─────────────────────────────────────────────────────────────────────
 
@@ -19,6 +25,7 @@ interface PlayWorkspaceProps {
   activeMap: MapData | null
   party: Character[]
   gold: number
+  stepsTaken?: number
   facing: Facing
   customBase: Record<number, MarkerDef>
   customOverlay: Record<number, MarkerDef>
@@ -29,6 +36,14 @@ interface PlayWorkspaceProps {
   combat?: CombatState | null
   ruleset: Ruleset
   inventory: ItemInstance[]
+  /** Benched members (roster/bench) — for the in-play menu's Party screen. */
+  reserve?: Character[]
+  /** Roster edits from the in-play menu (equip, party order, bench/field). */
+  onRosterChange?: (party: Character[], formation: Formation, reserve: Character[]) => void
+  /** Formation for the menu's Party screen. */
+  formation?: Formation
+  /** Inventory/gold edits from the menu (item use). */
+  onInventoryChange?: (inventory: ItemInstance[], gold: number) => void
   onCombatAction: (next: CombatState) => void
   onCombatEnd: () => void
   onMoveForward: () => void
@@ -36,6 +51,14 @@ interface PlayWorkspaceProps {
   onTurnLeft: () => void
   onTurnRight: () => void
   onInteract: () => void
+  /** Camp/rest (Batch B). Absent = feature hidden. */
+  onRest?: () => void
+  /** Save slots. canSaveHere reflects the ruleset's savePolicy. */
+  canSaveHere?: boolean
+  onSaveSlot?: (slot: number) => void
+  onLoadSlot?: (slot: number) => void
+  /** Notify the host when the in-play menu opens/closes (to gate movement). */
+  onMenuOpenChange?: (open: boolean) => void
 }
 
 // ── Small helpers ─────────────────────────────────────────────────────────────
@@ -67,7 +90,7 @@ function StatBar({ value, max, colorClass }: { value: number; max: number; color
 
 // ── Party HUD ─────────────────────────────────────────────────────────────────
 
-function PartyHud({ party, gold }: { party: Character[]; gold: number }) {
+function PartyHud({ party, gold, steps }: { party: Character[]; gold: number; steps?: number }) {
   if (party.length === 0) {
     return (
       <div className="px-4 py-2 text-xs text-white/30 italic">
@@ -117,9 +140,21 @@ function PartyHud({ party, gold }: { party: Character[]; gold: number }) {
           </div>
         )
       })}
-      <div className="ml-auto flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-amber-500/20 bg-amber-950/20 flex-shrink-0">
-        <Coins className="w-3.5 h-3.5 text-amber-400" />
-        <span className="text-sm font-semibold text-amber-300 tabular-nums">{gold}</span>
+      <div className="ml-auto flex items-center gap-2 flex-shrink-0">
+        <a href={COFFEE_URL} target="_blank" rel="noopener noreferrer" title="Enjoying Epoch? Buy me a coffee ☕"
+          className="flex items-center px-3 py-1.5 rounded-lg border border-white/10 bg-zinc-900/60 hover:border-amber-400/40 hover:bg-zinc-800 transition-colors">
+          <span className="text-sm leading-none">☕</span>
+        </a>
+        {steps != null && (
+          <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-white/10 bg-zinc-900/60" title="Steps taken">
+            <span className="text-sm leading-none">👣</span>
+            <span className="text-sm font-semibold text-white/60 tabular-nums">{steps}</span>
+          </div>
+        )}
+        <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-amber-500/20 bg-amber-950/20">
+          <Coins className="w-3.5 h-3.5 text-amber-400" />
+          <span className="text-sm font-semibold text-amber-300 tabular-nums">{gold}</span>
+        </div>
       </div>
     </div>
   )
@@ -219,17 +254,19 @@ function frontOf(f: Facing): EdgeDir { return f as unknown as EdgeDir }
 
 // ── Geometry / wall queries ────────────────────────────────────────────────────
 
-type CellKind = 'wall' | 'open' | 'water' | 'lava' | 'void'
+type CellKind = 'wall' | 'open' | 'water' | 'lava' | 'void' | 'stairs_up' | 'stairs_down'
 
 function getCellKind(map: MapData, x: number, y: number): CellKind {
   const cell = map.cells[`${x},${y}`]
   if (!cell) return 'wall'
   switch (cell.base ?? 0) {
-    case 0:          return 'wall'
-    case BASE.WATER: return 'water'
-    case BASE.LAVA:  return 'lava'
-    case BASE.VOID:  return 'void'
-    default:         return 'open'  // BASE.WALL (2) is an invisible solid — transparent in 3D
+    case 0:                return 'wall'
+    case BASE.WATER:       return 'water'
+    case BASE.LAVA:        return 'lava'
+    case BASE.VOID:        return 'void'
+    case BASE.STAIRS_UP:   return 'stairs_up'
+    case BASE.STAIRS_DOWN: return 'stairs_down'
+    default:               return 'open'  // BASE.WALL (2) is an invisible solid — transparent in 3D
   }
 }
 
@@ -239,16 +276,18 @@ function isWall(map: MapData, x: number, y: number): boolean {
 function hasBoundaryWall(
   map: MapData, x: number, y: number, dir: EdgeDir,
   revealedBoundaries?: Set<string>,
+  flags?: Record<string, boolean | number | string>,
 ): boolean {
   const bk = boundaryKey(x, y, dir)
   const b = map.boundaries?.[bk]
   if (!b) return false
+  const doorOpen = b.door ? effectiveDoorState(b.door, flags ?? {}) === 'open' : false
   if (b.wall !== undefined) {
     if (b.wall === EDGE.ILLUSORY) return revealedBoundaries ? !revealedBoundaries.has(bk) : true
-    if (b.wall === EDGE.DOOR) return b.door ? b.door.state !== 'open' : true
+    if (b.wall === EDGE.DOOR) return b.door ? !doorOpen : true
     return true
   }
-  return b.door !== undefined && b.door.state !== 'open'
+  return b.door !== undefined && !doorOpen
 }
 
 // ── SVG component ──────────────────────────────────────────────────────────────
@@ -261,9 +300,12 @@ interface FirstPersonViewProps {
   revealedBoundaries?: Set<string>
   flags: Record<string, boolean | number | string>
   battle?: BattleViewState | null
+  ruleset?: Ruleset
+  /** View distance in cells (dark maps). Absent = unlimited (lit map). */
+  lightRadius?: number
 }
 
-function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedBoundaries, flags, battle }: FirstPersonViewProps) {
+function FirstPersonView({ map, facing, isCellRevealed, revealedBoundaries, flags, battle, ruleset, lightRadius }: FirstPersonViewProps) {
   const [fd0, fd1] = facingDelta(facing)
   const [rd0, rd1] = rightDelta(facing)
   const px = map.playerX
@@ -271,13 +313,21 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
   const theme = getTheme(map.theme)
   const pal = makeFpPalette(theme)
 
+  // Light: on dark maps the world fades to black beyond the party's light
+  // radius. lightExtra ramps 0 → 0.55 at the radius edge → 1 one cell beyond.
+  const liveFoes = listFoes(map, flags).filter(f => !f.dead)
+
+  const viewD = lightRadius === undefined ? MAX_D : Math.max(1, Math.min(MAX_D, Math.floor(lightRadius)))
+  const lightExtra = (dd: number) => viewD >= MAX_D ? 0 : Math.max(0, Math.min(1, (dd - viewD + 1) * 0.55))
+  const fogAt = (dd: number) => Math.min(1, depthFog(dd) + lightExtra(dd))
+
   function cellAt(ahead: number, side: number): [number, number] {
     return [px + fd0 * ahead + rd0 * side, py + fd1 * ahead + rd1 * side]
   }
   function hasSideWallAt(d: number, s: number, side: 'left' | 'right'): boolean {
     const [cx, cy] = cellAt(d, s)
     const dir = side === 'right' ? rightOf(facing) : leftOf(facing)
-    if (hasBoundaryWall(map, cx, cy, dir, revealedBoundaries)) return true
+    if (hasBoundaryWall(map, cx, cy, dir, revealedBoundaries, flags)) return true
     const sideS = side === 'right' ? s + 1 : s - 1
     if (sideS < -MAX_S || sideS > MAX_S) return true
     const [sx, sy] = cellAt(d, sideS)
@@ -285,6 +335,64 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
   }
 
   const nodes: React.ReactNode[] = []
+
+  // ── Wall-mounted switch lever ────────────────────────────────────────────────
+  // Drawn on a visible wall face when its boundary carries a switch whose face
+  // points toward the player (mounted side only). Plate colours derive from
+  // the theme palette so the mount matches the surrounding wall.
+  const OPP_DIR: Record<EdgeDir, EdgeDir> = { N: 'S', S: 'N', E: 'W', W: 'E' }
+  function drawWallSwitch(
+    ncx: number, ncy: number,
+    near: { x1: number; y1: number; x2: number; y2: number },
+    d: number, s: number,
+  ) {
+    const sw = map.boundaries?.[boundaryKey(ncx, ncy, frontOf(facing))]?.switch
+    if (!sw || sw.facing !== OPP_DIR[facing as unknown as EdgeDir]) return
+    const on = !!flags[sw.flag]
+    const fw = near.x2 - near.x1
+    const fh = near.y2 - near.y1
+    const size = Math.max(8, Math.min(fw * 0.16, fh * 0.24))
+    const spr = pixelSprite(on ? 'lever_on' : 'lever_off',
+      near.x1 + fw / 2, near.y1 + fh * 0.52, size,
+      `swl_${d}_${s}`, Math.max(0.3, 1 - fogAt(d)))
+    if (spr) nodes.push(spr)
+  }
+
+  // ── Wall inscription plaque ──────────────────────────────────────────────────
+  // A carved stone tablet on the wall face when the boundary carries an
+  // inscription readable from this side (facing rules match switches).
+  function drawWallInscription(
+    ncx: number, ncy: number,
+    near: { x1: number; y1: number; x2: number; y2: number },
+    d: number, s: number,
+  ) {
+    const insc = map.boundaries?.[boundaryKey(ncx, ncy, frontOf(facing))]?.inscription
+    if (!insc) return
+    if (insc.facing && insc.facing !== OPP_DIR[facing as unknown as EdgeDir]) return
+    const fw = near.x2 - near.x1
+    const fh = near.y2 - near.y1
+    const pw = fw * 0.42, ph = fh * 0.30
+    const pxx = near.x1 + (fw - pw) / 2
+    const pyy = near.y1 + fh * 0.26
+    const op = Math.max(0.15, 1 - fogAt(d))
+    const lines = Math.min(4, Math.max(2, insc.text.join(' ').length > 40 ? 4 : 3))
+    const lineNodes: React.ReactNode[] = []
+    for (let li = 0; li < lines; li++) {
+      const ly = pyy + ph * (0.25 + (li * 0.55) / lines)
+      const inset = li === lines - 1 ? 0.30 : 0.14   // last line shorter, like real epitaphs
+      lineNodes.push(<line key={li} x1={pxx + pw * inset} y1={ly} x2={pxx + pw * (1 - inset)} y2={ly}
+        stroke="rgba(0,0,0,0.55)" strokeWidth={Math.max(0.8, ph * 0.06)} />)
+    }
+    nodes.push(
+      <g key={`insc_${d}_${s}`} opacity={op}>
+        <rect x={pxx - fw * 0.015} y={pyy - fh * 0.015} width={pw + fw * 0.03} height={ph + fh * 0.03}
+          rx={2} fill="rgba(0,0,0,0.35)" />
+        <rect x={pxx} y={pyy} width={pw} height={ph} rx={1.5} fill={pal.frontWall(Math.max(1, d - 1))} />
+        <rect x={pxx} y={pyy} width={pw} height={ph * 0.12} fill="rgba(255,255,255,0.08)" />
+        {lineNodes}
+      </g>,
+    )
+  }
 
   // ── 1. Ceiling base ──────────────────────────────────────────────────────────
   // Bands from screen-top (closest overhead) toward horizon (d=MAX_D)
@@ -297,6 +405,7 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
     if (y1 <= y0) continue
     nodes.push(
       <rect key={`cb${d}`} x={0} y={y0} width={VW} height={y1 - y0} fill={pal.ceilBand(d + 1)} />,
+      lightExtra(d) > 0 && <rect key={`cbl${d}`} x={0} y={y0} width={VW} height={y1 - y0} fill={`rgba(0,0,0,${lightExtra(d)})`} />,
     )
   }
 
@@ -343,6 +452,7 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
     if (y1 <= y0) continue
     nodes.push(
       <rect key={`fb${d}`} x={0} y={y0} width={VW} height={y1 - y0} fill={pal.floorBand(d)} />,
+      lightExtra(d) > 0 && <rect key={`fbl${d}`} x={0} y={y0} width={VW} height={y1 - y0} fill={`rgba(0,0,0,${lightExtra(d)})`} />,
     )
   }
 
@@ -378,7 +488,7 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
     for (const s of lateralOrder) {
       const near = cellFaceRect(d - 1, s)
       const far  = cellFaceRect(d,     s)
-      const fog  = depthFog(d)
+      const fog  = fogAt(d)
       const fw = near.x2 - near.x1
       const fh = near.y2 - near.y1
 
@@ -399,6 +509,8 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
           <rect key={`fwao_${d}_${s}`} x={near.x1} y={near.y1 - fh * 0.08} width={fw} height={fh * 0.08} fill="url(#ao-up)" />,
           fog > 0 && <rect key={`fwf_${d}_${s}`} x={near.x1} y={near.y1} width={fw} height={fh} fill={`rgba(0,0,0,${fog})`} />,
         )
+        drawWallSwitch(ncx, ncy, near, d, s)
+        drawWallInscription(ncx, ncy, near, d, s)
         continue
       }
 
@@ -426,8 +538,111 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
         )
       }
 
-      // Special terrain floor quad — this cell's footprint only (water/lava/void)
+      // Stairs: true-perspective step geometry, always receding away from the
+      // viewer. Camera sits at the back of the player's cell, so a point at
+      // depth-fraction t inside cell d is z = d + t; height u is measured in
+      // wall-heights above the floor (0 = floor, 1 = ceiling).
       const kind = getCellKind(map, cx, cy)
+      if (kind === 'stairs_down' || kind === 'stairs_up') {
+        const zAt = (t: number) => Math.max(0.55, d + t)
+        const sxAt = (z: number, fx: number) => VP_X + (s - 0.5 + fx) * (PF_X / z)
+        const syAt = (z: number, u: number) => VP_Y + (PF_Y / z) * (1 - 2 * u)
+        const quad = (t1: number, u1: number, t2: number, u2: number, fxa: number, fxb: number) => {
+          const z1 = zAt(t1), z2 = zAt(t2)
+          return `${sxAt(z1, fxa)},${syAt(z1, u1)} ${sxAt(z1, fxb)},${syAt(z1, u1)} ${sxAt(z2, fxb)},${syAt(z2, u2)} ${sxAt(z2, fxa)},${syAt(z2, u2)}`
+        }
+        const N = 4, fxa = 0.16, fxb = 0.84, t0 = 0.12
+        const stepT = (i: number) => t0 + (1 - t0) * (i / N)
+        if (kind === 'stairs_down') {
+          // A hole in the floor: everything below floor level is only visible
+          // THROUGH the opening, so the whole well is clipped to the opening's
+          // floor-plane footprint. Near treads hide under the lip (correct —
+          // you only see the deeper section), the shaft bottoms out in darkness.
+          const zn = zAt(t0), zf = zAt(1)
+          const uBot = -1.1
+          const openPts = `${sxAt(zn, fxa)},${syAt(zn, 0)} ${sxAt(zn, fxb)},${syAt(zn, 0)} ${sxAt(zf, fxb)},${syAt(zf, 0)} ${sxAt(zf, fxa)},${syAt(zf, 0)}`
+          const clipId = `stdn_${d}_${s}`
+          nodes.push(<defs key={`${clipId}_def`}><clipPath id={clipId}><polygon points={openPts} /></clipPath></defs>)
+          const well: React.ReactNode[] = []
+          well.push(<polygon key="void" points={openPts} fill="hsl(240 10% 2%)" />)
+          well.push(<polygon key="farw"
+            points={`${sxAt(zf, fxa)},${syAt(zf, 0)} ${sxAt(zf, fxb)},${syAt(zf, 0)} ${sxAt(zf, fxb)},${syAt(zf, uBot)} ${sxAt(zf, fxa)},${syAt(zf, uBot)}`}
+            fill="hsl(240 7% 7%)" />)
+          for (const [fx, kn] of [[fxa, 'l'], [fxb, 'r']] as const) {
+            well.push(<polygon key={`ch${kn}`}
+              points={`${sxAt(zn, fx)},${syAt(zn, 0)} ${sxAt(zf, fx)},${syAt(zf, 0)} ${sxAt(zf, fx)},${syAt(zf, uBot)} ${sxAt(zn, fx)},${syAt(zn, uBot)}`}
+              fill="hsl(240 7% 5%)" />)
+          }
+          // Treads, deepest first. Room light spills a short way into the
+          // shaft — the upper treads get a warm wash, the last melts into the
+          // void — and strong near-edge lips keep the steps legible.
+          for (let i = N - 1; i >= 0; i--) {
+            const u = -0.42 * ((i + 1) / N)
+            const zi = zAt(stepT(i))
+            const treadPts = quad(stepT(i), u, stepT(i + 1), u, fxa, fxb)
+            well.push(
+              <polygon key={`t${i}`} points={treadPts} fill={pal.floorBand(d)} />,
+              <polygon key={`ts${i}`} points={treadPts}
+                fill={i < 2 ? `rgba(255,220,160,${0.14 - 0.06 * i})` : `rgba(0,0,0,${0.18 + 0.3 * (i - 2)})`} />,
+              <line key={`tl${i}`} x1={sxAt(zi, fxa)} y1={syAt(zi, u)} x2={sxAt(zi, fxb)} y2={syAt(zi, u)}
+                stroke={`rgba(255,235,200,${Math.max(0.06, 0.26 - 0.07 * i)})`} strokeWidth={1} />,
+            )
+          }
+          if (fog > 0) well.push(<polygon key="fog" points={openPts} fill={`rgba(0,0,0,${fog * 0.8})`} />)
+          nodes.push(<g key={`stdng_${d}_${s}`} clipPath={`url(#${clipId})`}>{well}</g>)
+          nodes.push(<line key={`strim_${d}_${s}`} x1={sxAt(zn, fxa)} y1={syAt(zn, 0)} x2={sxAt(zn, fxb)} y2={syAt(zn, 0)}
+            stroke={pal.wallEdge(d)} strokeWidth={1} opacity={0.5} />)
+        } else {
+          // A solid staircase climbing the full wall height and passing through
+          // a warm-lit opening cut into the ceiling plane. Painter order:
+          // opening first, then side masses, then riser/tread faces far-to-near
+          // so the top steps correctly occlude the hole they climb into.
+          const zf = zAt(1)
+          const tOpen = 0.45
+          const zo = zAt(tOpen)
+          const openPts = `${sxAt(zo, fxa)},${syAt(zo, 1)} ${sxAt(zo, fxb)},${syAt(zo, 1)} ${sxAt(zf, fxb)},${syAt(zf, 1)} ${sxAt(zf, fxa)},${syAt(zf, 1)}`
+          nodes.push(
+            <polygon key={`stuo_${d}_${s}`} points={openPts} fill="hsl(38 42% 26%)" />,
+            <polygon key={`stuog_${d}_${s}`} points={openPts} fill="rgba(255,220,150,0.30)" />,
+            <line key={`stuor_${d}_${s}`} x1={sxAt(zo, fxa)} y1={syAt(zo, 1)} x2={sxAt(zo, fxb)} y2={syAt(zo, 1)}
+              stroke="rgba(255,225,170,0.45)" strokeWidth={1} />,
+          )
+          for (const [fx, kn] of [[fxa, 'l'], [fxb, 'r']] as const) {
+            const pts: string[] = [`${sxAt(zAt(t0), fx)},${syAt(zAt(t0), 0)}`]
+            for (let i = 0; i < N; i++) {
+              const uHi = (i + 1) / N
+              pts.push(`${sxAt(zAt(stepT(i)), fx)},${syAt(zAt(stepT(i)), uHi)}`)
+              pts.push(`${sxAt(zAt(stepT(i + 1)), fx)},${syAt(zAt(stepT(i + 1)), uHi)}`)
+            }
+            pts.push(`${sxAt(zf, fx)},${syAt(zf, 0)}`)
+            nodes.push(
+              <polygon key={`stup_ch${kn}_${d}_${s}`} points={pts.join(' ')} fill={pal.sideWall(d)} />,
+              <polygon key={`stup_chs${kn}_${d}_${s}`} points={pts.join(' ')} fill="rgba(0,0,0,0.25)" />,
+            )
+          }
+          for (let i = N - 1; i >= 0; i--) {
+            const uLo = i / N, uHi = (i + 1) / N
+            const zi = zAt(stepT(i))
+            const riserPts = `${sxAt(zi, fxa)},${syAt(zi, uLo)} ${sxAt(zi, fxb)},${syAt(zi, uLo)} ${sxAt(zi, fxb)},${syAt(zi, uHi)} ${sxAt(zi, fxa)},${syAt(zi, uHi)}`
+            nodes.push(
+              <polygon key={`sr_${d}_${s}_${i}`}  points={riserPts} fill={pal.frontWall(d)} />,
+              <polygon key={`srw_${d}_${s}_${i}`} points={riserPts} fill={`rgba(255,220,150,${0.06 + 0.07 * i})`} />,
+            )
+            // The tread above the top riser is the floor of the level above —
+            // it lives beyond the ceiling opening, so it isn't drawn
+            if (i < N - 1) {
+              nodes.push(
+                <polygon key={`st_${d}_${s}_${i}`}  points={quad(stepT(i), uHi, stepT(i + 1), uHi, fxa, fxb)} fill={pal.floorBand(d)} />,
+                <polygon key={`stw_${d}_${s}_${i}`} points={quad(stepT(i), uHi, stepT(i + 1), uHi, fxa, fxb)}
+                  fill={`rgba(255,225,160,${0.06 + 0.08 * i})`} />,
+              )
+            }
+          }
+          if (fog > 0) nodes.push(<polygon key={`stf_${d}_${s}`} points={quad(t0, 0, 1, 1, fxa, fxb)} fill={`rgba(0,0,0,${fog * 0.8})`} />)
+        }
+      }
+
+      // Special terrain floor quad — this cell's footprint only (water/lava/void)
       if (kind === 'water' || kind === 'lava' || kind === 'void') {
         const tFill =
           kind === 'water' ? `hsl(210 60% ${Math.max(8, 26 - d * 4)}%)` :
@@ -443,15 +658,15 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
       // Cell contents — entities first, then volume objects; the near boundary
       // (door/wall) is painted after so closed doors hide the room behind them
       const entGroup: React.ReactNode[] = []
-      drawCellEntities(d, s, entGroup)
+      if (d <= viewD) drawCellEntities(d, s, entGroup)
       if (entGroup.length > 0) nodes.push(<g key={`ce_${d}_${s}`}>{entGroup}</g>)
 
-      // Own-cell pass stops here: volume objects would render oversized and the
-      // near boundary plane sits behind the camera at d = 0
-      if (d === 0) continue
-
+      // Sub-cube dressing at true perspective depth. The camera sits at the
+      // back of the player's cell, so an object at depth-fraction zFrac inside
+      // cell d is z = d + zFrac cells out — including the player's own cell,
+      // where anything level with or behind the camera (z < 0.5) is culled.
       {
-        const scObjs = map.cells[`${cx},${cy}`]?.subcubeObjects
+        const scObjs = d <= viewD ? map.cells[`${cx},${cy}`]?.subcubeObjects : undefined
         if (scObjs && scObjs.length > 0) {
           const sorted = [...scObjs].sort((a, b) => {
             const za = subcubeScreenFracs(a.pos, facing).zFrac
@@ -467,36 +682,57 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
             const def = getSubcubeDef(obj.kind)
             if (!def) continue
             const { xFrac, yFrac, zFrac } = subcubeScreenFracs(obj.pos, facing)
-            const sx1 = near.x1 + (far.x1 - near.x1) * zFrac
-            const sx2 = near.x2 + (far.x2 - near.x2) * zFrac
-            const sy1 = near.y1 + (far.y1 - near.y1) * zFrac
-            const sy2 = near.y2 + (far.y2 - near.y2) * zFrac
-            const sw2 = sx2 - sx1, sh2 = sy2 - sy1
-            const screenX = sx1 + sw2 * xFrac
-            const screenY = sy2 - sh2 * yFrac
-            const emojiSize = Math.max(6, Math.min(fw * 0.45, sh2 * 0.38))
-            const opacity = Math.max(0.25, 1 - fog * 1.8)
+            const z = d + zFrac
+            if (z < 0.5) continue
+            const wallHalf = PF_Y / z   // wall half-height on screen at this depth
+            const cellW = PF_X / z      // full cell width on screen at this depth
+
+            // Wall-mounted kinds snap flush to the side wall of their column
+            let ax = xFrac
+            if (def.mount === 'wall') {
+              if (xFrac < 0.34) ax = 0.05
+              else if (xFrac > 0.66) ax = 0.95
+            }
+            const screenX = VP_X + (s - 0.5 + ax) * cellW
+
+            const spriteH = wallHalf * 2 * def.scale
+            const spriteW = spriteH / (spriteAspect(obj.kind) ?? 1)
+            const floorY = VP_Y + wallHalf
+            const ceilY  = VP_Y - wallHalf
+            let screenY = VP_Y + wallHalf * (1 - 2 * yFrac)   // sub-cube centre
+            if (def.mount === 'floor' && obj.pos.y === 0) screenY = floorY - spriteH / 2
+            else if (def.mount === 'ceiling' && obj.pos.y === 2) screenY = ceilY + spriteH / 2
+
+            const zFog = Math.min(0.72, Math.max(0, (z - 2) * 0.18))
+            const opacity = Math.max(0.25, 1 - zFog * 1.8)
             if (obj.trigger) {
               const glowColor = obj.trigger === 'onInteract' ? 'rgba(56,189,248,0.30)' : obj.trigger === 'onView' ? 'rgba(52,211,153,0.30)' : 'rgba(251,191,36,0.30)'
-              objNodes.push(<circle key={`scg_${d}_${s}_${obj.id}`} cx={screenX} cy={screenY} r={emojiSize * 0.75} fill={glowColor} opacity={opacity} />)
+              objNodes.push(<circle key={`scg_${d}_${s}_${obj.id}`} cx={screenX} cy={screenY} r={spriteH * 0.55} fill={glowColor} opacity={opacity} />)
             }
-            objNodes.push(<text key={`sc_${d}_${s}_${obj.id}`} x={screenX} y={screenY} textAnchor="middle" dominantBaseline="middle" fontSize={emojiSize} opacity={opacity} style={{ userSelect: 'none' }}>{def.icon}</text>)
+            objNodes.push(
+              pixelSprite(obj.kind, screenX, screenY, spriteW, `sc_${d}_${s}_${obj.id}`, opacity)
+              ?? <text key={`sc_${d}_${s}_${obj.id}`} x={screenX} y={screenY} textAnchor="middle" dominantBaseline="middle" fontSize={spriteH * 0.8} opacity={opacity} style={{ userSelect: 'none' }}>{def.icon}</text>,
+            )
           }
           nodes.push(<g key={`scw_${d}_${s}`} clipPath={`url(#${clipId})`}>{objNodes}</g>)
         }
       }
 
+      // Own-cell pass stops here: the near boundary plane sits behind the camera at d = 0
+      if (d === 0) continue
+
       // Near boundary between (d-1,s) and (d,s): wall / door / revealed illusion
       const bk = boundaryKey(ncx, ncy, frontOf(facing))
       const fb = map.boundaries?.[bk] ?? null
-      const blocked = hasBoundaryWall(map, ncx, ncy, frontOf(facing), revealedBoundaries)
+      const blocked = hasBoundaryWall(map, ncx, ncy, frontOf(facing), revealedBoundaries, flags)
       const ghost = fb?.wall === EDGE.ILLUSORY && (revealedBoundaries?.has(bk) ?? false)
       const isDoor = fb?.wall === EDGE.DOOR
 
+      const doorEff = fb?.door ? effectiveDoorState(fb.door, flags) : undefined
       if (ghost) {
         nodes.push(<rect key={`fwg_${d}_${s}`} x={near.x1} y={near.y1} width={fw} height={fh} fill="rgba(160,200,255,0.12)" />)
       } else if (blocked && isDoor) {
-        const locked = (fb?.door?.state ?? 'closed') === 'locked'
+        const locked = (doorEff ?? 'closed') === 'locked'
         const jamb = fw * 0.10, lintel = fh * 0.08, thresh = fh * 0.04
         const dpx = near.x1 + jamb, dpy = near.y1 + lintel
         const dpw = fw - jamb * 2,  dph = fh - lintel - thresh
@@ -508,6 +744,7 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
           <rect key={`dth_${d}_${s}`} x={near.x1}        y={near.y2 - thresh} width={fw} height={thresh} fill={pal.frontWall(d)} />,
           <rect key={`dao_${d}_${s}`} x={near.x1} y={near.y1 - fh * 0.08} width={fw} height={fh * 0.08} fill="url(#ao-up)" />,
           <rect key={`dp_${d}_${s}`}  x={dpx} y={dpy} width={dpw} height={dph} fill={`hsl(28 45% ${woodL}%)`} />,
+          pixelSpriteRect('door_panel', dpx, dpy, dpw, dph, `dpt_${d}_${s}`, 0.9),
           <line key={`dpl1_${d}_${s}`} x1={dpx + dpw * 0.35} y1={dpy + dph * 0.04} x2={dpx + dpw * 0.35} y2={dpy + dph * 0.96} stroke="rgba(0,0,0,0.28)" strokeWidth={0.7} />,
           <line key={`dpl2_${d}_${s}`} x1={dpx + dpw * 0.65} y1={dpy + dph * 0.04} x2={dpx + dpw * 0.65} y2={dpy + dph * 0.96} stroke="rgba(0,0,0,0.28)" strokeWidth={0.7} />,
           <circle key={`dph_${d}_${s}`} cx={dpx + dpw * 0.74} cy={dpy + dph * 0.52} r={Math.max(1.5, fw * 0.028)} fill={locked ? '#b91c1c' : `hsl(44 80% ${Math.max(30, 50 - d * 4)}%)`} />,
@@ -521,7 +758,9 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
           <rect key={`bwao_${d}_${s}`} x={near.x1} y={near.y1 - fh * 0.08} width={fw} height={fh * 0.08} fill="url(#ao-up)" />,
           fog > 0 && <rect key={`bwf_${d}_${s}`} x={near.x1} y={near.y1} width={fw} height={fh} fill={`rgba(0,0,0,${fog})`} />,
         )
-      } else if (isDoor && fb?.door?.state === 'open') {
+        drawWallSwitch(ncx, ncy, near, d, s)
+        drawWallInscription(ncx, ncy, near, d, s)
+      } else if (isDoor && doorEff === 'open') {
         const jamb = fw * 0.10, lintel = fh * 0.08, thresh = fh * 0.04
         nodes.push(
           <rect key={`djlo_${d}_${s}`} x={near.x1}        y={near.y1} width={jamb} height={fh}     fill={pal.frontWall(d)} />,
@@ -551,6 +790,73 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
     const eMX = VP_X + (s * PF_X) / ez
     const entFace = { x1: eMX - eHW, y1: VP_Y - eHH, x2: eMX + eHW, y2: VP_Y + eHH }
 
+    // ── FOE patrol standing in this cell (threat — draws above all else) ─────
+    const foeHere = battle ? undefined : liveFoes.find(f => f.pos.x === fx && f.pos.y === fy)
+    if (foeHere) {
+      const def = ruleset?.enemies.find(en => en.id === foeHere.entity.enemy)
+      const face = entFace
+      const fh2 = face.y2 - face.y1
+      const ncx = (face.x1 + face.x2) / 2
+      const floor2 = face.y2
+      const foeSize = Math.max(14, fh2 * 0.52)
+      const foeFog = Math.max(0.35, 1 - depthFog(d) * 1.2)
+      nodes.push(
+        <g key={`foe_${d}_${s}`} opacity={foeFog}>
+          <ellipse cx={ncx} cy={floor2 - fh2 * 0.02} rx={foeSize * 0.45} ry={foeSize * 0.11} fill="rgba(0,0,0,0.55)" />
+          <ellipse cx={ncx} cy={floor2 - fh2 * 0.02} rx={foeSize * 0.5} ry={foeSize * 0.13} fill="none" stroke="rgba(239,68,68,0.55)" strokeWidth={1.5}>
+            <animate attributeName="opacity" values="1;0.4;1" dur="1.4s" repeatCount="indefinite" />
+          </ellipse>
+          {(def && creatureSprite({ sprite: def.sprite, id: def.id, name: def.name },
+            ncx, floor2 - foeSize * 0.52, foeSize, `foe_px_${d}_${s}`)) ?? (
+            <text x={ncx} y={floor2 - foeSize * 0.55} textAnchor="middle" dominantBaseline="middle"
+              fontSize={foeSize} style={{ userSelect: 'none' }}>{def?.icon ?? '👹'}</text>
+          )}
+          <text x={ncx} y={floor2 - foeSize * 1.14} textAnchor="middle"
+            fontSize={Math.max(7, foeSize * 0.14)} fill="rgba(248,113,113,0.9)"
+            style={{ userSelect: 'none' }}>{def?.name ?? 'Something terrible'}</text>
+        </g>,
+      )
+      return
+    }
+
+    // ── Visible fixed encounter: the monsters stand in the corridor ──────────
+    const fixedEnc = battle ? undefined : (frontCell.entities ?? []).find(
+      (e): e is Extract<CellEntity, { t: 'encounter' }> => e.t === 'encounter' && e.mode === 'fixed',
+    )
+    if (fixedEnc && fixedEnc.table && !(fixedEnc.oncePerVisit && flags[`enc.visited.${fixedEnc.table}`])) {
+      const table = ruleset?.encounterTables.find(t => t.id === fixedEnc.table)
+      const entry = table && [...table.entries].sort((a, b) => b.weight - a.weight)[0]
+      const def = entry ? ruleset?.enemies.find(en => en.id === entry.enemy) : undefined
+      if (def) {
+        const face = entFace
+        const fw2 = face.x2 - face.x1
+        const fh2 = face.y2 - face.y1
+        const floor2 = face.y2
+        const n = Math.max(1, Math.min(3, entry!.min))
+        const encSize = Math.max(12, fh2 * (n > 1 ? 0.34 : 0.42))
+        const encFog = Math.max(0.3, 1 - depthFog(d) * 1.3)
+        const lanes = n === 1 ? [0.5] : n === 2 ? [0.35, 0.65] : [0.25, 0.5, 0.75]
+        nodes.push(
+          <g key={`fenc_${d}_${s}`} opacity={encFog}>
+            {lanes.map((ln, i) => {
+              const ex = face.x1 + fw2 * ln
+              return (
+                <g key={i}>
+                  <ellipse cx={ex} cy={floor2 - fh2 * 0.02} rx={encSize * 0.4} ry={encSize * 0.1} fill="rgba(0,0,0,0.5)" />
+                  {creatureSprite({ sprite: def.sprite, id: def.id, name: def.name },
+                    ex, floor2 - encSize * 0.52, encSize, `fenc_px_${d}_${s}_${i}`) ?? (
+                    <text x={ex} y={floor2 - encSize * 0.55} textAnchor="middle" dominantBaseline="middle"
+                      fontSize={encSize} style={{ userSelect: 'none' }}>{def.icon ?? '👾'}</text>
+                  )}
+                </g>
+              )
+            })}
+          </g>,
+        )
+        return
+      }
+    }
+
     // ── Chest object entity ──────────────────────────────────────────────────
     const chestEnt = (frontCell.entities ?? []).find(
       (e): e is Extract<CellEntity, { t: 'object' }> => e.t === 'object' && e.object.kind === 'chest',
@@ -566,172 +872,66 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
       const cx = (face.x1 + face.x2) / 2
       const entFog = depthFog(d)
 
-      // Chest geometry — flat-bottomed body with a low domed lid
-      const cW  = faceW * 0.46
-      const cH  = faceH * 0.30
-      const fb  = face.y2                  // floor line
-      const fl  = cx - cW / 2
-      const fr  = cx + cW / 2
-      const bodyH  = cH * 0.62
-      const bodyT  = fb - bodyH            // lid seam / top of body
-      const domeH  = cH * 0.38
-      const lidTop = bodyT - domeH         // apex of the closed dome
-      const bandW  = cW * 0.09
-      const bandXs = [fl + cW * 0.16 - bandW / 2, fr - cW * 0.16 - bandW / 2]
-      const rivR   = Math.max(0.8, cW * 0.013)
-      const domePath = `M ${fl},${fb} L ${fl},${bodyT} C ${fl},${lidTop} ${fr},${lidTop} ${fr},${bodyT} L ${fr},${fb} Z`
-      const uid = `${d}_${s}`
-      const clipKey = `chshape_${uid}`
-
-      // Depth-scaled palette + shared gradients (wood grain, metal sheen, gold)
-      const wL = Math.max(10, 30 - d * 3)
-      const mL = Math.max(18, 36 - d * 4)
-      const woodDk  = `hsl(26 40% ${Math.max(4, wL - 7)}%)`
-      const woodMd  = `hsl(30 46% ${wL + 5}%)`
-      const woodLt  = `hsl(34 52% ${wL + 15}%)`
-      const metalDk = `hsl(215 18% ${Math.max(8, mL - 8)}%)`
-      const metalLt = `hsl(210 16% ${mL + 16}%)`
-      const goldCol = `hsl(45 82% ${Math.max(40, 58 - d * 3)}%)`
-      const goldDk  = `hsl(38 72% ${Math.max(28, 42 - d * 3)}%)`
+      // Pixel-sprite chest, bottom-anchored on the cell floor
+      const cW = faceW * 0.5
+      const chestKind = isOpen ? 'chest_open' : 'chest'
+      const chH = cW * (spriteAspect(chestKind) ?? 0.8)
+      const fb = face.y2
       nodes.push(
-        <defs key={`chgrad${uid}`}>
-          <linearGradient id={`chw_${uid}`} x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor={woodLt} />
-            <stop offset="55%" stopColor={woodMd} />
-            <stop offset="100%" stopColor={woodDk} />
-          </linearGradient>
-          <linearGradient id={`chm_${uid}`} x1="0" y1="0" x2="1" y2="0">
-            <stop offset="0%" stopColor={metalDk} />
-            <stop offset="50%" stopColor={metalLt} />
-            <stop offset="100%" stopColor={metalDk} />
-          </linearGradient>
-          <radialGradient id={`chg_${uid}`} cx="50%" cy="35%" r="70%">
-            <stop offset="0%" stopColor={goldCol} />
-            <stop offset="100%" stopColor={goldDk} />
-          </radialGradient>
-        </defs>,
-        // Ground-contact shadow
-        <ellipse key={`chsh${uid}`} cx={cx} cy={fb} rx={cW * 0.56} ry={cH * 0.07} fill="rgba(0,0,0,0.45)" />,
+        <ellipse key={`chsh_${d}_${s}`} cx={cx} cy={fb - chH * 0.04}
+          rx={cW * 0.55} ry={chH * 0.12} fill="rgba(0,0,0,0.45)" />,
       )
-
-      if (!isOpen) {
-        // Closed chest — low dome, riveted iron bands, hasp with lock ───────
-        nodes.push(
-          <defs key={`chdef${uid}`}>
-            <clipPath id={clipKey}><path d={domePath} /></clipPath>
-          </defs>,
-          <path key={`chbody${uid}`} d={domePath} fill={`url(#chw_${uid})`} />,
-          <g key={`chdetail${uid}`} clipPath={`url(#${clipKey})`}>
-            {/* vertical plank joints */}
-            <line x1={fl + cW * 0.33} y1={lidTop} x2={fl + cW * 0.33} y2={fb} stroke="rgba(0,0,0,0.30)" strokeWidth={0.8} />
-            <line x1={fl + cW * 0.66} y1={lidTop} x2={fl + cW * 0.66} y2={fb} stroke="rgba(0,0,0,0.30)" strokeWidth={0.8} />
-            {/* sheen across the dome */}
-            <path d={`M ${fl + cW * 0.08},${bodyT} C ${fl + cW * 0.08},${lidTop + domeH * 0.16} ${fr - cW * 0.08},${lidTop + domeH * 0.16} ${fr - cW * 0.08},${bodyT}`}
-              fill="none" stroke="rgba(255,235,180,0.13)" strokeWidth={domeH * 0.30} />
-            {/* seam shadow under the lid */}
-            <rect x={fl} y={bodyT} width={cW} height={cH * 0.05} fill="rgba(0,0,0,0.35)" />
-            {/* iron bands + base plate */}
-            <rect x={bandXs[0]} y={lidTop} width={bandW} height={fb - lidTop} fill={`url(#chm_${uid})`} />
-            <rect x={bandXs[1]} y={lidTop} width={bandW} height={fb - lidTop} fill={`url(#chm_${uid})`} />
-            <rect x={fl} y={fb - cH * 0.09} width={cW} height={cH * 0.09} fill={metalDk} opacity={0.85} />
-          </g>,
-          // Rivets on the bands
-          <circle key={`chr1${uid}`} cx={bandXs[0] + bandW / 2} cy={bodyT + bodyH * 0.28} r={rivR} fill={metalLt} />,
-          <circle key={`chr2${uid}`} cx={bandXs[1] + bandW / 2} cy={bodyT + bodyH * 0.28} r={rivR} fill={metalLt} />,
-          <circle key={`chr3${uid}`} cx={bandXs[0] + bandW / 2} cy={fb - bodyH * 0.24} r={rivR} fill={metalLt} />,
-          <circle key={`chr4${uid}`} cx={bandXs[1] + bandW / 2} cy={fb - bodyH * 0.24} r={rivR} fill={metalLt} />,
-          <path key={`chout${uid}`} d={domePath} fill="none" stroke={woodDk} strokeWidth={1.2} />,
-          // Hasp plate over the seam + gold catch
-          <rect key={`chhasp${uid}`} x={cx - cW * 0.055} y={bodyT - cH * 0.09} width={cW * 0.11} height={cH * 0.22} fill={`url(#chm_${uid})`} rx={1.5} />,
-          <rect key={`chcatch${uid}`} x={cx - cW * 0.035} y={bodyT + cH * 0.02} width={cW * 0.07} height={cH * 0.10} fill={goldCol} rx={1} />,
-          isLocked && <path key={`chls${uid}`}
-            d={`M${cx - cW * 0.030},${bodyT - cH * 0.09} a${cW * 0.030},${cH * 0.09} 0 0,1 ${cW * 0.06},0`}
-            fill="none" stroke={goldCol} strokeWidth={Math.max(1, cW * 0.018)} />,
-        )
-      } else {
-        // Open chest — lid tipped back (foreshortened arc), treasure over rim ─
-        const lidH = cH * 0.46
-        const lfl = fl + cW * 0.04
-        const lfr = fr - cW * 0.04
-        const inset = cW * 0.06
-        const lidOuter = `M ${lfl},${bodyT} C ${lfl},${bodyT - lidH} ${lfr},${bodyT - lidH} ${lfr},${bodyT} Z`
-        const lidInner = `M ${lfl + inset},${bodyT} C ${lfl + inset},${bodyT - lidH * 0.78} ${lfr - inset},${bodyT - lidH * 0.78} ${lfr - inset},${bodyT} Z`
-        nodes.push(
-          // Lid underside: wooden rim around a darker interior panel
-          <path key={`chlidr${uid}`} d={lidOuter} fill={woodMd} />,
-          <path key={`chlidi${uid}`} d={lidInner} fill={woodDk} />,
-          <path key={`chlido${uid}`} d={lidOuter} fill="none" stroke={woodDk} strokeWidth={1} />,
-          // Treasure mound rising above the rim, with a couple of coins
-          <path key={`chtre${uid}`}
-            d={`M ${fl + cW * 0.07},${bodyT} Q ${cx - cW * 0.18},${bodyT - cH * 0.14} ${cx},${bodyT - cH * 0.10} Q ${cx + cW * 0.22},${bodyT - cH * 0.15} ${fr - cW * 0.07},${bodyT} Z`}
-            fill={`url(#chg_${uid})`} />,
-          <circle key={`chc1${uid}`} cx={cx - cW * 0.16} cy={bodyT - cH * 0.055} r={Math.max(1, cW * 0.022)} fill={goldCol} stroke={goldDk} strokeWidth={0.5} />,
-          <circle key={`chc2${uid}`} cx={cx + cW * 0.10} cy={bodyT - cH * 0.075} r={Math.max(1, cW * 0.022)} fill={goldCol} stroke={goldDk} strokeWidth={0.5} />,
-          // Body front: planks, bands, base plate, rim shadow
-          <rect key={`chbody${uid}`} x={fl} y={bodyT} width={cW} height={bodyH} fill={`url(#chw_${uid})`} />,
-          <line key={`chpl1${uid}`} x1={fl + cW * 0.33} y1={bodyT} x2={fl + cW * 0.33} y2={fb} stroke="rgba(0,0,0,0.30)" strokeWidth={0.8} />,
-          <line key={`chpl2${uid}`} x1={fl + cW * 0.66} y1={bodyT} x2={fl + cW * 0.66} y2={fb} stroke="rgba(0,0,0,0.30)" strokeWidth={0.8} />,
-          <rect key={`chb1${uid}`} x={bandXs[0]} y={bodyT} width={bandW} height={bodyH} fill={`url(#chm_${uid})`} />,
-          <rect key={`chb2${uid}`} x={bandXs[1]} y={bodyT} width={bandW} height={bodyH} fill={`url(#chm_${uid})`} />,
-          <rect key={`chbase${uid}`} x={fl} y={fb - cH * 0.09} width={cW} height={cH * 0.09} fill={metalDk} opacity={0.85} />,
-          <rect key={`chrim${uid}`} x={fl + cW * 0.02} y={bodyT} width={cW * 0.96} height={cH * 0.045} fill="rgba(0,0,0,0.55)" />,
-          <rect key={`chout${uid}`} x={fl} y={bodyT} width={cW} height={bodyH} fill="none" stroke={woodDk} strokeWidth={1.2} />,
-        )
-      }
-
-      // Depth fog over chest area
-      if (entFog > 0) {
-        const fogTop = isOpen ? bodyT - cH * 0.50 : lidTop
-        nodes.push(
-          <polygon key={`chfog${d}`}
-            points={`${fl},${fogTop} ${fr},${fogTop} ${fr},${fb} ${fl},${fb}`}
-            fill={`rgba(0,0,0,${entFog * 0.55})`} />,
-        )
-      }
-
-      // Lock indicator text overlay when locked
+      const chestSpr = pixelSpriteRect(chestKind, cx - cW / 2, fb - chH, cW, chH,
+        `chest_${d}_${s}`, Math.max(0.35, 1 - entFog * 0.8))
+      if (chestSpr) nodes.push(chestSpr)
       if (isLocked) {
-        const iconSz = Math.max(8, faceW * 0.09)
         nodes.push(
-          <text key={`chlockicon${d}`}
-            x={cx} y={bodyT + bodyH * 0.45}
+          <text key={`chlock_${d}_${s}`} x={cx} y={fb - chH * 0.42}
             textAnchor="middle" dominantBaseline="middle"
-            fontSize={iconSz} opacity={Math.max(0.5, 1 - entFog * 0.6)}
-          >🔒</text>,
+            fontSize={Math.max(8, cW * 0.18)} opacity={Math.max(0.5, 1 - entFog * 0.6)}
+            style={{ userSelect: 'none' }}>🔒</text>,
         )
       }
-
       return
     }
 
-    // ── Overlay icon fallback ────────────────────────────────────────────────
-    const icons = (frontCell.overlays ?? [])
-      .map(o => overlayDef(o, customOverlay)?.icon)
-      .filter((x): x is string => Boolean(x))
-    if (icons.length === 0) return
-
-    const face  = entFace
-    const faceW = face.x2 - face.x1
-    const faceH = face.y2 - face.y1
-    const ecx   = (face.x1 + face.x2) / 2
-    const iconSize = Math.max(10, faceW * 0.26)
-    const shadowH  = Math.max(2, faceH * 0.06)
-    const shadowW  = Math.max(4, faceW * 0.18)
-    const entFog   = depthFog(d)
-    nodes.push(
-      <ellipse key={`eshadow_${d}_${s}`}
-        cx={ecx} cy={face.y2 - faceH * 0.08}
-        rx={shadowW} ry={shadowH}
-        fill={`rgba(0,0,0,${0.4 + d * 0.08})`} />,
-      <text key={`eicon_${d}_${s}`}
-        x={ecx} y={face.y2 - faceH * 0.20}
-        textAnchor="middle" dominantBaseline="middle"
-        fontSize={iconSize} opacity={1 - entFog * 0.6}
-      >{icons[0]}</text>,
-      entFog > 0 && <rect key={`efog_${d}_${s}`}
-        x={face.x1} y={face.y1} width={faceW} height={faceH}
-        fill={`rgba(0,0,0,${entFog * 0.5})`} />,
+    // ── NPC standing in the cell ─────────────────────────────────────────────
+    const npcEnt = (frontCell.entities ?? []).find(
+      (e): e is Extract<CellEntity, { t: 'object' }> =>
+        e.t === 'object' && e.object.kind === 'npc'
+        && !(e.object.npc && flags[npcRecruitedFlagKey(e.object.npc)]),
     )
+    if (npcEnt) {
+      const def = npcEnt.object.npc ? ruleset?.npcs.find(n => n.id === npcEnt.object.npc) : undefined
+      const face = entFace
+      const fw2 = face.x2 - face.x1
+      const fh2 = face.y2 - face.y1
+      const ncx = (face.x1 + face.x2) / 2
+      const floor2 = face.y2
+      const size = Math.max(10, fh2 * 0.30)
+      const npcFog = Math.max(0.35, 1 - depthFog(d) * 1.4)
+      const npcSize = size * 1.3
+      nodes.push(
+        <g key={`npc_${d}_${s}`} opacity={npcFog}>
+          <ellipse cx={ncx} cy={floor2 - fh2 * 0.02} rx={size * 0.42} ry={size * 0.10} fill="rgba(0,0,0,0.45)" />
+          {(def && (
+            creatureSprite({ sprite: def.sprite, id: def.id, name: def.name },
+              ncx, floor2 - npcSize * 0.52, npcSize, `npc_px_${d}_${s}`)
+            ?? pixelSprite('cr_hooded', ncx, floor2 - npcSize * 0.52, npcSize, `npc_px_${d}_${s}`)
+          )) ?? (
+            <text x={ncx} y={floor2 - size * 0.55} textAnchor="middle" dominantBaseline="middle"
+              fontSize={size} style={{ userSelect: 'none' }}>{def?.portrait ?? '🧑'}</text>
+          )}
+          <text x={ncx} y={floor2 - npcSize * 1.12} textAnchor="middle"
+            fontSize={Math.max(6, size * 0.16)} fill="rgba(255,255,255,0.8)"
+            style={{ userSelect: 'none' }}>{def?.name ?? 'Stranger'}</text>
+        </g>,
+      )
+      return
+    }
+
+    // Overlay markers (Inn, Boss, Save Point, …) are editor-only annotations —
+    // they intentionally do NOT render in the first-person view.
   }
 
   // ── 4b. Battle: enemies at sub-cube slots of the cells ahead ─────────────────
@@ -755,6 +955,7 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
       const isActive = battle.activeIdx === pl.actorIdx
       const isSelected = battle.selectedIdx === pl.actorIdx
       const isTargetable = battle.targetableIdxs.includes(pl.actorIdx)
+      const isDowned = battle.downedIdxs?.includes(pl.actorIdx) ?? false
 
       // Ground shadow + state rings
       nodes.push(
@@ -786,7 +987,19 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
         )
       }
 
-      // Enemy sprite (emoji v1) with a click-to-target hit area
+      if (isDowned) {
+        nodes.push(
+          <text key={`ben_down_${pl.actorIdx}`} x={exX} y={floorY - size * 0.95}
+            textAnchor="middle" fontSize={size * 0.32} style={{ userSelect: 'none' }}>
+            💫
+            <animate attributeName="opacity" values="1;0.4;1" dur="0.9s" repeatCount="indefinite" />
+          </text>,
+        )
+      }
+
+      // Enemy sprite (creator bitmap → pixel billboard → emoji) with a click-to-target hit area
+      const eDef = actor.defId ? ruleset?.enemies.find(e => e.id === actor.defId) : undefined
+      const enOpacity = battle.targetableIdxs.length === 0 || isTargetable || isActive ? 1 : 0.8
       nodes.push(
         <g key={`ben_${pl.actorIdx}`}
           style={isTargetable ? { cursor: 'pointer' } : undefined}
@@ -794,10 +1007,13 @@ function FirstPersonView({ map, facing, customOverlay, isCellRevealed, revealedB
             ? () => battle.onSelectTarget!(pl.actorIdx)
             : undefined}
         >
-          <text x={exX} y={emY} textAnchor="middle" dominantBaseline="middle"
-            fontSize={size} style={{ userSelect: 'none' }}
-            opacity={battle.targetableIdxs.length === 0 || isTargetable || isActive ? 1 : 0.8}
-          >{actor.icon ?? '👾'}</text>
+          {creatureSprite({ sprite: eDef?.sprite, id: actor.defId, name: actor.name },
+            exX, emY, size * 1.05, `ben_px_${pl.actorIdx}`, enOpacity) ?? (
+            <text x={exX} y={emY} textAnchor="middle" dominantBaseline="middle"
+              fontSize={size} style={{ userSelect: 'none' }}
+              opacity={enOpacity}
+            >{actor.icon ?? '👾'}</text>
+          )}
           <circle cx={exX} cy={emY} r={size * 0.55} fill="transparent" />
         </g>,
       )
@@ -1062,11 +1278,13 @@ function DungeonViewport({
 // ── Main component ────────────────────────────────────────────────────────────
 
 export function PlayWorkspace({
-  activeMap, party, gold, facing,
+  activeMap, party, gold, stepsTaken, facing,
   customBase, customOverlay, isCellRevealed, revealedBoundaries, bumpTrigger,
   flags,
-  combat, ruleset, inventory, onCombatAction, onCombatEnd,
+  combat, ruleset, inventory, reserve = [], formation = { front: [], back: [] },
+  onRosterChange, onInventoryChange, onCombatAction, onCombatEnd,
   onMoveForward, onMoveBack, onTurnLeft, onTurnRight, onInteract,
+  onRest, canSaveHere, onSaveSlot, onLoadSlot, onMenuOpenChange,
 }: PlayWorkspaceProps) {
   const [cellSize, setCellSize] = useState(DEFAULT_CELL + 6)
   const [view, setView] = useState<'3d' | 'map'>('3d')
@@ -1084,6 +1302,52 @@ export function PlayWorkspace({
 
   // Battles play out in first person — snap to the 3D view when one starts
   useEffect(() => { if (combat) setView('3d') }, [combat])
+
+  // Battle SFX: fire one-shots off the combat feedback events (hit/crit/heal).
+  const sfxSeqRef = useRef(0)
+  useEffect(() => {
+    if (!combat) { sfxSeqRef.current = 0; return }
+    if (combat.eventSeq === sfxSeqRef.current) return
+    sfxSeqRef.current = combat.eventSeq
+    const kinds = new Set(combat.events.map(ev => ev.kind))
+    if (kinds.has('crit')) music.sfx('crit')
+    else if (kinds.has('damage') || kinds.has('weak') || kinds.has('resist')) music.sfx('hit')
+    if (kinds.has('heal')) music.sfx('heal')
+  }, [combat])
+
+  // While Play is mounted the floating Buy-Me-a-Coffee button (vendor widget
+  // or fallback link) hides — the party HUD carries an inline coffee chip next
+  // to the Steps counter instead. The vendor widget mounts asynchronously, so
+  // keep re-asserting until it exists; restore on unmount.
+  useEffect(() => {
+    const setHidden = (hidden: boolean) => {
+      for (const id of ['bmc-wbtn', 'bmc-fallback']) {
+        const el = document.getElementById(id)
+        if (el) el.style.display = hidden ? 'none' : ''
+      }
+    }
+    setHidden(true)
+    const timer = window.setInterval(() => setHidden(true), 1000)
+    return () => { window.clearInterval(timer); setHidden(false) }
+  }, [])
+
+  // Tab opens the main menu (the hub for items/magic/equip/party/journal/camp/
+  // save/config); M toggles the full map view on/off.
+  const [showMenu, setShowMenu] = useState(false)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return
+      const tag = (e.target as HTMLElement)?.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
+      if (e.key === 'Tab' && !combat) { e.preventDefault(); setShowMenu(true) }
+      else if (e.key === 'm' || e.key === 'M') setView(v => v === '3d' ? 'map' : '3d')
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [combat])
+  useEffect(() => { onMenuOpenChange?.(showMenu) }, [showMenu, onMenuOpenChange])
+  // A battle takes over — never leave the menu open into combat.
+  useEffect(() => { if (combat) setShowMenu(false) }, [combat])
 
   const viewRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
@@ -1105,6 +1369,19 @@ export function PlayWorkspace({
 
   const px = activeMap.playerX; const py = activeMap.playerY
 
+  // The full-map view (M) is fogged by the walked trail — the same per-cell
+  // exploration set the minimap uses, NOT the editor's generous chunk fog
+  // (which feeds the 3D renderer so it can draw the corridor ahead).
+  const seenSet = new Set(activeMap.seenCells ?? [])
+  seenSet.add(`${px},${py}`)
+  const isSeenCell = (x: number, y: number) => seenSet.has(`${x},${y}`)
+
+  // Dark maps (or local darkness zones) limit view to the party's light
+  const playerCell = activeMap.cells[`${px},${py}`]
+  const lightRadius = (activeMap.dark || cellHasTrick(playerCell, 'darkness'))
+    ? computeLightRadius(party, ruleset, playerCell)
+    : undefined
+
   return (
     <div className="flex flex-col h-full min-h-0">
 
@@ -1118,6 +1395,15 @@ export function PlayWorkspace({
           <span className="text-amber-400/70 font-mono">{facing}</span>
         </div>
         <div className="flex items-center gap-1">
+          {!combat && (
+            <button
+              onClick={() => setShowMenu(true)}
+              title="Menu — items, magic, equip, party, journal, camp, save (Tab)"
+              className="flex items-center gap-1 px-2 h-6 rounded text-xs text-white/50 hover:text-white hover:bg-white/10 transition-colors"
+            >
+              <Menu className="w-3.5 h-3.5" /> Menu
+            </button>
+          )}
           <button
             onClick={() => setView(v => v === '3d' ? 'map' : '3d')}
             title={view === '3d' ? 'Switch to map view' : 'Switch to 3D view'}
@@ -1150,7 +1436,12 @@ export function PlayWorkspace({
             revealedBoundaries={revealedBoundaries}
             flags={flags}
             battle={battleView}
+            ruleset={ruleset}
+            lightRadius={lightRadius}
           />
+          {!combat && (
+            <Minimap map={activeMap} facing={facing} flags={flags} ruleset={ruleset} />
+          )}
           {combat && <BattleOutcomeOverlay state={combat} ruleset={ruleset} onContinue={onCombatEnd} />}
         </div>
       ) : (
@@ -1160,7 +1451,7 @@ export function PlayWorkspace({
           facing={facing}
           customBase={customBase}
           customOverlay={customOverlay}
-          isCellRevealed={isCellRevealed}
+          isCellRevealed={isSeenCell}
         />
       )}
 
@@ -1171,7 +1462,7 @@ export function PlayWorkspace({
         ) : (
           <>
             <div className="flex-1 min-w-0">
-              <PartyHud party={party} gold={gold} />
+              <PartyHud party={party} gold={gold} steps={stepsTaken} />
             </div>
             <BlobberDPad
               onForward={onMoveForward}
@@ -1184,6 +1475,25 @@ export function PlayWorkspace({
         )}
       </div>
 
+      {showMenu && !combat && onRosterChange && onInventoryChange && (
+        <GameMenu
+          ruleset={ruleset}
+          party={party}
+          reserve={reserve}
+          formation={formation}
+          inventory={inventory}
+          gold={gold}
+          flags={flags}
+          mapName={activeMap.name}
+          canSaveHere={!!canSaveHere}
+          onRosterChange={onRosterChange}
+          onInventoryChange={onInventoryChange}
+          onRest={onRest}
+          onSaveSlot={onSaveSlot}
+          onLoadSlot={onLoadSlot}
+          onClose={() => setShowMenu(false)}
+        />
+      )}
     </div>
   )
 }

@@ -36,6 +36,8 @@ export interface BattleViewState {
   events: CombatEvent[]
   /** Monotonic action counter — keys popup animations so they replay */
   eventSeq: number
+  /** pressTurn: enemy actor idxs currently knocked down (All-Out fodder). */
+  downedIdxs?: number[]
   onSelectTarget?: (actorIdx: number) => void
 }
 

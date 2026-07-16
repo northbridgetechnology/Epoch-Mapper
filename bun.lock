@@ -21,6 +21,7 @@
         "@typescript-eslint/eslint-plugin": "^8.62.0",
         "@typescript-eslint/parser": "^8.62.0",
         "autoprefixer": "^10.4.20",
+        "esbuild": "^0.27.0",
         "eslint": "^9",
         "eslint-config-next": "^15.1.0",
         "next": "^15.1.0",

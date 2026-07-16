@@ -1,39 +1,51 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Plus, Trash2, MapPin, Eraser, X, Search, Pipette } from 'lucide-react'
+import { Plus, Trash2, MapPin, Eraser, X, Search, Pipette, Github } from 'lucide-react'
 import { toast } from 'sonner'
+import { notify } from '@/lib/notify'
 import { cn, uid } from '@/lib/utils'
 import {
-  BASE, BASE_PALETTE, BASE_TYPES, CHUNK_SIZE, DEFAULT_CELL, EDGE, EDGE_PALETTE, EDGE_TYPES,
+  BASE, BASE_PALETTE, BASE_TYPES, CHUNK_SIZE, DEFAULT_CELL, EDGE, EDGE_PALETTE, EDGE_TYPES, OVERLAY,
   MAX_CELL, MAX_NOTE_LEN, MIN_CELL, OVERLAY_PALETTE, OVERLAY_TYPES, VIEWPORT_CELLS,
   baseDef, boundaryKey, edgeDef, overlayDef,
 } from '@/lib/constants'
 import type { CellData, CellMap, CustomMarker, EdgeDir, EpochmapFile, MapData, MarkerDef, SubcubeObject } from '@/lib/types'
 import { getTheme } from '@/lib/themes'
 import { parseDotEpochmap, serializeDotEpochmap } from '@/lib/epochmap-codec'
+import { zipSync } from 'fflate'
+import { gatherAudioBlobs, restoreAudioBlobs, clearAudioStore } from '@/lib/audio-store'
+import { music } from '@/lib/audio-controller'
+import { resolveTrack, trackById } from '@/lib/music'
 import { resolveMarkerImport, remapMapMarkers } from '@/lib/markers'
 import { exportMapsAsPdf } from '@/lib/dungeon-export'
 import { Map, Database, Users, Play, Settings } from 'lucide-react'
 import { Toolbar } from './Toolbar'
 import { WelcomeModal } from './WelcomeModal'
 import { NewMapModal } from './NewMapModal'
-import { buildBaseMap, buildGeneratedMap, type NewMapConfig } from '@/lib/map-generator'
+import { buildBaseMap, buildGeneratedWorld, type NewMapConfig } from '@/lib/map-generator'
 import { CellTooltip } from './CellTooltip'
 import { MarkerPalette } from './MarkerPalette'
-import { PartyWorkspace } from './workspaces/PartyWorkspace'
+import { CharactersWorkspace } from './workspaces/CharactersWorkspace'
 import { DatabaseWorkspace } from './workspaces/DatabaseWorkspace'
 import { PlayWorkspace } from './workspaces/PlayWorkspace'
 import { SettingsWorkspace } from './workspaces/SettingsWorkspace'
-import type { BoundaryData, Character, CellEntity, DoorDef, DoorState, Facing, Formation, ItemInstance, ResolvedEncounter, Ruleset } from '@/lib/engine-types'
-import { makeDefaultRuleset } from '@/lib/default-ruleset'
-import { savePartyTemplate, loadPartyTemplate } from '@/lib/save-state'
-import { checkCellForEncounter, resolveEncounterTable, visitedFlagKey } from '@/lib/encounter-engine'
+import type { BoundaryData, Character, CellEntity, DoorDef, DoorState, Effect, Facing, Formation, GameMeta, ItemInstance, ResolvedEncounter, InscriptionDef, Ruleset, SaveState, SwitchDef, TransitionStyle } from '@/lib/engine-types'
+import { makeDefaultRuleset, normalizeRuleset } from '@/lib/default-ruleset'
+import { savePartyTemplate, loadPartyTemplate, clearPartyTemplate, saveToSlot, loadFromSlot, deleteAllSlots, listSaveSlots, npcToCharacter } from '@/lib/save-state'
+import { checkCellForEncounter, resolveEncounterTable, makeFixedEncounter, visitedFlagKey } from '@/lib/encounter-engine'
 import { EncounterModal } from './EncounterModal'
+import { DialogueOverlay } from './DialogueOverlay'
+import { resolveText } from '@/lib/text-tokens'
+import { OpeningStoryOverlay } from './OpeningStory'
+import { CharacterBuilder } from './CharacterBuilder'
+import { applyMoveTricks, cellHasTrick, chartWalkedCell, tickLightBurn, tickExplorationStatuses, restParty, advanceFoes, listFoes, foeFlagKey } from '@/lib/exploration'
+import { resolveEdgeCrossing, oppositeEdge } from '@/lib/world'
 import { initCombat, applyCombatOutcome, consumeCombatItems, type CombatState } from '@/lib/combat-engine'
 import { CellInspector } from './CellInspector'
+import { usePanelWidth } from './ui/ResizablePanel'
 import { ShopModal } from './ShopModal'
-import { getTriggeredEvents, resolveExploreEffects, getInteractableObjects, objectUsedFlagKey, resolveLootTable, type ExploreEffect, type EventContext } from '@/lib/event-engine'
+import { runCellEvents, applyFlagWriteWithReactions, resolveExploreEffects, applyExploreHarm, dialogueStartNode, dialogueNodeById, eligibleChoices, enterDialogueNode, applyDialogueChoice, getInteractableObjects, objectUsedFlagKey, resolveLootTable, effectiveDoorState, npcRecruitedFlagKey, type ExploreEffect, type EventContext } from '@/lib/event-engine'
 
 const DRAFT_KEY = 'epochmapper.draft'
 const WELCOME_KEY = 'epochmapper.welcomed'
@@ -72,6 +84,42 @@ function stampCell(sample: CellData): CellData {
 
 const EMPTY_CELL: CellData = { base: 0, overlays: [] }
 
+/** Import merge: add the imported ruleset's content collections into the current
+ *  one (keep current definitions on an id clash; append imported-only extras) so
+ *  imported maps' NPCs/events/items work — without hijacking the current game's
+ *  meta (title/opening/rules stay). */
+function mergeImportedRuleset(current: Ruleset, imported: Ruleset): Ruleset {
+  const union = <T extends { id: string }>(a: T[] = [], b: T[] = []): T[] => {
+    const byId = new globalThis.Map<string, T>(a.map(x => [x.id, x]))
+    for (const x of b) if (!byId.has(x.id)) byId.set(x.id, x)
+    return [...byId.values()]
+  }
+  return {
+    ...current,
+    items: union(current.items, imported.items),
+    spells: union(current.spells, imported.spells),
+    statusEffects: union(current.statusEffects, imported.statusEffects),
+    enemies: union(current.enemies, imported.enemies),
+    encounterTables: union(current.encounterTables, imported.encounterTables),
+    lootTables: union(current.lootTables, imported.lootTables),
+    shops: union(current.shops, imported.shops),
+    npcs: union(current.npcs, imported.npcs),
+    quests: union(current.quests, imported.quests),
+    events: union(current.events, imported.events),
+  }
+}
+
+/** Game-over test: the whole party has fallen, or (with meta.mcDeathEndsGame)
+ *  the Main Character has fallen even if companions still stand. */
+function partyDefeated(party: Character[], meta: GameMeta): boolean {
+  if (party.length > 0 && party.every(c => !c.alive)) return true
+  if (meta.mcDeathEndsGame) {
+    const protagonist = party.find(c => c.isMc)
+    if (protagonist && !protagonist.alive) return true
+  }
+  return false
+}
+
 function isCellEmpty(c: CellData) {
   return (c.base ?? 0) === 0 && c.overlays.length === 0 && !c.note && !c.entities?.length
 }
@@ -103,7 +151,7 @@ function newSession(): EpochmapFile {
 
 // ── Edge stripe ────────────────────────────────────────────────────────────────
 
-function EdgeStripe({ dir, type, cellSize }: { dir: EdgeDir; type: number; cellSize: number }) {
+function EdgeStripe({ dir, type, cellSize, hasSwitch }: { dir: EdgeDir; type: number; cellSize: number; hasSwitch?: boolean }) {
   const color = edgeDef(type).color
   const w = Math.max(2, Math.round(cellSize / 8))
   const gap = type === 0 ? 0 : Math.round(cellSize * 0.18)
@@ -112,7 +160,18 @@ function EdgeStripe({ dir, type, cellSize }: { dir: EdgeDir; type: number; cellS
   if (dir === 'S') Object.assign(style, { bottom: 0, left: gap, right: gap, height: w })
   if (dir === 'W') Object.assign(style, { left: 0, top: gap, bottom: gap, width: w })
   if (dir === 'E') Object.assign(style, { right: 0, top: gap, bottom: gap, width: w })
-  return <div style={style} />
+  if (!hasSwitch) return <div style={style} />
+  const dotSize = Math.max(4, Math.round(cellSize / 5))
+  const dot: React.CSSProperties = {
+    position: 'absolute', width: dotSize, height: dotSize, borderRadius: '9999px',
+    backgroundColor: 'hsl(44 90% 55%)', border: '1px solid rgba(0,0,0,0.6)',
+    pointerEvents: 'none', zIndex: 12,
+  }
+  if (dir === 'N') Object.assign(dot, { top: -dotSize / 2 + w / 2, left: '50%', transform: 'translateX(-50%)' })
+  if (dir === 'S') Object.assign(dot, { bottom: -dotSize / 2 + w / 2, left: '50%', transform: 'translateX(-50%)' })
+  if (dir === 'W') Object.assign(dot, { left: -dotSize / 2 + w / 2, top: '50%', transform: 'translateY(-50%)' })
+  if (dir === 'E') Object.assign(dot, { right: -dotSize / 2 + w / 2, top: '50%', transform: 'translateY(-50%)' })
+  return <><div style={style} /><div style={dot} /></>
 }
 
 function edgeZoneStyle(zone: EdgeDir): React.CSSProperties {
@@ -147,6 +206,13 @@ export interface DungeonMapperProps {
   onSessionChange?: (session: EpochmapFile) => void
   /** Show the first-visit welcome modal in standalone mode. Default true. */
   welcomeOnFirstVisit?: boolean
+  /**
+   * Distribution (player) mode: hides every design surface — the activity bar
+   * and all editor workspaces — and boots straight into Play. The whole
+   * authoring UI is suppressed so a built game can be handed to players. Pair
+   * with `initialSession` (the embedded game) and `layout="fill"`.
+   */
+  distribution?: boolean
 }
 
 export function DungeonMapper({
@@ -154,8 +220,10 @@ export function DungeonMapper({
   initialSession,
   onSessionChange,
   welcomeOnFirstVisit = true,
+  distribution = false,
 }: DungeonMapperProps = {}) {
   const controlled = !!onSessionChange || !!initialSession
+  const showWelcomeGate = welcomeOnFirstVisit && !distribution
   const [gameTitle, setGameTitle] = useState('')
   const [romHash, setRomHash] = useState('')
   const [customMarkers, setCustomMarkers] = useState<CustomMarker[]>([])
@@ -191,12 +259,13 @@ export function DungeonMapper({
   const [viewportRef, viewportSize] = useElementSize<HTMLElement>()
 
   // Activity-bar workspace
-  type Workspace = 'map' | 'database' | 'party' | 'play' | 'settings'
-  const [workspace, setWorkspace] = useState<Workspace>('map')
+  type Workspace = 'map' | 'database' | 'characters' | 'play' | 'settings'
+  const [workspace, setWorkspace] = useState<Workspace>(distribution ? 'play' : 'map')
   const workspaceRef = useRef<Workspace>('map')
   workspaceRef.current = workspace
   const [ruleset, setRuleset] = useState<Ruleset>(() => makeDefaultRuleset())
   const [party, setParty] = useState<Character[]>([])
+  const [reserve, setReserve] = useState<Character[]>([])
   const [formation, setFormation] = useState<Formation>({ front: [], back: [] })
   const [inventory, setInventory] = useState<ItemInstance[]>([])
   const [gold, setGold] = useState<number>(100)
@@ -205,6 +274,8 @@ export function DungeonMapper({
   const [combatState, setCombatState] = useState<CombatState | null>(null)
   const handleCombatAction = useCallback((next: CombatState) => setCombatState(next), [])
   const [inspectedCell, setInspectedCell] = useState<{ x: number; y: number } | null>(null)
+  const [paletteW, paletteHandle] = usePanelWidth('palette', 'left', 320)
+  const [cellInspW, cellInspHandle] = usePanelWidth('cell-inspector', 'right', 340)
   const [shopId, setShopId] = useState<string | null>(null)
   const [facing, setFacing] = useState<Facing>('N')
   const facingRef = useRef<Facing>('N')
@@ -217,6 +288,47 @@ export function DungeonMapper({
   // Refs so the keyboard handler can read current modal state without stale closures
   const combatStateRef = useRef<CombatState | null>(null)
   combatStateRef.current = combatState
+  const flagsRef = useRef<Record<string, boolean | number | string>>({})
+  flagsRef.current = flags
+  const partyRef = useRef<Character[]>([])
+  partyRef.current = party
+  const reserveRef = useRef<Character[]>([])
+  reserveRef.current = reserve
+  const menuOpenRef = useRef(false)   // in-play main menu (blocks movement)
+  const [dialogue, setDialogue] = useState<{ dialogueId: string; nodeId: string; npcId?: string } | null>(null)
+  const dialogueRef = useRef<typeof dialogue>(null)
+  dialogueRef.current = dialogue
+  const [inscription, setInscription] = useState<string[] | null>(null)
+  const inscriptionRef = useRef<typeof inscription>(null)
+  inscriptionRef.current = inscription
+  const [gameOver, setGameOver] = useState(false)
+  const gameOverRef = useRef(false)
+  gameOverRef.current = gameOver
+  // Map-transition overlay: fade-to-black cover with an optional name card, and
+  // a pending confirm window for 'prompt'-style crossings. Both block movement.
+  const [transition, setTransition] = useState<{ black: boolean; label?: string } | null>(null)
+  const transitionRef = useRef<typeof transition>(null)
+  transitionRef.current = transition
+  const [mapPrompt, setMapPrompt] = useState<{ mapId: string; x: number; y: number; facing?: Facing; label?: string } | null>(null)
+  const mapPromptRef = useRef<typeof mapPrompt>(null)
+  mapPromptRef.current = mapPrompt
+  // Steps walked this playthrough — drives exploration status pressure.
+  const [stepsTaken, setStepsTaken] = useState(0)
+  const stepsRef = useRef(0)
+  // Batch E: title screen (per play session) + gameEnd credits overlay
+  const [showTitle, setShowTitle] = useState(true)
+  // Batch F: New Game intro flow — title → opening story → character builder → play
+  const [introPhase, setIntroPhase] = useState<'opening' | 'build' | null>(null)
+  const introActiveRef = useRef(false)
+  introActiveRef.current = showTitle || introPhase !== null
+  const [gameEnding, setGameEnding] = useState<{ text?: string } | null>(null)
+  const gameEndingRef = useRef<typeof gameEnding>(null)
+  gameEndingRef.current = gameEnding
+  // When a battle was started by a FOE patrol, its dead-flag key (set on victory)
+  const pendingFoeKillRef = useRef<string | null>(null)
+  // Barks fire once per session per line (heard-flags handle 'once' lines)
+  const sessionBarksRef = useRef<Set<string>>(new Set())
+
   const shopIdRef = useRef<string | null>(null)
   shopIdRef.current = shopId
   const activeEncounterRef = useRef<ResolvedEncounter | null>(null)
@@ -225,10 +337,12 @@ export function DungeonMapper({
   // Load persisted party template on mount
   useEffect(() => {
     const saved = loadPartyTemplate()
-    if (saved) { setParty(saved.party); setFormation(saved.formation) }
+    if (saved) { setParty(saved.party); setFormation(saved.formation); setReserve(saved.reserve ?? []) }
   }, [])
 
   const activeMap = maps[activeIdx] ?? null
+  const activeMapRef = useRef(activeMap)
+  activeMapRef.current = activeMap
 
   const customBase = useMemo(() => {
     const t: Record<number, MarkerDef> = {}
@@ -265,7 +379,7 @@ export function DungeonMapper({
     setRomHash(session.romHash ?? '')
     setCustomMarkers(session.customMarkers ?? [])
     setMaps(session.maps)
-    if (session.ruleset) setRuleset(session.ruleset)
+    if (session.ruleset) setRuleset(normalizeRuleset(session.ruleset))
     setActiveIdx(0)
     // Custom marker IDs are monotonic within a session and never reused (§5.3).
     // Recover the counter from a persisted value, falling back to max(used)+1.
@@ -282,7 +396,7 @@ export function DungeonMapper({
     if (restored && !initialSession) {
       setTimeout(() => toast('Restored unsaved session'), 50)
     }
-    if (!controlled && welcomeOnFirstVisit) {
+    if (!controlled && showWelcomeGate) {
       try {
         if (!localStorage.getItem(WELCOME_KEY)) setShowWelcome(true)
       } catch {
@@ -360,10 +474,73 @@ export function DungeonMapper({
     return changed ? [...set] : (map.revealedChunks ?? [])
   }, [])
 
+  // Per-cell exploration reveal for the Play-mode minimap: strictly the cells
+  // the party has WALKED — no line-of-sight bleed. The auto-map is a breadcrumb
+  // trail (Etrian/SMT style); seeing down a corridor doesn't chart it. Chunk
+  // fog above stays independent (it feeds the 3D renderer, which must draw
+  // what's ahead). Authored reveals (Cartographer's Lens, Scry) can still use
+  // seenCellsFrom to widen this set — see docs/roadmap.md.
+  const revealSeen = useCallback((map: MapData, x: number, y: number): string[] =>
+    chartWalkedCell(map.seenCells, x, y), [])
+
+  // Convenience: the full position patch applied on every party move.
+  const moveReveal = useCallback((m: MapData, x: number, y: number) => ({
+    playerX: x, playerY: y,
+    revealedChunks: revealAround(m, x, y),
+    seenCells: revealSeen(m, x, y),
+  }), [revealAround, revealSeen])
+
+  // ── Map changes & transitions ───────────────────────────────────────────────
+  // Every cross-map switch (mapLink, stairs, teleport effect, world-edge seam)
+  // funnels through changeMap so the transition presentation is consistent.
+
+  const applyMapSwap = useCallback((dest: { mapId: string; x: number; y: number; facing?: Facing }): boolean => {
+    const targetIdx = maps.findIndex(m => m.id === dest.mapId)
+    if (targetIdx < 0) return false
+    setActiveIdx(targetIdx)
+    setMaps(prev => prev.map((m, i) => (i === targetIdx ? { ...m, ...moveReveal(m, dest.x, dest.y) } : m)))
+    if (dest.facing) setFacing(dest.facing)
+    setCameraOffset({ x: 0, y: 0 })
+    return true
+  }, [maps, moveReveal, setActiveIdx])
+
+  // Fade sequencing timers (cancelled on unmount / re-trigger).
+  const txTimers = useRef<number[]>([])
+  const clearTxTimers = useCallback(() => { txTimers.current.forEach(clearTimeout); txTimers.current = [] }, [])
+  useEffect(() => () => clearTxTimers(), [clearTxTimers])
+
+  const changeMap = useCallback((dest: {
+    mapId: string; x: number; y: number; facing?: Facing; style?: TransitionStyle
+  }) => {
+    if (!maps.some(m => m.id === dest.mapId)) { applyMapSwap(dest); return }
+    const style = dest.style ?? 'fade'
+    if (style === 'seamless') { applyMapSwap(dest); return }
+    const label = maps.find(m => m.id === dest.mapId)?.name
+    if (style === 'prompt') { setMapPrompt({ ...dest, label }); return }
+    // Fade: cover → swap under black (+ optional name card) → reveal.
+    clearTxTimers()
+    setTransition({ black: false, label })
+    const hold = label ? 700 : 220
+    txTimers.current.push(window.setTimeout(() => setTransition(t => (t ? { ...t, black: true } : t)), 20))
+    txTimers.current.push(window.setTimeout(() => applyMapSwap(dest), 320))
+    txTimers.current.push(window.setTimeout(() => setTransition(t => (t ? { ...t, black: false } : t)), 320 + hold))
+    txTimers.current.push(window.setTimeout(() => setTransition(null), 320 + hold + 320))
+  }, [maps, applyMapSwap, clearTxTimers])
+
+  /** Confirm/cancel a 'prompt'-style crossing. */
+  const confirmMapPrompt = useCallback(() => {
+    setMapPrompt(prev => {
+      if (prev) changeMap({ mapId: prev.mapId, x: prev.x, y: prev.y, facing: prev.facing, style: 'fade' })
+      return null
+    })
+  }, [changeMap])
+  const cancelMapPrompt = useCallback(() => setMapPrompt(null), [])
+
   const applyExploreEffect = useCallback((result: ExploreEffect) => {
     if (Object.keys(result.flagSets).length > 0) {
       setFlags(prev => ({ ...prev, ...result.flagSets }))
     }
+    result.sounds.forEach(name => music.sfx(name))
     result.messages.forEach(msg => toast(msg))
     if (result.goldDelta !== 0) {
       setGold(g => g + result.goldDelta)
@@ -372,30 +549,142 @@ export function DungeonMapper({
       setInventory(prev => {
         let inv = [...prev]
         for (const { item, qty } of result.itemsGained) {
-          const idx = inv.findIndex(i => i.def === item)
+          // Defs with an unidentifiedName arrive unidentified ("?Sword")
+          const unid = !!ruleset.items.find(d => d.id === item)?.unidentifiedName || undefined
+          const idx = inv.findIndex(i => i.def === item && !!i.unidentified === !!unid)
           if (idx >= 0) inv[idx] = { ...inv[idx], qty: inv[idx].qty + qty }
-          else inv = [...inv, { def: item, qty }]
+          else inv = [...inv, { def: item, qty, ...(unid ? { unidentified: true } : {}) }]
         }
         return inv
       })
     }
     if (result.itemsLost.length > 0) {
-      setInventory(prev =>
-        prev
-          .map(i => {
-            const lost = result.itemsLost.find(l => l.item === i.def)
-            return lost ? { ...i, qty: i.qty - lost.qty } : i
+      setInventory(prev => {
+        // Remove the requested quantity per item across stacks (identified
+        // stacks first), instead of subtracting from every matching stack.
+        const remaining: Record<string, number> = {}
+        for (const l of result.itemsLost) remaining[l.item] = (remaining[l.item] ?? 0) + l.qty
+        return [...prev]
+          .sort((a, b) => Number(!!a.unidentified) - Number(!!b.unidentified))
+          .map(inst => {
+            const need = remaining[inst.def]
+            if (!need) return inst
+            const take = Math.min(need, inst.qty)
+            remaining[inst.def] = need - take
+            return { ...inst, qty: inst.qty - take }
           })
-          .filter(i => i.qty > 0),
-      )
+          .filter(i => i.qty > 0)
+      })
     }
     if (result.teleportTo) {
-      const { x, y } = result.teleportTo
-      updateActiveMap((m) => ({ playerX: x, playerY: y, revealedChunks: revealAround(m, x, y) }))
-      setCameraOffset({ x: 0, y: 0 })
+      const dest = result.teleportTo
+      // Cross-map teleport switches maps (previously ignored mapId — a bug that
+      // silently relocated within the current map); same-map stays instant.
+      if (dest.mapId && dest.mapId !== activeMapRef.current?.id) {
+        changeMap({ mapId: dest.mapId, x: dest.x, y: dest.y, facing: dest.facing, style: dest.transition ?? 'fade' })
+      } else {
+        updateActiveMap((m) => moveReveal(m, dest.x, dest.y))
+        if (dest.facing) setFacing(dest.facing)
+        setCameraOffset({ x: 0, y: 0 })
+      }
     }
     if (result.openShop) {
       setShopId(result.openShop)
+    }
+    if (result.dialogueNode) {
+      // `dialogue` effect payload is a DialogueDef id; open it at its start node
+      // (node-enter effects fire via the dialogue useEffect below).
+      const dlg = (ruleset.dialogues ?? []).find(d => d.id === result.dialogueNode)
+      const node = dlg ? dialogueStartNode(dlg) : null
+      if (dlg && node) setDialogue({ dialogueId: dlg.id, nodeId: node.id })
+    }
+    for (const qu of result.questUpdates) {
+      const q = (ruleset.quests ?? []).find(x => x.id === qu.quest)
+      const done = q && qu.stage >= q.stages.length
+      toast(done ? `📜 Quest complete — ${q?.name ?? qu.quest}` : `📜 Journal updated — ${q?.name ?? qu.quest}`)
+    }
+    if (result.identifyAll) {
+      setInventory(prev => {
+        // Merge revealed stacks into their identified counterparts
+        const inv: ItemInstance[] = []
+        for (const inst of prev) {
+          const revealed = inst.unidentified ? { ...inst, unidentified: undefined } : inst
+          const idx = inv.findIndex(i => i.def === revealed.def && !i.unidentified)
+          if (idx >= 0 && !revealed.unidentified) inv[idx] = { ...inv[idx], qty: inv[idx].qty + revealed.qty }
+          else inv.push(revealed)
+        }
+        return inv
+      })
+      setParty(prev => prev.map(ch => ({
+        ...ch,
+        equipment: Object.fromEntries(Object.entries(ch.equipment).map(([slot, inst]) =>
+          [slot, inst?.unidentified ? { ...inst, unidentified: undefined } : inst])),
+      })))
+      toast('✨ A wave of knowing washes over the party — everything is identified.')
+    }
+    if (result.removeCurseAll) {
+      let freed = 0
+      setParty(prev => prev.map(ch => {
+        const equipment = { ...ch.equipment }
+        const returned: ItemInstance[] = []
+        for (const [slot, inst] of Object.entries(equipment)) {
+          if (!inst) continue
+          if (ruleset.items.find(d => d.id === inst.def)?.cursed) {
+            delete equipment[slot as keyof typeof equipment]
+            returned.push({ ...inst, unidentified: undefined })
+            freed++
+          }
+        }
+        if (returned.length > 0) setInventory(inv => [...inv, ...returned])
+        return returned.length > 0 ? { ...ch, equipment } : ch
+      }))
+      toast(freed > 0 ? '⛓️ The curse releases its grip — the gear comes free.' : 'Nothing cursed clings to the party.')
+    }
+    for (const spellId of result.teachSpells) {
+      const spell = ruleset.spells.find(s => s.id === spellId)
+      if (!spell) continue
+      setParty(prev => prev.map(ch => {
+        if (!ch.alive || ch.knownSpells.includes(spellId)) return ch
+        const cls = ruleset.classes.find(c => c.id === ch.classId)
+        if (cls && cls.spellSchools.length > 0 && !cls.spellSchools.includes(spell.school)) return ch
+        toast(`📖 ${ch.name} learns ${spell.name}!`)
+        return { ...ch, knownSpells: [...ch.knownSpells, spellId] }
+      }))
+    }
+    if (result.gameEnd) {
+      setGameEnding({ text: result.gameEnd.text })
+    }
+    if (result.npcMoves.length > 0) {
+      setMaps(prev => prev.map(m => {
+        let changed = false
+        const cells = { ...m.cells }
+        let carried: import('@/lib/engine-types').CellEntity | null = null
+        // Strip the NPC from any cell it currently occupies
+        for (const move of result.npcMoves) {
+          for (const [key, cell] of Object.entries(cells)) {
+            const idx = (cell.entities ?? []).findIndex(
+              e => e.t === 'object' && e.object.kind === 'npc' && e.object.npc === move.npc,
+            )
+            if (idx >= 0) {
+              carried = cell.entities![idx]
+              cells[key] = { ...cell, entities: cell.entities!.filter((_, i) => i !== idx) }
+              changed = true
+            }
+          }
+          // Insert at destination if this map is the target
+          const targetHere = move.mapId ? m.id === move.mapId : m.id === (prev.find(mm => mm.id === m.id)?.id)
+          const isDest = move.mapId ? m.id === move.mapId : true
+          if (isDest && carried) {
+            const dk = `${move.x},${move.y}`
+            const dest = cells[dk] ?? { base: 1, overlays: [] }
+            cells[dk] = { ...dest, entities: [...(dest.entities ?? []), carried] }
+            carried = null
+            changed = true
+          }
+          void targetHere
+        }
+        return changed ? { ...m, cells } : m
+      }))
     }
     if (result.startCombat) {
       const tableId = result.startCombat
@@ -430,24 +719,38 @@ export function DungeonMapper({
         return { revealedChunks: [...chunks] }
       })
     }
-    // Out-of-combat healing effects: fullHeal / heal / restoreMp
-    if (result.flagSets['_fullHeal']) {
-      setParty(prev => prev.map(c => c.alive ? { ...c, hp: c.maxHp, mp: c.maxMp } : c))
-    } else {
-      const healAmt  = result.flagSets['_heal']    ? Number(result.flagSets['_heal'])    : 0
-      const mpAmt    = result.flagSets['_restoreMp'] ? Number(result.flagSets['_restoreMp']) : 0
-      if (healAmt > 0 || mpAmt > 0) {
-        setParty(prev => prev.map(c => {
-          if (!c.alive) return c
-          return {
-            ...c,
-            hp: healAmt  > 0 ? Math.min(c.maxHp, c.hp + healAmt)  : c.hp,
-            mp: mpAmt    > 0 ? Math.min(c.maxMp, c.mp + mpAmt)    : c.mp,
-          }
-        }))
-      }
+    // Out-of-combat heal / harm / status / revive — applied through the pure
+    // resolver so damage tiles, traps, and hazard events actually bite.
+    const hasHarm = result.fullHeal || result.heal > 0 || result.restoreMp > 0
+      || result.partyDamage.length > 0 || result.partyStatus.length > 0
+      || result.partyCure.length > 0 || result.revive
+    if (hasHarm) {
+      setParty(prev => {
+        const { party: nextParty, messages } = applyExploreHarm(prev, ruleset, result)
+        messages.forEach(m => toast(m))
+        if (partyDefeated(nextParty, ruleset.meta)) setGameOver(true)
+        return nextParty
+      })
     }
-  }, [updateActiveMap, revealAround, ruleset, setInventory, setGold, setFlags, setShopId, setActiveEncounter, setParty])
+    // Recruitment: instantiate joining NPCs into the party (flat, capped at
+    // partySize; the recruited flag — already in flagSets — hides their placement).
+    if (result.recruits.length > 0) {
+      const cap = ruleset.meta.partySize ?? 6
+      setParty(prev => {
+        let next = prev
+        for (const npcId of result.recruits) {
+          if (next.some(c => c.sourceNpc === npcId)) continue          // already in the party
+          if (next.length >= cap) { toast('Your party is full.'); continue }
+          const def = (ruleset.npcs ?? []).find(n => n.id === npcId)
+          if (!def) continue
+          const hero = npcToCharacter(def, ruleset)
+          next = [...next, hero]
+          toast.success(`${hero.name} joined the party!`)
+        }
+        return next
+      })
+    }
+  }, [updateActiveMap, moveReveal, changeMap, ruleset, setInventory, setGold, setFlags, setShopId, setActiveEncounter, setParty, setMaps, setGameOver])
 
   const makeEventContext = useCallback((): EventContext => ({
     flags,
@@ -462,21 +765,35 @@ export function DungeonMapper({
 
       // Block movement through impassable boundaries (walls, closed/locked doors)
       const moveDir: EdgeDir | null = dx === 1 ? 'E' : dx === -1 ? 'W' : dy === 1 ? 'S' : dy === -1 ? 'N' : null
+      let crossedBk: string | null = null
+      let crossedB: BoundaryData | null = null
       if (moveDir !== null && activeMap.boundaries) {
         const bk = boundaryKey(activeMap.playerX, activeMap.playerY, moveDir)
         const b = activeMap.boundaries[bk]
         if (b) {
           const illusoryRevealed = b.wall === EDGE.ILLUSORY && revealedBoundariesRef.current.has(bk)
           const isDoorEdge = b.wall === EDGE.DOOR
-          const wallBlocked = b.wall !== undefined && b.wall !== EDGE.ILLUSORY && !(isDoorEdge && b.door?.state === 'open')
+          const doorOpen = b.door ? effectiveDoorState(b.door, flagsRef.current) === 'open' : false
+          const wallBlocked = b.wall !== undefined && b.wall !== EDGE.ILLUSORY && !(isDoorEdge && doorOpen)
           const illusoryBlocked = b.wall === EDGE.ILLUSORY && !illusoryRevealed
-          const doorBlocked = !isDoorEdge && b.door !== undefined && b.door.state !== 'open'
+          const doorBlocked = !isDoorEdge && b.door !== undefined && !doorOpen
           if (wallBlocked || illusoryBlocked || doorBlocked) return
+          crossedBk = bk; crossedB = b   // crossing succeeded — process damage/onPass below
         }
       }
 
       const nx = activeMap.playerX + dx
       const ny = activeMap.playerY + dy
+
+      // World-grid seams: stepping off a linked edge crosses into the neighbour
+      // at the opposite edge (cross-axis preserved). Checked before terrain
+      // blocking so an open border cell hands off instead of walking into void.
+      const dir: Facing = dx > 0 ? 'E' : dx < 0 ? 'W' : dy > 0 ? 'S' : 'N'
+      const crossing = resolveEdgeCrossing(activeMap, nx, ny, dir, maps)
+      if (crossing) {
+        changeMap({ mapId: crossing.mapId, x: crossing.x, y: crossing.y, style: crossing.transition })
+        return
+      }
 
       // Block movement into impassable terrain cells
       const destBase = activeMap.cells[`${nx},${ny}`]?.base ?? 0
@@ -492,54 +809,113 @@ export function DungeonMapper({
         return
       }
 
-      updateActiveMap((m) => ({ playerX: nx, playerY: ny, revealedChunks: revealAround(m, nx, ny) }))
+      updateActiveMap((m) => moveReveal(m, nx, ny))
       setCameraOffset({ x: 0, y: 0 })
+
+      // One step taken: advance the counter, burn-down light sources, and let
+      // persistent statuses (poison, regen…) bite/heal per the step interval.
+      const newSteps = stepsRef.current + 1
+      stepsRef.current = newSteps
+      setStepsTaken(newSteps)
+      const burn = tickLightBurn(party, ruleset)
+      burn.messages.forEach(m => toast(m))
+      const pressure = tickExplorationStatuses(burn.party, ruleset, newSteps)
+      pressure.messages.forEach(m => toast(m))
+      if (burn.party !== party || pressure.changed) setParty(pressure.party)
+      if (pressure.changed && partyDefeated(pressure.party, ruleset.meta)) setGameOver(true)
+
+      // Crossing a boundary: damage edges bite every crossing; onPass effects
+      // fire (onPassOnce latches via passedFlag / a derived key)
+      if (crossedB) {
+        const passKey = crossedB.passedFlag ?? `boundary.passed.${crossedBk}`
+        const passSpent = crossedB.onPassOnce ? !!flagsRef.current[passKey] : false
+        const crossEffects: Effect[] = []
+        if (crossedB.damage) crossEffects.push({ t: 'damage', dmgType: crossedB.damage.type ?? 'physical', amount: crossedB.damage.dice })
+        if (crossedB.onPass?.length && !passSpent) crossEffects.push(...crossedB.onPass)
+        if (crossEffects.length > 0) {
+          applyExploreEffect(resolveExploreEffects(crossEffects, makeEventContext(), Math.random, ruleset))
+          if (crossedB.onPassOnce && !passSpent) setFlags(prev => ({ ...prev, [passKey]: true }))
+        }
+      }
 
       const cellKey = `${nx},${ny}`
       const cell = activeMap.cells[cellKey]
+
+      // Trick tiles: pits and silent teleports relocate; spinners rotate
+      const trick = applyMoveTricks(cell, {
+        maps, mapId: activeMap.id, x: nx, y: ny, facing: facingRef.current,
+      })
+      if (trick.facing) setFacing(trick.facing)
+      trick.messages.forEach(m => toast(m))
+      if (trick.damage) {
+        const dmg = trick.damage
+        setParty(prev => prev.map(ch => ch.alive ? { ...ch, hp: Math.max(1, ch.hp - dmg) } : ch))
+      }
+      if (trick.teleportTo) {
+        // Silent teleports & pit drops are meant to be disorienting — seamless,
+        // no fade card.
+        changeMap({ mapId: trick.teleportTo.mapId, x: trick.teleportTo.x, y: trick.teleportTo.y, style: 'seamless' })
+        return
+      }
+
+      // FOE patrols step whenever the party does; contact = fixed battle
+      const foeUpdates = advanceFoes(activeMap, flagsRef.current)
+      const flagsAfterFoes = Object.keys(foeUpdates).length > 0
+        ? { ...flagsRef.current, ...foeUpdates }
+        : flagsRef.current
+      if (Object.keys(foeUpdates).length > 0) setFlags(prev => ({ ...prev, ...foeUpdates }))
+      const contact = listFoes(activeMap, flagsAfterFoes).find(f => !f.dead && f.pos.x === nx && f.pos.y === ny)
+      if (contact) {
+        const foeDef = ruleset.enemies.find(en => en.id === contact.entity.enemy)
+        if (foeDef) {
+          const enc = makeFixedEncounter(foeDef, contact.entity.count ?? 1, Math.random)
+          pendingFoeKillRef.current = foeFlagKey(activeMap.id, contact.cellKey, 'dead')
+          setCombatState(initCombat(party, enc, {
+            formation, ruleset,
+            combatMode: ruleset.meta.combatMode ?? activeMap?.combatMode,
+            antiMagic: cellHasTrick(cell, 'antiMagic'),
+          }))
+          setWorkspace('play')
+          return
+        }
+      }
+
       if (cell) {
-        // Encounter check
-        const encounter = checkCellForEncounter(cell, flags, ruleset, Math.random)
+        // Trap objects spring once when stepped on, firing their effects
+        const trapEnt = cell.entities?.find(
+          e => e.t === 'object' && e.object.kind === 'trap' && (e.object.trapEffects?.length ?? 0) > 0,
+        )
+        if (trapEnt && trapEnt.t === 'object') {
+          const usedKey = objectUsedFlagKey(trapEnt.object.id)
+          if (!flagsRef.current[usedKey]) {
+            setFlags(prev => ({ ...prev, [usedKey]: true }))
+            applyExploreEffect(resolveExploreEffects(trapEnt.object.trapEffects!, makeEventContext(), Math.random, ruleset))
+          }
+        }
+
+        // Encounter check (suppressed inside safe rooms)
+        const encounter = cellHasTrick(cell, 'safeRoom')
+          ? null
+          : checkCellForEncounter(cell, flags, ruleset, Math.random)
         if (encounter) {
           setActiveEncounter(encounter)
           const visitedKey = visitedFlagKey(encounter.tableId, nx, ny)
           setFlags(prev => ({ ...prev, [visitedKey]: true }))
         }
 
-        // mapLink: teleport to another map
+        // mapLink: cross to another map (doors, stairs). Default fade + name card.
         const mapLink = cell.entities?.find(e => e.t === 'mapLink')
-        if (mapLink && mapLink.t === 'mapLink') {
-          const targetIdx = maps.findIndex(m => m.id === mapLink.mapId)
-          if (targetIdx >= 0) {
-            setActiveIdx(targetIdx)
-            setMaps(prev => prev.map((m, i) => {
-              if (i !== targetIdx) return m
-              return { ...m, playerX: mapLink.x, playerY: mapLink.y, revealedChunks: revealAround(m, mapLink.x, mapLink.y) }
-            }))
-            if (mapLink.facing) setFacing(mapLink.facing)
-            setCameraOffset({ x: 0, y: 0 })
-            return
-          }
+        if (mapLink && mapLink.t === 'mapLink' && maps.some(m => m.id === mapLink.mapId)) {
+          changeMap({ mapId: mapLink.mapId, x: mapLink.x, y: mapLink.y, facing: mapLink.facing, style: mapLink.transition ?? 'fade' })
+          return
         }
 
-        // onEnter events
+        // onEnter events — sequential, with reactive onFlag expansion
         const ctx = makeEventContext()
-        const triggered = getTriggeredEvents(cell, 'onEnter', ctx)
-        if (triggered.length > 0) {
-          const allEffects = triggered.flatMap(({ event }) => event.effects)
-          const result = resolveExploreEffects(allEffects, ctx)
-          const newFlags: Record<string, boolean | number | string> = {}
-          for (const { event, flagKey } of triggered) {
-            if (event.once) newFlags[flagKey] = true
-          }
-          if (Object.keys(newFlags).length > 0) {
-            setFlags(prev => ({ ...prev, ...newFlags }))
-          }
-          applyExploreEffect(result)
-        }
+        applyExploreEffect(runCellEvents(cell, 'onEnter', ctx, ruleset))
       }
     },
-    [activeMap, maps, updateActiveMap, revealAround, ruleset, flags, makeEventContext, applyExploreEffect, setActiveIdx, setFacing],
+    [activeMap, maps, updateActiveMap, moveReveal, changeMap, ruleset, flags, makeEventContext, applyExploreEffect, setActiveIdx, setFacing],
   )
 
   // ── Blobber movement ──────────────────────────────────────────────────────────
@@ -559,6 +935,44 @@ export function DungeonMapper({
     movePlayer(-dx, -dy)
   }, [movePlayer])
 
+  // ── NPC barks: ambient lines when an NPC comes into view (cell ahead) ───────
+  useEffect(() => {
+    if (!activeMap || combatStateRef.current || dialogueRef.current) return
+    const [fdx, fdy] = FORWARD_DXY[facing]
+    const aheadCell = activeMap.cells[`${activeMap.playerX + fdx},${activeMap.playerY + fdy}`]
+    if (!aheadCell?.entities?.length) return
+    for (const ent of aheadCell.entities) {
+      if (ent.t !== 'object' || ent.object.kind !== 'npc' || !ent.object.npc) continue
+      if (flagsRef.current[npcRecruitedFlagKey(ent.object.npc)]) continue   // recruited — no longer here
+      const def = (ruleset.npcs ?? []).find(n => n.id === ent.object.npc)
+      if (!def?.barks?.length) continue
+      const sessionKey = def.id
+      if (sessionBarksRef.current.has(sessionKey)) continue   // one bark per NPC per session
+      sessionBarksRef.current.add(sessionKey)
+      const bark = def.barks[Math.floor(Math.random() * def.barks.length)]
+      toast(`${def.portrait ?? '🧑'} ${def.name}: “${bark}”`)
+      break
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeMap?.playerX, activeMap?.playerY, facing])
+
+  // ── Dialogue node entry: mark the node seen (lore) and fire its on-enter
+  //    effects once per node arrival — decoupled from applyExploreEffect so the
+  //    `dialogue` effect can open a conversation without nested application.
+  const dialogueEnterRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (!dialogue || !activeMap) { dialogueEnterRef.current = null; return }
+    const key = `${dialogue.dialogueId}:${dialogue.nodeId}`
+    if (dialogueEnterRef.current === key) return
+    dialogueEnterRef.current = key
+    const dlg = (ruleset.dialogues ?? []).find(d => d.id === dialogue.dialogueId)
+    const node = dlg ? dialogueNodeById(dlg, dialogue.nodeId) : null
+    if (!dlg || !node) return
+    const cell = activeMap.cells[`${activeMap.playerX},${activeMap.playerY}`] ?? null
+    applyExploreEffect(enterDialogueNode(dlg, node, cell, makeEventContext(), ruleset))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dialogue])
+
   const handleInteract = useCallback(() => {
     if (!activeMap) return
 
@@ -574,19 +988,68 @@ export function DungeonMapper({
         toast('The wall shimmers and fades...')
         return
       }
+      // Wall switch — usable from the mounted side only
+      if (boundary.switch) {
+        const sw = boundary.switch
+        const OPP: Record<EdgeDir, EdgeDir> = { N: 'S', S: 'N', E: 'W', W: 'E' }
+        if (sw.facing === OPP[facingDir]) {
+          const wasOn = !!flags[sw.flag]
+          if (sw.mode === 'once' && wasOn) {
+            music.sfx('locked')
+          toast('The lever is stuck fast.')
+            return
+          }
+          const curCell = activeMap.cells[`${activeMap.playerX},${activeMap.playerY}`] ?? null
+          applyExploreEffect(applyFlagWriteWithReactions(sw.flag, !wasOn, curCell, makeEventContext(), ruleset))
+          music.sfx('lever')
+          toast(wasOn
+            ? 'You hear a heavy thud echo through the halls…'
+            : 'You hear something click in the distance…')
+          return
+        }
+      }
+
+      // Wall inscription — readable when facing the inscribed side
+      if (boundary.inscription) {
+        const insc = boundary.inscription
+        const OPP: Record<EdgeDir, EdgeDir> = { N: 'S', S: 'N', E: 'W', W: 'E' }
+        if (!insc.facing || insc.facing === OPP[facingDir]) {
+          setInscription(insc.text.length > 0 ? insc.text : ['The carving is too worn to read.'])
+          return
+        }
+      }
+
       // Door interaction
       if (boundary.door) {
         const door = boundary.door
+        const eff = effectiveDoorState(door, flags)
+        // Switch-sealed doors are driven by their flags, not manual opening
+        if ((door.requiredFlags?.length || door.keyFlag) && door.state !== 'open') {
+          if (eff === 'open') {
+            toast('The door is held open by some mechanism.')
+          } else if (door.keyItem && inventory.some(item => item.def === door.keyItem)) {
+            updateActiveMap(m => ({
+              boundaries: { ...(m.boundaries ?? {}), [bk]: { ...boundary, door: { ...door, state: 'open' as const } } }
+            }))
+            music.sfx('confirm')
+            toast('Door unlocked!')
+          } else {
+            toast('The door is sealed shut. Something must unlock it…')
+          }
+          return
+        }
         if (door.state === 'closed') {
           updateActiveMap(m => ({
             boundaries: { ...(m.boundaries ?? {}), [bk]: { ...boundary, door: { ...door, state: 'open' as const } } }
           }))
+          music.sfx('door')
           toast('The door creaks open.')
           return
         } else if (door.state === 'open') {
           updateActiveMap(m => ({
             boundaries: { ...(m.boundaries ?? {}), [bk]: { ...boundary, door: { ...door, state: 'closed' as const } } }
           }))
+          music.sfx('door')
           toast('The door swings shut.')
           return
         } else if (door.state === 'locked') {
@@ -594,8 +1057,10 @@ export function DungeonMapper({
             updateActiveMap(m => ({
               boundaries: { ...(m.boundaries ?? {}), [bk]: { ...boundary, door: { ...door, state: 'open' as const } } }
             }))
+            music.sfx('confirm')
             toast('Door unlocked!')
           } else {
+            music.sfx('locked')
             toast('This door is locked.')
           }
           return
@@ -654,13 +1119,32 @@ export function DungeonMapper({
             parts.push(`${qty > 1 ? `${qty}× ` : ''}${def?.name ?? item}`)
           }
           if (result.gold > 0) parts.push(`${result.gold} gold`)
+          music.sfx(parts.length > 0 ? 'chest' : 'blip')
           toast(parts.length > 0 ? `Found: ${parts.join(', ')}!` : 'The chest is empty.')
           return
         }
         // Generic onInteract effects
         if (obj.onInteract?.length) {
-          const result = resolveExploreEffects(obj.onInteract, ctx)
+          const result = resolveExploreEffects(obj.onInteract, ctx, Math.random, ruleset)
           applyExploreEffect(result)
+          return
+        }
+        if (obj.kind === 'npc' && obj.npc && !flagsRef.current[npcRecruitedFlagKey(obj.npc)]) {
+          const def = (ruleset.npcs ?? []).find(n => n.id === obj.npc)
+          if (def) {
+            const dlg = def.dialogue ? (ruleset.dialogues ?? []).find(d => d.id === def.dialogue) : undefined
+            const node = dlg ? dialogueStartNode(dlg) : null
+            if (dlg && node) setDialogue({ dialogueId: dlg.id, nodeId: node.id, npcId: def.id })
+            else toast(`${def.name} has nothing to say.`)
+            return
+          }
+        }
+        if (obj.kind === 'inn') {
+          const price = obj.price ?? 0
+          if (gold < price) { toast(`The innkeeper wants ${price} gold. You cannot afford a bed.`); return }
+          if (price > 0) setGold(g => g - price)
+          setParty(prev => prev.map(ch => ({ ...ch, alive: true, hp: ch.maxHp, mp: ch.maxMp, statuses: [] })))
+          toast(price > 0 ? `You pay ${price} gold. The party wakes fully rested.` : 'The party wakes fully rested.')
           return
         }
         if (obj.shop) { setShopId(obj.shop); return }
@@ -673,18 +1157,18 @@ export function DungeonMapper({
     const cell = activeMap.cells[cellKey]
     if (!cell) return
 
-    const triggered = getTriggeredEvents(cell, 'onInteract', ctx)
-    if (triggered.length > 0) {
-      const allEffects = triggered.flatMap(({ event }) => event.effects)
-      const result = resolveExploreEffects(allEffects, ctx)
-      const newFlags: Record<string, boolean | number | string> = {}
-      for (const { event, flagKey } of triggered) {
-        if (event.once) newFlags[flagKey] = true
-      }
-      if (Object.keys(newFlags).length > 0) {
-        setFlags(prev => ({ ...prev, ...newFlags }))
-      }
-      applyExploreEffect(result)
+    const interactResult = runCellEvents(cell, 'onInteract', ctx, ruleset)
+    const interactedSomething =
+      Object.keys(interactResult.flagSets).length > 0 ||
+      interactResult.messages.length > 0 ||
+      interactResult.goldDelta !== 0 ||
+      interactResult.itemsGained.length > 0 ||
+      interactResult.teleportTo !== undefined ||
+      interactResult.startCombat !== undefined ||
+      interactResult.openShop !== undefined ||
+      interactResult.dialogueNode !== undefined
+    if (interactedSomething) {
+      applyExploreEffect(interactResult)
       return
     }
 
@@ -692,7 +1176,7 @@ export function DungeonMapper({
     const objects = getInteractableObjects(cell)
     for (const obj of objects) {
       if (obj.onInteract?.length) {
-        const result = resolveExploreEffects(obj.onInteract, ctx)
+        const result = resolveExploreEffects(obj.onInteract, ctx, Math.random, ruleset)
         applyExploreEffect(result)
       } else if (obj.shop) {
         setShopId(obj.shop)
@@ -702,6 +1186,263 @@ export function DungeonMapper({
       break
     }
   }, [activeMap, makeEventContext, applyExploreEffect, updateActiveMap, inventory, flags, ruleset, setGold, setInventory, setFlags])
+
+  // ── Play-mode saves, camp, and the wipe flow ─────────────────────────────────
+
+  const buildSaveState = useCallback((): SaveState => ({
+    rulesetVersion: ruleset.meta.version,
+    mapHash: 'session',
+    position: { mapId: activeMap?.id ?? '', x: activeMap?.playerX ?? 0, y: activeMap?.playerY ?? 0, facing },
+    party, reserve, formation, gold,
+    sharedInventory: inventory,
+    flags,
+    revealed: Object.fromEntries(maps.map(m => [m.id, m.revealedChunks ?? []])),
+    seen: Object.fromEntries(maps.map(m => [m.id, m.seenCells ?? []])),
+    revealedBoundaries: Array.from(revealedBoundaries),
+    rngSeed: 0,
+    playtimeMs: 0,
+    stepsTaken,
+  }), [ruleset.meta.version, activeMap, facing, party, reserve, formation, gold, inventory, flags, maps, revealedBoundaries, stepsTaken])
+
+  const applySaveState = useCallback((s: SaveState) => {
+    setParty(s.party)
+    setReserve(s.reserve ?? [])
+    setFormation(s.formation)
+    setGold(s.gold)
+    setInventory(s.sharedInventory)
+    setFlags(s.flags)
+    setRevealedBoundaries(new Set(s.revealedBoundaries ?? []))
+    setFacing(s.position.facing)
+    const idx = maps.findIndex(m => m.id === s.position.mapId)
+    setMaps(prev => prev.map((m, i) => ({
+      ...m,
+      ...(s.revealed[m.id] ? { revealedChunks: s.revealed[m.id] } : {}),
+      ...(s.seen?.[m.id] ? { seenCells: s.seen[m.id] } : {}),
+      ...(i === idx ? { playerX: s.position.x, playerY: s.position.y } : {}),
+    })))
+    if (idx >= 0) setActiveIdx(idx)
+    setStepsTaken(s.stepsTaken ?? 0); stepsRef.current = s.stepsTaken ?? 0
+    setCombatState(null); setActiveEncounter(null); setDialogue(null); setInscription(null); setGameOver(false)
+    notify('Game loaded.')
+  }, [maps, setMaps, setActiveIdx])
+
+  // The player-built protagonist, if any — drives authored-text tokens.
+  const mc = useMemo(() => party.find(c => c.isMc) ?? null, [party])
+
+  // New Game intro flow: after the title, run the opening story (if authored)
+  // then the character builder (unless the author ships a fixed party).
+  // A New Game is a fresh start: for a customMc game always run the builder so
+  // the hero is (re)built and startNewGame merges [hero, ...startsInParty] —
+  // never let a stale/seeded party silently replace the protagonist.
+  const needsBuilder = useCallback(
+    () => (ruleset.meta.partyCreation ?? 'customMc') !== 'fixed',
+    [ruleset.meta.partyCreation],
+  )
+  // Assemble the starting party: the player's hero (if built) plus every NpcDef
+  // flagged `startsInParty`, capped at partySize. Legacy games with neither keep
+  // the currently-loaded (template/test) party.
+  const startNewGame = useCallback((hero?: Character | null) => {
+    const cap = ruleset.meta.partySize ?? 6
+    const seeded = (ruleset.npcs ?? []).filter(n => n.startsInParty).map(n => npcToCharacter(n, ruleset))
+    let next: Character[]
+    if (hero) next = [hero, ...seeded]
+    else if (seeded.length > 0) next = seeded
+    else next = partyRef.current
+    next = next.slice(0, cap)
+    setParty(next)
+    setReserve([])
+    setFormation({ front: next.map((_, i) => i), back: [] })
+    setActiveIdx(0)
+    setStepsTaken(0); stepsRef.current = 0
+    setIntroPhase(null)
+  }, [ruleset, setParty, setReserve, setFormation, setActiveIdx])
+  const beginNewGame = useCallback(() => {
+    music.unlock() // the click is our audio-autoplay gesture
+    setShowTitle(false)
+    if (ruleset.meta.opening?.slides?.length) setIntroPhase('opening')
+    else if (needsBuilder()) setIntroPhase('build')
+    else startNewGame(null)
+  }, [ruleset.meta.opening, needsBuilder, startNewGame])
+  const finishOpening = useCallback(() => {
+    if (needsBuilder()) setIntroPhase('build')
+    else startNewGame(null)
+  }, [needsBuilder, startNewGame])
+  const finishBuilder = useCallback((hero: Character) => {
+    startNewGame(hero)
+  }, [startNewGame])
+
+  // Autoplay policy: the FIRST user gesture anywhere unlocks the audio
+  // context and starts anything queued. Without this, a restored session that
+  // never touches the title screen (or Config) would stay silent forever —
+  // WASD movement alone never counted as an unlock.
+  useEffect(() => {
+    const once = () => music.unlock()
+    window.addEventListener('pointerdown', once, { once: true, capture: true })
+    window.addEventListener('keydown', once, { once: true, capture: true })
+    return () => {
+      window.removeEventListener('pointerdown', once, true)
+      window.removeEventListener('keydown', once, true)
+    }
+  }, [])
+
+  // Background music: stop whenever we leave Play mode (runs only on that
+  // transition, so authoring-time track previews aren't interrupted).
+  useEffect(() => {
+    if (workspace !== 'play') music.stop({ fadeMs: 300 })
+  }, [workspace])
+
+  // In Play mode, follow the scene: default/title track → the current level's
+  // track → the battle/boss track while a fight is active, restoring the
+  // exploration track when it ends. Playback stays queued until the first user
+  // gesture unlocks it.
+  const inBattle = combatState !== null
+  const combatPhase = combatState?.phase
+  useEffect(() => {
+    if (workspace !== 'play') return
+    if (showTitle || introPhase) {
+      const t = trackById(ruleset.audioTracks, ruleset.meta.titleMusicId || ruleset.meta.defaultMusicId)
+      if (t) void music.play(t); else music.stop()
+      return
+    }
+    // Game over / defeat: the dirge takes over until the flow resolves.
+    if (gameOver || combatPhase === 'defeat') {
+      const t = trackById(ruleset.audioTracks, ruleset.meta.gameOverMusicId)
+      if (t) { void music.play(t, { crossfadeMs: 300 }); return }
+    }
+    // Victory: FF-style fanfare loops under the outcome overlay; dismissing it
+    // clears combatState and this effect resumes the exploration track.
+    if (combatPhase === 'victory') {
+      const t = trackById(ruleset.audioTracks, ruleset.meta.victoryMusicId)
+      if (t) { void music.play(t, { crossfadeMs: 150 }); return }
+    }
+    const enc = inBattle && activeEncounter
+      ? ruleset.encounterTables.find(t => t.id === activeEncounter.tableId)
+      : undefined
+    const battle = inBattle ? { musicId: enc?.musicId, boss: enc?.boss } : null
+    const track = resolveTrack({ meta: ruleset.meta, mapMusicId: activeMap?.musicId, battle }, ruleset.audioTracks)
+    // Boss fights open on the intro stinger, chaining into the boss loop.
+    const intro = battle?.boss ? trackById(ruleset.audioTracks, ruleset.meta.bossIntroId) : undefined
+    if (track) void music.play(track, battle ? { crossfadeMs: 400, intro } : undefined); else music.stop()
+  }, [workspace, showTitle, introPhase, inBattle, combatPhase, gameOver, activeEncounter, activeMap?.id, activeMap?.musicId, ruleset.meta, ruleset.audioTracks, ruleset.encounterTables])
+
+  // Dialogue and inscriptions duck the music (SFX bus is unaffected).
+  useEffect(() => {
+    music.duck(dialogue !== null || inscription !== null)
+    return () => music.duck(false)
+  }, [dialogue, inscription])
+
+  // Save-point policy: saving anywhere, or only while standing on a Save Point
+  const canSaveHere = (ruleset.meta.savePolicy ?? 'anywhere') === 'anywhere'
+    || !!activeMap?.cells[`${activeMap.playerX},${activeMap.playerY}`]?.overlays?.includes(OVERLAY.SAVE_POINT)
+    || !!(activeMap && activeMap.cells[`${activeMap.playerX},${activeMap.playerY}`]?.overlays?.includes(OVERLAY.SAVE_POINT))
+
+  const handleSaveSlot = useCallback((slot: number) => {
+    if (!canSaveHere) { notify('You can only save at a save point.'); return }
+    saveToSlot(slot, buildSaveState())
+    music.sfx('save')
+    notify(`Saved to slot ${slot + 1}.`)
+  }, [canSaveHere, buildSaveState])
+
+  const handleLoadSlot = useCallback((slot: number) => {
+    const s = loadFromSlot(slot)
+    if (!s) { notify('That slot is empty.'); return }
+    applySaveState(s)
+  }, [applySaveState])
+
+  const handleRest = useCallback(() => {
+    if (!activeMap || combatStateRef.current || gameOverRef.current) return
+    const cell = activeMap.cells[`${activeMap.playerX},${activeMap.playerY}`]
+    const res = restParty(party, ruleset.meta, cell)
+    toast(res.message)
+    if (res.ambushed) {
+      const zone = (cell?.entities ?? []).find(e => e.t === 'encounter' && e.mode === 'zone')
+      if (zone && zone.t === 'encounter' && zone.table) {
+        const table = ruleset.encounterTables.find(t => t.id === zone.table)
+        const enemies = table ? resolveEncounterTable(table, ruleset, Math.random) : []
+        if (table && enemies.length > 0) {
+          const enc: ResolvedEncounter = {
+            tableId: table.id, tableName: table.name, enemies,
+            xpReward: enemies.reduce((s, e) => s + e.xp, 0),
+            goldReward: enemies.reduce((s, e) => s + e.gold, 0),
+          }
+          setCombatState(initCombat(party, enc, {
+            formation, ruleset,
+            combatMode: ruleset.meta.combatMode ?? activeMap?.combatMode,
+            antiMagic: cellHasTrick(cell, 'antiMagic'),
+          }))
+          setWorkspace('play')
+        }
+      }
+      return
+    }
+    setParty(res.party)
+  }, [activeMap, party, ruleset, formation])
+
+  const handleRespawn = useCallback(() => {
+    const penalty = ruleset.meta.wipeGoldPenalty ?? 0.5
+    setGold(g => Math.floor(g * (1 - Math.min(1, Math.max(0, penalty)))))
+    setParty(prev => prev.map(ch => ({ ...ch, alive: true, hp: ch.maxHp, mp: ch.maxMp, statuses: [] })))
+    // Return to the party start: a partyStart entity if placed, else map 1
+    let target = maps.length > 0 ? { mapId: maps[0].id, x: maps[0].playerX, y: maps[0].playerY } : null
+    outer: for (const m of maps) {
+      for (const [key, c] of Object.entries(m.cells)) {
+        if (c.entities?.some(e => e.t === 'partyStart')) {
+          const [tx, ty] = key.split(',').map(Number)
+          target = { mapId: m.id, x: tx, y: ty }
+          break outer
+        }
+      }
+    }
+    if (target) {
+      const idx = maps.findIndex(m => m.id === target.mapId)
+      if (idx >= 0) {
+        setActiveIdx(idx)
+        setMaps(prev => prev.map((m, i) => i === idx
+          ? { ...m, ...moveReveal(m, target.x, target.y) }
+          : m))
+      }
+    }
+    setGameOver(false)
+    toast('The party stirs awake at the entrance, purses lighter…')
+  }, [ruleset.meta.wipeGoldPenalty, maps, setMaps, setActiveIdx, moveReveal])
+
+  // Roster edits from the Characters workspace (active party + reserve/bench).
+  // A recruited member's `npc.recruited.<id>` flag hides their world placement;
+  // clear it only when they leave the roster ENTIRELY (party ∪ reserve) — so
+  // benching keeps them hidden, but dismissing returns them to the world.
+  const handleRosterChange = useCallback((p: Character[], f: Formation, r: Character[]) => {
+    const prevRoster = [...partyRef.current, ...reserveRef.current]
+    const nextRoster = [...p, ...r]
+    const freed = prevRoster
+      .filter(c => c.sourceNpc && !nextRoster.some(n => n.id === c.id))
+      .map(c => c.sourceNpc as string)
+    if (freed.length > 0) {
+      setFlags(fl => {
+        const next = { ...fl }
+        for (const src of freed) delete next[npcRecruitedFlagKey(src)]
+        return next
+      })
+    }
+    setParty(p)
+    setReserve(r)
+    setFormation(f)
+    savePartyTemplate(p, f, r)
+  }, [setFlags, setParty, setReserve, setFormation])
+
+  const handleAbandonRun = useCallback(() => {
+    deleteAllSlots()
+    setParty([])
+    setReserve([])
+    setFormation({ front: [], back: [] })
+    setInventory([])
+    setFlags({})
+    setGold(ruleset.meta.startingGold)
+    setGameOver(false)
+    setShowTitle(true)
+    setIntroPhase(null)
+    setWorkspace('play')
+    toast('The party is lost. Their story ends here.')
+  }, [ruleset.meta.startingGold])
 
   const isCellRevealed = useCallback(
     (x: number, y: number) => {
@@ -872,7 +1613,7 @@ export function DungeonMapper({
     const cur = activeMap.cells[key] ?? EMPTY_CELL
 
     if (activeTool.kind === 'player') {
-      updateActiveMap((m) => ({ playerX: x, playerY: y, revealedChunks: revealAround(m, x, y) }))
+      updateActiveMap((m) => moveReveal(m, x, y))
       setCameraOffset({ x: 0, y: 0 })
       return
     }
@@ -888,8 +1629,9 @@ export function DungeonMapper({
       if (!dir) return
       const bk = boundaryKey(x, y, dir)
       const existing = activeMap.boundaries?.[bk]
-      if (existing?.wall === EDGE.DOOR) {
-        // Clicking an existing door opens the boundary inspector instead of toggling
+      if (existing && (existing.wall === EDGE.DOOR || existing.door || existing.switch)) {
+        // Configured boundary (door and/or switch): open the inspector rather
+        // than silently overwriting its configuration
         setInspectedBoundary({ bk, x, y, dir, boundary: existing })
         return
       }
@@ -899,7 +1641,7 @@ export function DungeonMapper({
         writeBoundary(bk, newBoundary)
         setInspectedBoundary({ bk, x, y, dir, boundary: newBoundary })
       } else {
-        writeBoundary(bk, existing?.wall === activeTool.value ? null : { wall: activeTool.value })
+        writeBoundary(bk, existing?.wall === activeTool.value ? null : { ...existing, wall: activeTool.value })
       }
       return
     }
@@ -1077,12 +1819,31 @@ export function DungeonMapper({
 
   // ── File operations ───────────────────────────────────────────────────────────
 
-  const doNew = useCallback(() => { setNewMapMode('session') }, [])
+  const doNew = useCallback(() => {
+    if (typeof window !== 'undefined' && !window.confirm(
+      'Start a new session? Your current game — maps, party, and all Settings (opening story, images, audio, and Database content) — will be discarded. Save it as an .epochmap first if you want to keep it.'
+    )) return
+    setNewMapMode('session')
+  }, [])
 
   const handleNewMapConfirm = useCallback((config: NewMapConfig) => {
-    const map = config.generate
-      ? buildGeneratedMap(config.name, config, ruleset)
-      : buildBaseMap(config.name, config)
+    const world = config.generate ? buildGeneratedWorld(config.name, config, ruleset) : null
+    const map = world ? world.map : buildBaseMap(config.name, config)
+    const generated = world ? [map, ...world.extraMaps] : [map]
+
+    // Generated story content (NPCs, quest, events, items) joins the ruleset so
+    // the map's dialogue, levers, journal entries, and relics work out of the box.
+    const mergeWorld = (base: Ruleset): Ruleset =>
+      world && (world.npcs.length || world.quests.length || world.events.length || world.items.length || world.dialogues.length)
+        ? {
+            ...base,
+            npcs: [...(base.npcs ?? []).filter(n => !world.npcs.some(w => w.id === n.id)), ...world.npcs],
+            quests: [...(base.quests ?? []).filter(q => !world.quests.some(w => w.id === q.id)), ...world.quests],
+            events: [...(base.events ?? []).filter(e => !world.events.some(w => w.id === e.id)), ...world.events],
+            dialogues: [...(base.dialogues ?? []).filter(d => !world.dialogues.some(w => w.id === d.id)), ...world.dialogues],
+            items: [...base.items.filter(i => !world.items.some(w => w.id === i.id)), ...world.items],
+          }
+        : base
 
     if (newMapMode === 'session') {
       historyRef.current = []
@@ -1090,12 +1851,33 @@ export function DungeonMapper({
       setGameTitle('')
       setRomHash('')
       setCustomMarkers([])
-      setMaps([map])
+      setMaps(generated)
       setActiveIdx(0)
+      // Full reset: a brand-new project. Settings, opening story + images, audio,
+      // and all Database content revert to the built-in defaults.
+      const fresh = mergeWorld(makeDefaultRuleset(map.id))
+      setRuleset(fresh)
+      void clearAudioStore() // drop orphaned uploaded tracks from IndexedDB
+      // Clean slate: party (incl. the Main Character), its saved template,
+      // inventory/flags, and every play-session leftover.
+      setParty([])
+      setReserve([])
+      setFormation({ front: [], back: [] })
+      setInventory([])
+      setFlags({})
+      setGold(fresh.meta.startingGold)
+      setRevealedBoundaries(new Set<string>())
+      setStepsTaken(0); stepsRef.current = 0
+      setCombatState(null); setActiveEncounter(null); setDialogue(null); setInscription(null)
+      setGameOver(false)
+      clearPartyTemplate()
+      setShowTitle(true)
+      setIntroPhase(null)
     } else {
+      if (world) setRuleset(r => mergeWorld(r))
       setMaps(prev => {
-        const next = [...prev, map]
-        setActiveIdx(next.length - 1)
+        const next = [...prev, ...generated]
+        setActiveIdx(next.length - generated.length)
         return next
       })
     }
@@ -1107,6 +1889,8 @@ export function DungeonMapper({
       try {
         const buf = await file.arrayBuffer()
         const parsed = parseDotEpochmap(buf)
+        // Unpack any baked-in music blobs back into IndexedDB (keyed by track id).
+        try { await restoreAudioBlobs(parsed.audioBlobs) } catch { /* audio optional */ }
         const loaded = parsed.maps.map((m) => ({ ...m, id: uid() }))
         if (mode === 'open') {
           historyRef.current = []
@@ -1116,6 +1900,15 @@ export function DungeonMapper({
           setCustomMarkers(parsed.customMarkers)
           setMaps(loaded)
           setActiveIdx(0)
+          // Adopt the opened game's ruleset — items, spells, NPCs, quests, events,
+          // and all Settings (title/opening story/rules). Reset the play session so
+          // the new game's title/opening runs fresh.
+          if (parsed.ruleset) {
+            setRuleset(normalizeRuleset(parsed.ruleset))
+            setParty([]); setReserve([]); setFormation({ front: [], back: [] })
+            setInventory([]); setFlags({}); clearPartyTemplate()
+            setShowTitle(true); setIntroPhase(null)
+          }
           const maxId = parsed.customMarkers.reduce((mx, m) => Math.max(mx, m.id), CUSTOM_ID_START - 1)
           nextMarkerIdRef.current = Math.max(nextMarkerIdRef.current, maxId + 1)
           try {
@@ -1144,6 +1937,9 @@ export function DungeonMapper({
             setActiveIdx(prev.length)
             return next
           })
+          // Bring in the imported game's content (NPCs, events, items, …) so the
+          // added maps actually work; the current game's meta/settings are kept.
+          if (parsed.ruleset) setRuleset(r => mergeImportedRuleset(r, parsed.ruleset!))
           if (!gameTitle && parsed.gameTitle) setGameTitle(parsed.gameTitle)
           const note = remap.size > 0 ? ` (${remap.size} marker ID${remap.size === 1 ? '' : 's'} reassigned)` : ''
           toast.success(`Imported ${remapped.length} map${remapped.length === 1 ? '' : 's'}${note}`)
@@ -1166,19 +1962,81 @@ export function DungeonMapper({
     e.target.value = ''
   }
 
-  const saveEpochmap = useCallback(() => {
-    const file: EpochmapFile = { version: 2, gameTitle, romHash, customMarkers, maps, ruleset }
-    const bytes = serializeDotEpochmap(file)
-    const blob = new Blob([bytes as BlobPart], { type: 'application/octet-stream' })
-    const url = URL.createObjectURL(blob)
+  /** Assemble the current session into a self-contained EpochmapFile, baking
+   *  uploaded audio blobs (kept in IndexedDB) into it. Shared by save + export. */
+  const buildEpochmapFile = useCallback(async (): Promise<EpochmapFile> => {
+    const uploadIds = (ruleset?.audioTracks ?? []).filter(t => t.source === 'upload').map(t => t.id)
+    let audioBlobs: Record<string, string> | undefined
+    if (uploadIds.length) {
+      try { audioBlobs = await gatherAudioBlobs(uploadIds) } catch { /* skip audio bake on failure */ }
+    }
+    return { version: 2, gameTitle, romHash, customMarkers, maps, ruleset, audioBlobs }
+  }, [gameTitle, romHash, customMarkers, maps, ruleset])
+
+  const downloadBlob = (data: BlobPart, filename: string, type: string) => {
+    const url = URL.createObjectURL(new Blob([data], { type }))
     const a = document.createElement('a')
-    const safe = (gameTitle || 'maps').replace(/[^a-z0-9]+/gi, '-').toLowerCase()
-    a.href = url
-    a.download = `${safe}.epochmap`
-    a.click()
+    a.href = url; a.download = filename; a.click()
     URL.revokeObjectURL(url)
+  }
+  const safeName = useCallback(() => (gameTitle || 'game').replace(/[^a-z0-9]+/gi, '-').toLowerCase(), [gameTitle])
+
+  const saveEpochmap = useCallback(async () => {
+    const file = await buildEpochmapFile()
+    downloadBlob(serializeDotEpochmap(file) as BlobPart, `${safeName()}.epochmap`, 'application/octet-stream')
     toast.success('Saved .epochmap')
-  }, [gameTitle, romHash, customMarkers, maps])
+  }, [buildEpochmapFile, safeName])
+
+  /** Bake the current game into a self-contained standalone HTML the player can
+   *  double-click. Injects the base64 .epochmap into the pre-built player
+   *  template (public/player-template.html, produced by `npm run build:player`). */
+  const exportStandalone = useCallback(async () => {
+    const PLACEHOLDER = '__EPOCH_GAME_DATA__'
+    let template: string
+    try {
+      const res = await fetch('/player-template.html', { cache: 'no-store' })
+      if (!res.ok) throw new Error(String(res.status))
+      template = await res.text()
+    } catch {
+      toast.error('Player template missing — run "npm run build:player" first.')
+      return
+    }
+    if (!template.includes(JSON.stringify(PLACEHOLDER))) {
+      toast.error('Player template is malformed (no game placeholder).')
+      return
+    }
+    const file = await buildEpochmapFile()
+    const bytes = serializeDotEpochmap(file)
+    // Base64-encode the bytes (chunked to avoid call-stack limits).
+    let bin = ''
+    for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000))
+    const b64 = btoa(bin)
+    const html = template.replace(JSON.stringify(PLACEHOLDER), JSON.stringify(b64))
+    downloadBlob(html, `${safeName()}.html`, 'text/html')
+    toast.success('Exported standalone HTML — double-click to play.')
+  }, [buildEpochmapFile, safeName])
+
+  /** Export a hosted web build as a .zip: index.html (the player, unmodified —
+   *  it falls back to loading a sidecar ./game.epochmap) + game.epochmap. Unzip
+   *  onto any static host, or upload the zip to itch.io as an HTML5 game. */
+  const exportWebBuild = useCallback(async () => {
+    let template: string
+    try {
+      const res = await fetch('/player-template.html', { cache: 'no-store' })
+      if (!res.ok) throw new Error(String(res.status))
+      template = await res.text()
+    } catch {
+      toast.error('Player template missing — run "npm run build:player" first.')
+      return
+    }
+    const file = await buildEpochmapFile()
+    const zip = zipSync({
+      'index.html': new TextEncoder().encode(template),
+      'game.epochmap': serializeDotEpochmap(file),
+    }, { level: 0 })  // the .epochmap is already gzipped; the html re-zips fast
+    downloadBlob(zip as BlobPart, `${safeName()}-web.zip`, 'application/zip')
+    toast.success('Exported web build (.zip) — unzip to any host or upload to itch.io.')
+  }, [buildEpochmapFile, safeName])
 
   const exportPdf = useCallback(async () => {
     if (maps.length === 0) return
@@ -1224,8 +2082,14 @@ export function DungeonMapper({
       if (!mapperHoveredRef.current && workspaceRef.current !== 'play') return
 
       if (workspaceRef.current === 'play') {
-        // Block movement while any overlay (combat/shop/encounter) is active — those handle keys themselves
-        if (combatStateRef.current || shopIdRef.current || activeEncounterRef.current) return
+        // A 'prompt' crossing owns Enter/Esc while its window is up.
+        if (mapPromptRef.current) {
+          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); confirmMapPrompt() }
+          else if (e.key === 'Escape') { e.preventDefault(); cancelMapPrompt() }
+          return
+        }
+        // Block movement while any overlay (combat/shop/encounter) or a fade is active — those handle keys themselves
+        if (menuOpenRef.current || introActiveRef.current || combatStateRef.current || shopIdRef.current || activeEncounterRef.current || dialogueRef.current || inscriptionRef.current || gameOverRef.current || gameEndingRef.current || transitionRef.current) return
         // Blobber controls: W=forward, S=back, A=turn-left, D=turn-right
         if (e.key === 'w' || e.key === 'W' || e.key === 'ArrowUp') { e.preventDefault(); stepForward(); return }
         if (e.key === 's' || e.key === 'S' || e.key === 'ArrowDown') { e.preventDefault(); stepBack(); return }
@@ -1274,7 +2138,7 @@ export function DungeonMapper({
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
-  }, [activeMap, movePlayer, stepForward, stepBack, turnLeft, turnRight, toggleReveal, handleInteract, openNoteForPlayer, undo, saveEpochmap, exportPdf])
+  }, [activeMap, movePlayer, stepForward, stepBack, turnLeft, turnRight, toggleReveal, handleInteract, openNoteForPlayer, undo, saveEpochmap, exportPdf, confirmMapPrompt, cancelMapPrompt])
 
   function closeWelcome() {
     setShowWelcome(false)
@@ -1301,7 +2165,7 @@ export function DungeonMapper({
   const WORKSPACES: { id: Workspace; icon: React.ReactNode; label: string }[] = [
     { id: 'map', icon: <Map className="w-5 h-5" />, label: 'Map' },
     { id: 'database', icon: <Database className="w-5 h-5" />, label: 'Database' },
-    { id: 'party', icon: <Users className="w-5 h-5" />, label: 'Party' },
+    { id: 'characters', icon: <Users className="w-5 h-5" />, label: 'Characters' },
     { id: 'play', icon: <Play className="w-5 h-5" />, label: 'Play' },
     { id: 'settings', icon: <Settings className="w-5 h-5" />, label: 'Settings' },
   ]
@@ -1316,45 +2180,52 @@ export function DungeonMapper({
         if (file?.name.endsWith('.epochmap')) loadFile(file, 'open')
       }}
     >
-      {/* Activity bar */}
-      <nav className="w-12 flex-shrink-0 flex flex-col items-center gap-1 py-2 border-r border-white/10 bg-zinc-950 z-10">
-        {WORKSPACES.map(ws => (
-          <button
-            key={ws.id}
-            title={ws.label}
-            onClick={() => setWorkspace(ws.id)}
-            className={cn(
-              'w-9 h-9 grid place-items-center rounded-lg transition-colors',
-              workspace === ws.id
-                ? 'bg-amber-600/20 text-amber-400'
-                : 'text-white/40 hover:text-white hover:bg-white/10',
-            )}
+      {/* Activity bar — hidden in distribution (player) mode */}
+      {!distribution && (
+        <nav className="w-12 flex-shrink-0 flex flex-col items-center gap-1 py-2 border-r border-white/10 bg-zinc-950 z-10">
+          {WORKSPACES.map(ws => (
+            <button
+              key={ws.id}
+              title={ws.label}
+              onClick={() => setWorkspace(ws.id)}
+              className={cn(
+                'w-9 h-9 grid place-items-center rounded-lg transition-colors',
+                workspace === ws.id
+                  ? 'bg-amber-600/20 text-amber-400'
+                  : 'text-white/40 hover:text-white hover:bg-white/10',
+              )}
+            >
+              {ws.icon}
+            </button>
+          ))}
+          {/* Source link, pinned to the bottom of the activity bar */}
+          <a
+            href="https://github.com/northbridgetechnology/Epoch-Mapper"
+            target="_blank"
+            rel="noopener noreferrer"
+            title="View source on GitHub"
+            className="mt-auto w-9 h-9 grid place-items-center rounded-lg text-white/40 hover:text-white hover:bg-white/10 transition-colors"
           >
-            {ws.icon}
-          </button>
-        ))}
-      </nav>
+            <Github className="h-5 w-5" />
+          </a>
+        </nav>
+      )}
 
       {/* Party workspace */}
-      {workspace === 'party' && (
+      {workspace === 'characters' && (
         <div className="flex-1 flex flex-col min-h-0">
-          <div className="px-4 py-2.5 border-b border-white/10 text-sm font-semibold text-white/70">Party Builder</div>
+          <div className="px-4 py-2.5 border-b border-white/10 text-sm font-semibold text-white/70">Characters</div>
           <div className="flex-1 min-h-0">
-            <PartyWorkspace
+            <CharactersWorkspace
               ruleset={ruleset}
+              onRulesetChange={setRuleset}
               party={party}
+              reserve={reserve}
               formation={formation}
               inventory={inventory}
               gold={gold}
-              onPartyChange={(p, f) => {
-                setParty(p)
-                setFormation(f)
-                savePartyTemplate(p, f)
-              }}
-              onInventoryChange={(inv, g) => {
-                setInventory(inv)
-                setGold(g)
-              }}
+              onRosterChange={handleRosterChange}
+              onInventoryChange={(inv, g) => { setInventory(inv); setGold(g) }}
             />
           </div>
         </div>
@@ -1377,6 +2248,7 @@ export function DungeonMapper({
             activeMap={activeMap}
             party={party}
             gold={gold}
+            stepsTaken={stepsTaken}
             facing={facing}
             customBase={customBase}
             customOverlay={customOverlay}
@@ -1387,6 +2259,11 @@ export function DungeonMapper({
             combat={combatState}
             ruleset={ruleset}
             inventory={inventory}
+            reserve={reserve}
+            formation={formation}
+            onRosterChange={handleRosterChange}
+            onInventoryChange={(inv, g) => { setInventory(inv); setGold(g) }}
+            onMenuOpenChange={(open) => { menuOpenRef.current = open }}
             onCombatAction={handleCombatAction}
             onCombatEnd={() => {
               if (!combatState) return
@@ -1399,23 +2276,39 @@ export function DungeonMapper({
                   setInventory(prev => {
                     let inv = [...prev]
                     for (const { item, qty } of combatState.drops) {
-                      const idx = inv.findIndex(i => i.def === item)
+                      const unid = !!ruleset.items.find(d => d.id === item)?.unidentifiedName || undefined
+                      const idx = inv.findIndex(i => i.def === item && !!i.unidentified === !!unid)
                       if (idx >= 0) inv[idx] = { ...inv[idx], qty: inv[idx].qty + qty }
-                      else inv = [...inv, { def: item, qty }]
+                      else inv = [...inv, { def: item, qty, ...(unid ? { unidentified: true } : {}) }]
                     }
                     return inv
                   })
                 }
               }
-              savePartyTemplate(updatedParty, formation)
+              savePartyTemplate(updatedParty, formation, reserve)
+              if (levelUps.length > 0) music.sfx('levelup')
               levelUps.forEach(name => toast.success(`${name} leveled up!`))
               setCombatState(null)
+              if (pendingFoeKillRef.current) {
+                if (combatState.phase === 'victory') {
+                  const deadKey = pendingFoeKillRef.current
+                  setFlags(prev => ({ ...prev, [deadKey]: true }))
+                }
+                pendingFoeKillRef.current = null
+              }
+              // Game over on total defeat, or the moment the MC falls (even in
+              // a won battle) when meta.mcDeathEndsGame is set.
+              if (partyDefeated(updatedParty, ruleset.meta)) setGameOver(true)
             }}
             onMoveForward={stepForward}
             onMoveBack={stepBack}
             onTurnLeft={turnLeft}
             onTurnRight={turnRight}
             onInteract={handleInteract}
+            onRest={handleRest}
+            canSaveHere={canSaveHere}
+            onSaveSlot={handleSaveSlot}
+            onLoadSlot={handleLoadSlot}
           />
         </div>
       )}
@@ -1424,8 +2317,47 @@ export function DungeonMapper({
       {workspace === 'settings' && (
         <SettingsWorkspace
           maps={maps}
+          meta={ruleset.meta}
+          onMetaChange={patch => setRuleset(r => ({ ...r, meta: { ...r.meta, ...patch } }))}
+          onDarkChange={(idx, dark) =>
+            setMaps(prev => prev.map((m, i) => i === idx ? { ...m, dark: dark || undefined } : m))
+          }
           onThemeChange={(idx, themeId) =>
             setMaps(prev => prev.map((m, i) => i === idx ? { ...m, theme: themeId } : m))
+          }
+          tracks={ruleset.audioTracks}
+          formulas={ruleset.formulas}
+          onFormulasChange={patch => setRuleset(r => ({ ...r, formulas: { ...r.formulas, ...patch } }))}
+          onMusicChange={(idx, musicId) =>
+            setMaps(prev => prev.map((m, i) => i === idx ? { ...m, musicId } : m))
+          }
+          onEdgeLinkChange={(idx, dir, targetMapId) =>
+            setMaps(prev => {
+              const src = prev[idx]
+              if (!src) return prev
+              const opp = oppositeEdge(dir)
+              const prevTargetId = src.edgeLinks?.[dir]?.mapId
+              return prev.map(m => {
+                // Source map: set or clear this edge
+                if (m.id === src.id) {
+                  const edgeLinks = { ...(m.edgeLinks ?? {}) }
+                  if (targetMapId) edgeLinks[dir] = { mapId: targetMapId }
+                  else delete edgeLinks[dir]
+                  return { ...m, edgeLinks: Object.keys(edgeLinks).length ? edgeLinks : undefined }
+                }
+                // New target: reciprocate the opposite edge back to the source
+                if (targetMapId && m.id === targetMapId) {
+                  return { ...m, edgeLinks: { ...(m.edgeLinks ?? {}), [opp]: { mapId: src.id } } }
+                }
+                // Previously-linked target being replaced/cleared: drop its reciprocal
+                if (prevTargetId && prevTargetId !== targetMapId && m.id === prevTargetId) {
+                  const edgeLinks = { ...(m.edgeLinks ?? {}) }
+                  if (edgeLinks[opp]?.mapId === src.id) delete edgeLinks[opp]
+                  return { ...m, edgeLinks: Object.keys(edgeLinks).length ? edgeLinks : undefined }
+                }
+                return m
+              })
+            })
           }
         />
       )}
@@ -1443,6 +2375,8 @@ export function DungeonMapper({
         onNew={doNew}
         onOpen={() => pickFile('open')}
         onSave={saveEpochmap}
+        onExportStandalone={exportStandalone}
+        onExportWebBuild={exportWebBuild}
         onImport={() => pickFile('import')}
         onExportPdf={exportPdf}
         onUndo={undo}
@@ -1459,7 +2393,8 @@ export function DungeonMapper({
 
       <div className="flex-1 flex min-h-0">
         {/* Left sidebar: map list + tool palette */}
-        <aside className="w-80 shrink-0 border-r border-white/10 flex flex-col bg-zinc-950 overflow-y-auto">
+        <aside className="relative shrink-0 border-r border-white/10 flex flex-col bg-zinc-950 overflow-y-auto" style={{ width: paletteW }}>
+          {paletteHandle}
           {/* Maps */}
           <div className="p-4 border-b border-white/10">
             <div className="flex items-center justify-between mb-2.5">
@@ -1640,13 +2575,29 @@ export function DungeonMapper({
 
         {/* Right: Cell Inspector panel */}
         {inspectedCell && activeMap && (
-          <aside className="w-80 shrink-0 border-l border-white/10 flex flex-col bg-zinc-950 overflow-y-auto">
+          <aside className="relative shrink-0 border-l border-white/10 flex flex-col bg-zinc-950 overflow-y-auto" style={{ width: cellInspW }}>
+            {cellInspHandle}
             <CellInspector
               x={inspectedCell.x}
               y={inspectedCell.y}
               cell={activeMap.cells[`${inspectedCell.x},${inspectedCell.y}`] ?? { base: 0, overlays: [] }}
               maps={maps}
               ruleset={ruleset}
+              boundaries={{
+                N: activeMap.boundaries?.[boundaryKey(inspectedCell.x, inspectedCell.y, 'N')],
+                S: activeMap.boundaries?.[boundaryKey(inspectedCell.x, inspectedCell.y, 'S')],
+                E: activeMap.boundaries?.[boundaryKey(inspectedCell.x, inspectedCell.y, 'E')],
+                W: activeMap.boundaries?.[boundaryKey(inspectedCell.x, inspectedCell.y, 'W')],
+              }}
+              onEditBoundary={(dir) => {
+                const bk = boundaryKey(inspectedCell.x, inspectedCell.y, dir)
+                let b = activeMap.boundaries?.[bk]
+                if (!b) {
+                  b = { wall: EDGE.WALL }
+                  writeBoundary(bk, b)
+                }
+                setInspectedBoundary({ bk, x: inspectedCell.x, y: inspectedCell.y, dir, boundary: b })
+              }}
               onChange={(entities: CellEntity[]) => {
                 const key = `${inspectedCell.x},${inspectedCell.y}`
                 const cur = activeMap.cells[key] ?? { base: 0, overlays: [] }
@@ -1697,6 +2648,7 @@ export function DungeonMapper({
               availW={viewportSize.width}
               availH={viewportSize.height}
               map={activeMap}
+              ruleset={ruleset}
               cellSize={cellSize}
               cameraOffset={cameraOffset}
               isPanning={isPanning}
@@ -1788,12 +2740,217 @@ export function DungeonMapper({
       )}
       </div>{/* end Map workspace */}
 
+      {/* Branching NPC dialogue overlay */}
+      {dialogue && activeMap && (() => {
+        const dlg = (ruleset.dialogues ?? []).find(d => d.id === dialogue.dialogueId)
+        const node = dlg ? dialogueNodeById(dlg, dialogue.nodeId) : null
+        if (!dlg || !node) return null
+        const npcDef = dialogue.npcId ? (ruleset.npcs ?? []).find(n => n.id === dialogue.npcId) : undefined
+        const speaker = node.speaker ?? npcDef?.name ?? dlg.name
+        const choices = eligibleChoices(node, makeEventContext()).map(c => ({ label: c.choice.label, index: c.index }))
+        return (
+          <DialogueOverlay
+            speaker={speaker}
+            portrait={npcDef?.portrait ?? '🧑'}
+            node={node}
+            choices={choices}
+            mc={mc}
+            onChoose={(index) => {
+              const choice = node.choices?.[index]
+              if (!choice) { setDialogue(null); return }
+              const cell = activeMap.cells[`${activeMap.playerX},${activeMap.playerY}`] ?? null
+              const eff = applyDialogueChoice(choice, cell, makeEventContext(), ruleset)
+              applyExploreEffect(eff)
+              const nextNode = choice.goto ? dialogueNodeById(dlg, choice.goto) : null
+              if (nextNode) setDialogue({ ...dialogue, nodeId: nextNode.id })
+              else setDialogue(null)
+            }}
+            onClose={() => setDialogue(null)}
+          />
+        )
+      })()}
+
+      {/* Wall inscription overlay (text-only reuse of the dialogue box) */}
+      {inscription && (
+        <DialogueOverlay
+          speaker="Inscription"
+          portrait="🪨"
+          node={{ id: '_insc', text: inscription }}
+          choices={[]}
+          mc={mc}
+          onChoose={() => setInscription(null)}
+          onClose={() => setInscription(null)}
+        />
+      )}
+
+      {/* Title screen — shown once when entering Play */}
+      {showTitle && workspace === 'play' && !gameOver && (
+        <div className="fixed inset-0 z-[70] bg-black/90 backdrop-blur-sm grid place-items-center">
+          <div className="w-[28rem] max-w-[90vw] text-center space-y-6 px-6">
+            <div className="space-y-2">
+              <div className="text-[10px] uppercase tracking-[0.3em] text-amber-400/50">An Epoch Engine Game</div>
+              <h1 className="text-3xl font-bold text-amber-100" style={{ textShadow: '0 0 24px rgba(251,191,36,0.25)' }}>
+                {ruleset.meta.title || 'Untitled Dungeon'}
+              </h1>
+              {ruleset.meta.author && <div className="text-xs text-white/40">by {ruleset.meta.author}</div>}
+              <div className="text-[10px] text-white/25 font-mono">v{ruleset.meta.version}</div>
+            </div>
+            <div className="space-y-2">
+              <button
+                onClick={beginNewGame}
+                className="w-full py-2.5 rounded-lg text-sm font-semibold border border-amber-500/40 text-amber-200 hover:bg-amber-500/10"
+              >
+                New Game
+              </button>
+              {listSaveSlots().some(Boolean) && (
+                <button
+                  onClick={() => {
+                    music.unlock() // audio-autoplay gesture
+                    const slots = listSaveSlots()
+                    const latest = slots.reduce<number>((best, s, i) =>
+                      s && (best < 0 || s.at > (slots[best]?.at ?? 0)) ? i : best, -1)
+                    if (latest >= 0) handleLoadSlot(latest)
+                    setShowTitle(false)
+                    setIntroPhase(null)
+                  }}
+                  className="w-full py-2 rounded-lg text-xs border border-sky-500/25 text-sky-300/80 hover:bg-sky-500/10"
+                >
+                  Continue (latest save)
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Opening story — after New Game, before the character builder */}
+      {introPhase === 'opening' && workspace === 'play' && ruleset.meta.opening && (
+        <OpeningStoryOverlay story={ruleset.meta.opening} mc={mc} onDone={finishOpening} />
+      )}
+
+      {/* Character Builder — player creates the Main Character */}
+      {introPhase === 'build' && workspace === 'play' && (
+        <CharacterBuilder ruleset={ruleset} onDone={finishBuilder} />
+      )}
+
+      {/* Ending — gameEnd effect fired */}
+      {gameEnding && (
+        <div className="fixed inset-0 z-[75] bg-black/95 grid place-items-center">
+          <div className="w-[30rem] max-w-[90vw] text-center space-y-6 px-6">
+            <div className="text-4xl">🏆</div>
+            <h2 className="text-2xl font-bold text-amber-100">The End</h2>
+            {gameEnding.text && (
+              <p className="text-sm text-white/70 leading-relaxed whitespace-pre-wrap">{resolveText(gameEnding.text, mc)}</p>
+            )}
+            <div className="text-xs text-white/40 space-y-1">
+              <div>{ruleset.meta.title || 'Untitled Dungeon'}</div>
+              {ruleset.meta.author && <div>by {ruleset.meta.author}</div>}
+              <div className="text-white/25">Made with Epoch Engine</div>
+            </div>
+            <button
+              onClick={() => { setGameEnding(null); setShowTitle(true) }}
+              className="w-full py-2 rounded-lg text-sm font-medium border border-amber-500/30 text-amber-300 hover:bg-amber-500/10"
+            >
+              Return to title
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Game over — the party has fallen */}
+      {/* Map-transition fade cover (+ destination name card). z below combat/menu. */}
+      {transition && (
+        <div className="fixed inset-0 z-[65] bg-black pointer-events-none grid place-items-center transition-opacity duration-300 ease-in-out"
+          style={{ opacity: transition.black ? 1 : 0 }}>
+          {transition.label && (
+            <div className="text-center transition-opacity duration-300" style={{ opacity: transition.black ? 1 : 0 }}>
+              <div className="text-[11px] uppercase tracking-[0.3em] text-white/40 mb-1">Entering</div>
+              <div className="text-2xl font-semibold text-white/90" style={{ textShadow: '0 0 18px rgba(120,160,255,0.4)' }}>{transition.label}</div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* 'prompt'-style crossing: a Wizardry-style confirm before descending. */}
+      {mapPrompt && (
+        <div className="fixed inset-0 z-[66] bg-black/70 backdrop-blur-sm grid place-items-center"
+          onClick={cancelMapPrompt}>
+          <div className="w-[22rem] max-w-[90vw] rounded-2xl border border-sky-400/20 bg-zinc-950 p-6 space-y-4 text-center"
+            onClick={e => e.stopPropagation()}>
+            <div className="text-2xl">🚪</div>
+            <div className="text-sm text-white/80">
+              A passage leads onward{mapPrompt.label ? <> to <span className="text-sky-200 font-semibold">{mapPrompt.label}</span></> : null}.
+            </div>
+            <div className="flex gap-2">
+              <button onClick={confirmMapPrompt}
+                className="flex-1 py-2 rounded-lg text-sm font-medium border border-sky-400/30 text-sky-200 hover:bg-sky-500/10">
+                Enter · ⏎
+              </button>
+              <button onClick={cancelMapPrompt}
+                className="flex-1 py-2 rounded-lg text-sm font-medium border border-white/15 text-white/60 hover:bg-white/5">
+                Stay · Esc
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {gameOver && (
+        <div className="fixed inset-0 z-[70] bg-black/85 backdrop-blur-sm grid place-items-center">
+          <div className="w-[26rem] max-w-[90vw] rounded-2xl border border-red-500/20 bg-zinc-950 p-6 space-y-4 text-center">
+            <div className="text-3xl">💀</div>
+            <div className="text-lg font-semibold text-red-300">The party has fallen</div>
+            {ruleset.meta.permadeath ? (
+              <>
+                <p className="text-xs text-white/50 leading-relaxed">
+                  Permadeath is law in this world. All saves are forfeit.
+                </p>
+                <button
+                  onClick={handleAbandonRun}
+                  className="w-full py-2 rounded-lg text-sm font-medium border border-red-500/30 text-red-300 hover:bg-red-500/10"
+                >
+                  Accept their fate
+                </button>
+              </>
+            ) : (
+              <>
+                <p className="text-xs text-white/50 leading-relaxed">
+                  Load a save, or crawl back to the entrance
+                  {(ruleset.meta.wipeGoldPenalty ?? 0.5) > 0 && ` (losing ${Math.round((ruleset.meta.wipeGoldPenalty ?? 0.5) * 100)}% of your gold)`}.
+                </p>
+                <div className="space-y-1.5">
+                  {listSaveSlots().map((info, slot) => info && (
+                    <button
+                      key={slot}
+                      onClick={() => handleLoadSlot(slot)}
+                      className="w-full py-1.5 rounded-lg text-xs border border-sky-500/20 text-sky-300/80 hover:bg-sky-500/10"
+                    >
+                      Load Slot {slot + 1} — {info.partySummary} · {new Date(info.at).toLocaleString()}
+                    </button>
+                  ))}
+                </div>
+                <button
+                  onClick={handleRespawn}
+                  className="w-full py-2 rounded-lg text-sm font-medium border border-amber-500/30 text-amber-300 hover:bg-amber-500/10"
+                >
+                  Respawn at the entrance
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Encounter modal (shown over any workspace) */}
       {activeEncounter && (
         <EncounterModal
           encounter={activeEncounter}
           onFight={() => {
-            setCombatState(initCombat(party, activeEncounter, { formation, ruleset }))
+            setCombatState(initCombat(party, activeEncounter, {
+              formation, ruleset,
+              combatMode: ruleset.meta.combatMode ?? activeMap?.combatMode,
+              antiMagic: activeMap ? cellHasTrick(activeMap.cells[`${activeMap.playerX},${activeMap.playerY}`], 'antiMagic') : false,
+            }))
             setActiveEncounter(null)
             setWorkspace('play')   // battles play out in the first-person view
           }}
@@ -1845,11 +3002,51 @@ function FlashOverlay() {
 
 // ── Viewport (camera window) ────────────────────────────────────────────────────
 
+// ── Cell entity badges (editor map view) ─────────────────────────────────────
+// Zone encounters are everywhere, so they get a faint dot; deliberate content
+// (fixed encounters, objects, events) gets a kind-specific glyph strip.
+const OBJECT_GLYPHS: Record<string, string> = {
+  chest: '📦', npc: '🧑', shop: '🏪', sign: '🪧',
+  trap: '☠️', teleporter: '🌀', lever: '🎚️', door: '🚪', inn: '🛏️',
+}
+
+const TRICK_GLYPHS: Record<string, string> = {
+  spinner: '🌀', pit: '🕳', silentTeleport: '✨', antiMagic: '🚫', darkness: '🌑', safeRoom: '⛺',
+}
+
+function cellEntityBadges(cell: CellData, ruleset: Ruleset): { zoneEncounter: boolean; glyphs: string[] } {
+  const glyphs: string[] = []
+  let zoneEncounter = false
+  for (const ent of cell.entities ?? []) {
+    switch (ent.t) {
+      case 'encounter':
+        if (ent.mode === 'zone') zoneEncounter = true
+        else glyphs.push('⚔️')
+        break
+      case 'partyStart': glyphs.push('🏁'); break
+      case 'mapLink':    glyphs.push('🚪'); break
+      case 'event':      glyphs.push('⚡'); break
+      case 'trick':      glyphs.push(TRICK_GLYPHS[ent.kind] ?? '🌀'); break
+      case 'foe':        glyphs.push('👹'); break
+      case 'object': {
+        if (ent.object.kind === 'npc' && ent.object.npc) {
+          glyphs.push((ruleset.npcs ?? []).find(n => n.id === ent.object.npc)?.portrait ?? '🧑')
+        } else {
+          glyphs.push(OBJECT_GLYPHS[ent.object.kind] ?? '📦')
+        }
+        break
+      }
+    }
+  }
+  return { zoneEncounter, glyphs }
+}
+
 interface ViewportProps {
   layout: 'fill' | 'fixed'
   availW: number
   availH: number
   map: MapData
+  ruleset: Ruleset
   cellSize: number
   cameraOffset: { x: number; y: number }
   isPanning: boolean
@@ -1897,8 +3094,30 @@ function BoundaryInspector({ bk, x, y, dir, boundary, ruleset, onChange, onClose
     onChange(bk, { ...boundary, door: { ...door, keyItem: itemId || undefined } })
   }
 
+  function setRequiredFlags(raw: string) {
+    const requiredFlags = raw.split(',').map(f => f.trim()).filter(Boolean)
+    onChange(bk, { ...boundary, door: { ...door, requiredFlags: requiredFlags.length ? requiredFlags : undefined } })
+  }
+
+  const OPP: Record<EdgeDir, EdgeDir> = { N: 'S', S: 'N', E: 'W', W: 'E' }
+  function setSwitch(sw: SwitchDef | null) {
+    const next = { ...boundary } as BoundaryData
+    if (sw) next.switch = sw
+    else delete next.switch
+    onChange(bk, next)
+  }
+  function setInscriptionDef(insc: InscriptionDef | null) {
+    const next = { ...boundary } as BoundaryData
+    if (insc) next.inscription = insc
+    else delete next.inscription
+    onChange(bk, next)
+  }
+
+  const [panelW, panelHandle] = usePanelWidth('boundary-inspector', 'right', 300)
+
   return (
-    <aside className="w-72 shrink-0 border-l border-white/10 flex flex-col bg-zinc-950">
+    <aside className="relative shrink-0 border-l border-white/10 flex flex-col bg-zinc-950" style={{ width: panelW }}>
+      {panelHandle}
       <div className="flex items-center gap-2 px-4 py-3 border-b border-white/10">
         <span className="text-lg">🚪</span>
         <div>
@@ -1955,11 +3174,121 @@ function BoundaryInspector({ bk, x, y, dir, boundary, ruleset, onChange, onClose
                 </option>
               ))}
             </select>
-            {!door.keyItem && (
-              <p className="text-xs text-amber-400/50 mt-1.5">No key set — door cannot be opened.</p>
+            {!door.keyItem && !door.requiredFlags?.length && (
+              <p className="text-xs text-amber-400/50 mt-1.5">No key or switch flags set — door cannot be opened.</p>
             )}
+
+            <div className="mt-3">
+              <div className="text-xs font-semibold text-white/40 uppercase tracking-wider mb-2">Required Switch Flags</div>
+              <input
+                type="text"
+                value={(door.requiredFlags ?? []).join(', ')}
+                onChange={e => setRequiredFlags(e.target.value)}
+                placeholder="switch.a, switch.b"
+                className="w-full rounded bg-zinc-800 border border-white/10 text-sm text-white/80 px-2 py-1.5 focus:outline-none focus:border-amber-500/40 font-mono"
+              />
+              <p className="text-xs text-white/25 mt-1.5 leading-relaxed">
+                Door stays sealed until ALL flags are on; it re-seals if a toggle
+                switch turns one off. A carried key still opens it permanently.
+              </p>
+            </div>
           </div>
         )}
+
+        {/* Wall switch */}
+        <div>
+          <div className="text-xs font-semibold text-white/40 uppercase tracking-wider mb-2">Wall Switch</div>
+          {boundary.switch ? (
+            <div className="space-y-2">
+              <input
+                type="text"
+                value={boundary.switch.flag}
+                onChange={e => setSwitch({ ...boundary.switch!, flag: e.target.value })}
+                placeholder="switch.a"
+                className="w-full rounded bg-zinc-800 border border-white/10 text-sm text-white/80 px-2 py-1.5 focus:outline-none focus:border-amber-500/40 font-mono"
+              />
+              <div className="flex gap-2">
+                <select
+                  value={boundary.switch.mode}
+                  onChange={e => setSwitch({ ...boundary.switch!, mode: e.target.value as 'toggle' | 'once' })}
+                  className="flex-1 rounded bg-zinc-800 border border-white/10 text-sm text-white/80 px-2 py-1.5 focus:outline-none"
+                >
+                  <option value="toggle">Toggle (flips back)</option>
+                  <option value="once">Once (latches on)</option>
+                </select>
+                <select
+                  value={boundary.switch.facing}
+                  onChange={e => setSwitch({ ...boundary.switch!, facing: e.target.value as EdgeDir })}
+                  className="flex-1 rounded bg-zinc-800 border border-white/10 text-sm text-white/80 px-2 py-1.5 focus:outline-none"
+                >
+                  <option value={OPP[dir]}>This side ({OPP[dir]}-facing)</option>
+                  <option value={dir}>Far side ({dir}-facing)</option>
+                </select>
+              </div>
+              <button
+                onClick={() => setSwitch(null)}
+                className="w-full py-1 rounded text-xs border border-red-500/20 text-red-400/60 hover:text-red-300 hover:border-red-500/40 transition-colors"
+              >
+                Remove Switch
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={() => setSwitch({ id: `sw_${x}_${y}_${dir}`, flag: `switch.${x}_${y}`, mode: 'toggle', facing: OPP[dir] })}
+              className="w-full py-1.5 rounded text-xs font-medium border border-amber-500/20 text-amber-300/70 hover:text-amber-200 hover:border-amber-500/40 transition-colors"
+            >
+              + Add Switch (mounted this side)
+            </button>
+          )}
+          <p className="text-xs text-white/25 mt-1.5 leading-relaxed">
+            A lever on the wall face. Interact from the mounted side to flip its flag.
+          </p>
+        </div>
+
+        {/* Wall inscription */}
+        <div>
+          <div className="text-xs font-semibold text-white/40 uppercase tracking-wider mb-2">Inscription</div>
+          {boundary.inscription ? (
+            <div className="space-y-2">
+              <textarea
+                rows={4}
+                value={boundary.inscription.text.join('\n\n')}
+                onChange={e => setInscriptionDef({
+                  ...boundary.inscription!,
+                  text: e.target.value.split('\n\n').map(s => s.trim()).filter(Boolean),
+                })}
+                placeholder={'First page…\n\nSecond page…'}
+                className="w-full rounded bg-zinc-800 border border-white/10 text-sm text-white/80 px-2 py-1.5 resize-none focus:outline-none focus:border-amber-500/40"
+              />
+              <select
+                value={boundary.inscription.facing ?? ''}
+                onChange={e => setInscriptionDef({ ...boundary.inscription!, facing: (e.target.value as EdgeDir) || undefined })}
+                className="w-full rounded bg-zinc-800 border border-white/10 text-sm text-white/80 px-2 py-1.5 focus:outline-none"
+              >
+                <option value="">Readable from both sides</option>
+                <option value={OPP[dir]}>This side only ({OPP[dir]}-facing)</option>
+                <option value={dir}>Far side only ({dir}-facing)</option>
+              </select>
+              <button
+                onClick={() => setInscriptionDef(null)}
+                className="w-full py-1 rounded text-xs border border-red-500/20 text-red-400/60 hover:text-red-300 hover:border-red-500/40 transition-colors"
+              >
+                Remove Inscription
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={() => setInscriptionDef({ text: ['Words are carved into the stone…'], facing: OPP[dir] })}
+              className="w-full py-1.5 rounded text-xs font-medium border border-amber-500/20 text-amber-300/70 hover:text-amber-200 hover:border-amber-500/40 transition-colors"
+            >
+              + Add Inscription (this side)
+            </button>
+          )}
+          <p className="text-xs text-white/25 mt-1.5 leading-relaxed">
+            Text carved into the wall face. Face it and interact to read. Blank
+            line separates pages.
+          </p>
+        </div>
 
         {/* Remove */}
         <div className="pt-3 border-t border-white/8">
@@ -2118,12 +3447,56 @@ function Viewport(props: ViewportProps) {
                       <span className="absolute top-0 right-0 z-10 block w-0 h-0 border-t-[6px] border-l-[6px] border-t-amber-300 border-l-transparent" />
                     )}
 
+                    {/* entity badges: zone-encounter dot + kind glyph strip */}
+                    {cell.entities && cell.entities.length > 0 && (() => {
+                      const b = cellEntityBadges(cell, props.ruleset)
+                      const dotSize = Math.max(3, Math.round(cellSize * 0.16))
+                      return (
+                        <>
+                          {b.zoneEncounter && (
+                            <span
+                              title="Encounter zone"
+                              className="absolute top-[1px] left-[1px] z-10 rounded-full pointer-events-none"
+                              style={{ width: dotSize, height: dotSize, backgroundColor: 'rgba(239,68,68,0.75)' }}
+                            />
+                          )}
+                          {b.glyphs.length > 0 && (cellSize >= 14 ? (
+                            <span
+                              className="absolute bottom-0 left-0 z-10 flex items-end leading-none pointer-events-none"
+                              style={{ fontSize: Math.max(7, cellSize * 0.28) }}
+                            >
+                              {b.glyphs.slice(0, 2).join('')}
+                              {b.glyphs.length > 2 && (
+                                <span className="text-white/80 font-semibold" style={{ fontSize: Math.max(6, cellSize * 0.2) }}>
+                                  +{b.glyphs.length - 2}
+                                </span>
+                              )}
+                            </span>
+                          ) : (
+                            <span
+                              className="absolute bottom-[1px] left-[1px] z-10 rounded-full pointer-events-none"
+                              style={{ width: dotSize, height: dotSize, backgroundColor: 'rgba(34,211,238,0.8)' }}
+                            />
+                          ))}
+                        </>
+                      )
+                    })()}
+
+                    {/* quest reference marker (editor-only aid — never shown in play) */}
+                    {cell.entities && cellSize >= 14 && JSON.stringify(cell.entities).includes('questStage') && (
+                      <span
+                        title="References a quest"
+                        className="absolute bottom-0 right-0 z-10 leading-none pointer-events-none"
+                        style={{ fontSize: Math.max(7, cellSize * 0.3) }}
+                      >📜</span>
+                    )}
+
                     {/* boundary edges */}
                     {(['N', 'S', 'E', 'W'] as EdgeDir[]).map((dir) => {
                       const b = map.boundaries?.[boundaryKey(x, y, dir)]
                       if (!b) return null
                       const type = b.wall !== undefined ? b.wall : b.door ? 1 : 0
-                      return <EdgeStripe key={dir} dir={dir} type={type} cellSize={cellSize} />
+                      return <EdgeStripe key={dir} dir={dir} type={type} cellSize={cellSize} hasSwitch={!!b.switch} />
                     })}
 
                     {/* edge hover highlight */}

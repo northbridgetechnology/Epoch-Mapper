@@ -1,7 +1,8 @@
 'use client'
 
 import { useState } from 'react'
-import { Plus, Trash2, ChevronDown, ChevronUp, User, Package, ShieldCheck } from 'lucide-react'
+import { Plus, Trash2, ChevronDown, ChevronUp, User, Package, ShieldCheck, Crown, ArrowDownToLine, ArrowUpToLine } from 'lucide-react'
+import { Portrait } from '@/lib/portraits'
 import { cn } from '@/lib/utils'
 import type {
   AttributeDef, Character, ClassDef, Formation, ItemDef,
@@ -10,15 +11,22 @@ import type {
 import { deriveMaxHp, deriveMaxMp, xpToNextLevel } from '@/lib/engine-types'
 import { newCharacter } from '@/lib/save-state'
 import { applyConsumable } from '@/lib/apply-effects'
+import { canEquip } from '@/lib/equipment'
+import { itemDisplayName } from '@/lib/item-schema'
+import { notify } from '@/lib/notify'
 import { toast } from 'sonner'
 
 interface PartyWorkspaceProps {
   ruleset: Ruleset
   party: Character[]
+  /** Benched members — retained but not fielded. Defaults to none. */
+  reserve?: Character[]
   formation: Formation
   inventory: ItemInstance[]
   gold: number
-  onPartyChange: (party: Character[], formation: Formation) => void
+  /** Emits the whole roster (active party + reserve) so recruited-flag sync and
+   *  persistence stay atomic. */
+  onRosterChange: (party: Character[], formation: Formation, reserve: Character[]) => void
   onInventoryChange: (inventory: ItemInstance[], gold: number) => void
 }
 
@@ -51,10 +59,10 @@ const ALL_SLOTS: { slot: ItemSlot; label: string }[] = [
 // ── Character card (roster row) ───────────────────────────────────────────────
 
 function CharacterCard({
-  char, ruleset, selected, onSelect, onRemove,
+  char, ruleset, selected, onSelect, onRemove, onBench,
 }: {
   char: Character; ruleset: Ruleset; selected: boolean
-  onSelect: () => void; onRemove: () => void
+  onSelect: () => void; onRemove: () => void; onBench?: () => void
 }) {
   const cls = classOf(ruleset, char.classId)
   const race = raceOf(ruleset, char.raceId)
@@ -66,19 +74,78 @@ function CharacterCard({
       )}
       onClick={onSelect}
     >
-      <div className="w-8 h-8 grid place-items-center rounded-full text-base flex-shrink-0"
-        style={{ backgroundColor: cls?.color ?? '#555', opacity: char.alive ? 1 : 0.4 }}>
-        {cls?.icon ?? <User className="w-4 h-4" />}
-      </div>
+      {char.portrait ? (
+        <div className="flex-shrink-0" style={{ opacity: char.alive ? 1 : 0.4 }}>
+          <Portrait value={char.portrait} size={32} />
+        </div>
+      ) : (
+        <div className="w-8 h-8 grid place-items-center rounded-full text-base flex-shrink-0"
+          style={{ backgroundColor: cls?.color ?? '#555', opacity: char.alive ? 1 : 0.4 }}>
+          {cls?.icon ?? <User className="w-4 h-4" />}
+        </div>
+      )}
       <div className="flex-1 min-w-0">
-        <div className="text-sm font-semibold text-white/90 truncate">{char.name}</div>
+        <div className="flex items-center gap-1.5 text-sm font-semibold text-white/90 truncate">
+          {char.isMc && <Crown className="w-3.5 h-3.5 text-amber-400 flex-shrink-0" aria-label="Main Character" />}
+          <span className="truncate">{char.name}</span>
+        </div>
         <div className="text-xs text-white/50">Lv.{char.level} {race?.name} {cls?.name}</div>
       </div>
       <div className="text-right flex-shrink-0">
         <div className="text-xs text-red-400">{char.hp}/{char.maxHp} HP</div>
         {char.maxMp > 0 && <div className="text-xs text-blue-400">{char.mp}/{char.maxMp} MP</div>}
       </div>
-      <button onClick={e => { e.stopPropagation(); onRemove() }}
+      {onBench && (
+        <button onClick={e => { e.stopPropagation(); onBench() }}
+          title="Bench (keep on the roster, hidden from the world)"
+          className="p-1 rounded text-white/30 hover:text-sky-300 hover:bg-white/10">
+          <ArrowDownToLine className="w-3.5 h-3.5" />
+        </button>
+      )}
+      <button
+        onClick={e => {
+          e.stopPropagation()
+          if (char.isMc && !window.confirm(`Dismiss ${char.name}, your Main Character? This removes them from the roster.`)) return
+          onRemove()
+        }}
+        title={char.isMc ? 'Dismiss the Main Character' : 'Dismiss from the roster'}
+        className="p-1 rounded text-white/30 hover:text-red-400 hover:bg-white/10">
+        <Trash2 className="w-3.5 h-3.5" />
+      </button>
+    </div>
+  )
+}
+
+// ── Reserve (bench) row ───────────────────────────────────────────────────────
+
+function ReserveCard({ char, ruleset, canField, onField, onDismiss }: {
+  char: Character; ruleset: Ruleset; canField: boolean
+  onField: () => void; onDismiss: () => void
+}) {
+  const cls = classOf(ruleset, char.classId)
+  const race = raceOf(ruleset, char.raceId)
+  return (
+    <div className="flex items-center gap-3 px-3 py-1.5 rounded-lg border border-white/5 bg-zinc-900/40">
+      {char.portrait ? (
+        <div className="flex-shrink-0 opacity-70"><Portrait value={char.portrait} size={26} /></div>
+      ) : (
+        <div className="w-6 h-6 grid place-items-center rounded-full text-sm flex-shrink-0 opacity-70"
+          style={{ backgroundColor: cls?.color ?? '#555' }}>{cls?.icon ?? <User className="w-3.5 h-3.5" />}</div>
+      )}
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-1.5 text-xs font-medium text-white/70 truncate">
+          {char.isMc && <Crown className="w-3 h-3 text-amber-400/70 flex-shrink-0" aria-label="Main Character" />}
+          <span className="truncate">{char.name}</span>
+        </div>
+        <div className="text-[10px] text-white/40">Lv.{char.level} {race?.name} {cls?.name}</div>
+      </div>
+      <button onClick={onField} disabled={!canField}
+        title={canField ? 'Field (add to the active party)' : 'Party is full'}
+        className="p-1 rounded text-white/30 hover:text-emerald-300 hover:bg-white/10 disabled:opacity-25 disabled:cursor-not-allowed">
+        <ArrowUpToLine className="w-3.5 h-3.5" />
+      </button>
+      <button onClick={() => { if (!char.isMc || window.confirm(`Dismiss ${char.name}, your Main Character, from the roster?`)) onDismiss() }}
+        title="Dismiss from the roster"
         className="p-1 rounded text-white/30 hover:text-red-400 hover:bg-white/10">
         <Trash2 className="w-3.5 h-3.5" />
       </button>
@@ -88,7 +155,7 @@ function CharacterCard({
 
 // ── Formation widget ───────────────────────────────────────────────────────────
 
-function FormationWidget({ party, formation, onFormationChange }: {
+export function FormationWidget({ party, formation, onFormationChange }: {
   party: Character[]; formation: Formation; onFormationChange: (f: Formation) => void
 }) {
   function toggleRow(idx: number, row: 'front' | 'back') {
@@ -137,7 +204,7 @@ function FormationWidget({ party, formation, onFormationChange }: {
 
 // ── Equipment panel ────────────────────────────────────────────────────────────
 
-function EquipmentPanel({
+export function EquipmentPanel({
   char, ruleset, inventory, onChange, onInventoryChange,
 }: {
   char: Character; ruleset: Ruleset; inventory: ItemInstance[]
@@ -150,17 +217,42 @@ function EquipmentPanel({
   function unequip(slot: ItemSlot) {
     const inst = char.equipment[slot]
     if (!inst) return
+    // Cursed gear welds itself on — only a Remove Curse effect frees it
+    if (itemDef(ruleset, inst.def)?.cursed) {
+      notify('It will not come off! The item is cursed.', 'error')
+      return
+    }
     const newInv = addToInventory(inventory, inst.def, 1, ruleset)
     onChange({ ...char, equipment: { ...char.equipment, [slot]: undefined } })
     onInventoryChange(newInv)
   }
 
   function equip(slot: ItemSlot, itemId: string) {
+    // Proficiency gate — class must be allowed this slot/type/weight
+    const gate = canEquip(cls, itemDef(ruleset, itemId), ruleset, char.equipment)
+    if (!gate.ok) {
+      notify(gate.reason ?? `${char.name} can't equip that.`, 'error')
+      return
+    }
     // Return currently equipped item to inventory
     let newInv = inventory
     const current = char.equipment[slot]
-    if (current) newInv = addToInventory(newInv, current.def, 1, ruleset)
-    // Remove from inventory
+    if (current) {
+      if (itemDef(ruleset, current.def)?.cursed) {
+        notify('It will not come off! The item is cursed.', 'error')
+        return
+      }
+      newInv = addToInventory(newInv, current.def, 1, ruleset)
+    }
+    const def = itemDef(ruleset, itemId)
+    // Equipping identifies — sometimes the hard way
+    const wasUnidentified = inventory.some(i => i.def === itemId && i.unidentified)
+    if (wasUnidentified && def) {
+      notify(def.cursed ? `It was ${def.name} — and it seizes hold! Cursed!` : `It was ${def.name}!`)
+    } else if (def?.cursed) {
+      notify(`The ${def.name} seizes hold — cursed!`, 'error')
+    }
+    // Remove from inventory (unidentified stacks first so the reveal consumes them)
     newInv = removeFromInventory(newInv, itemId, 1)
     onChange({ ...char, equipment: { ...char.equipment, [slot]: { def: itemId, qty: 1 } } })
     onInventoryChange(newInv)
@@ -217,12 +309,19 @@ function EquipmentPanel({
             candidates.map(inst => {
               const def = itemDef(ruleset, inst.def)
               if (!def) return null
+              const gate = canEquip(cls, def, ruleset, char.equipment)
               return (
-                <button key={inst.def} onClick={() => equip(pickSlot, inst.def)}
-                  className="flex items-center gap-2 w-full px-2 py-1 rounded hover:bg-amber-950/40 text-left">
-                  <span className="text-sm">{def.icon ?? '📦'}</span>
-                  <span className="text-xs text-white/80">{def.name}</span>
-                  <span className="text-xs text-white/30 ml-auto">×{inst.qty}</span>
+                <button key={`${inst.def}_${inst.unidentified ? 'u' : 'i'}`}
+                  onClick={() => gate.ok && equip(pickSlot, inst.def)} disabled={!gate.ok}
+                  title={gate.ok ? undefined : gate.reason}
+                  className={cn('flex items-center gap-2 w-full px-2 py-1 rounded text-left',
+                    gate.ok ? 'hover:bg-amber-950/40' : 'opacity-45 cursor-not-allowed')}>
+                  <span className="text-sm">{inst.unidentified ? '❓' : def.icon ?? '📦'}</span>
+                  <span className={cn('text-xs', inst.unidentified ? 'text-purple-300/90 italic' : 'text-white/80')}>
+                    {itemDisplayName(def, inst)}
+                  </span>
+                  {!gate.ok && <span className="text-[10px] text-red-400/70 ml-auto truncate">{gate.reason}</span>}
+                  {gate.ok && <span className="text-xs text-white/30 ml-auto">×{inst.qty}</span>}
                 </button>
               )
             })
@@ -235,14 +334,20 @@ function EquipmentPanel({
 
 // ── Character sheet ────────────────────────────────────────────────────────────
 
-function CharacterSheet({
-  char, ruleset, inventory, onChange, onInventoryChange,
+export function CharacterSheet({
+  char, ruleset, inventory, onChange, onInventoryChange, mode = 'design',
 }: {
   char: Character; ruleset: Ruleset; inventory: ItemInstance[]
   onChange: (c: Character) => void
   onInventoryChange: (inv: ItemInstance[]) => void
+  /** 'play' is the player's surface (the Tab menu): identity, level, HP/MP,
+   *  and attributes are display-only — progression comes from XP, point
+   *  spending, and healing verbs. Equipment stays interactive in both modes. */
+  mode?: 'design' | 'play'
 }) {
   const cls = classOf(ruleset, char.classId)
+  const race = raceOf(ruleset, char.raceId)
+  const locked = mode === 'play'
   const [expanded, setExpanded] = useState<Record<string, boolean>>({ attrs: true, equip: true })
 
   function toggle(key: string) { setExpanded(p => ({ ...p, [key]: !p[key] })) }
@@ -257,7 +362,14 @@ function CharacterSheet({
 
   return (
     <div className="space-y-3 text-sm">
-      {/* Identity */}
+      {/* Identity — read-only while playing */}
+      {locked ? (
+        <div className="space-y-0.5">
+          <div className="text-base font-semibold text-white/90">{char.name}</div>
+          <div className="text-xs text-white/50">Lv.{char.level} {race?.name} {cls?.icon} {cls?.name}</div>
+          <div className="text-xs text-white/40 font-mono">XP {char.xp} / {xpToNextLevel(char.level, ruleset.formulas?.xpToNext)}</div>
+        </div>
+      ) : (
       <div className="space-y-2">
         <div>
           <label className="block text-xs text-white/50 mb-0.5">Name</label>
@@ -297,31 +409,40 @@ function CharacterSheet({
           </div>
           <div>
             <label className="block text-xs text-white/50 mb-0.5">XP / Next</label>
-            <div className="px-2 py-1 text-sm text-white/70">{char.xp} / {xpToNextLevel(char.level)}</div>
+            <div className="px-2 py-1 text-sm text-white/70">{char.xp} / {xpToNextLevel(char.level, ruleset.formulas?.xpToNext)}</div>
           </div>
         </div>
       </div>
+      )}
 
-      {/* Resources */}
+      {/* Resources — healing verbs only while playing */}
       <div className="grid grid-cols-2 gap-2">
         <div className="rounded-lg bg-red-950/30 border border-red-900/30 p-2">
           <div className="text-xs text-red-300 font-medium mb-1">HP</div>
+          {locked ? (
+            <div className="text-sm text-white/90 font-mono">{char.hp} <span className="text-white/40 text-xs">/ {char.maxHp}</span></div>
+          ) : (
           <div className="flex items-center gap-1">
             <input type="number" min={0} max={char.maxHp} value={char.hp}
               onChange={e => onChange({ ...char, hp: Math.max(0, Math.min(char.maxHp, e.target.valueAsNumber || 0)) })}
               className="w-14 px-1 py-0.5 rounded bg-zinc-800 border border-white/10 text-sm text-white/90 focus:outline-none focus:border-amber-500/50" />
             <span className="text-white/40 text-xs">/ {char.maxHp}</span>
           </div>
+          )}
         </div>
         {char.maxMp > 0 && (
           <div className="rounded-lg bg-blue-950/30 border border-blue-900/30 p-2">
             <div className="text-xs text-blue-300 font-medium mb-1">MP</div>
+            {locked ? (
+              <div className="text-sm text-white/90 font-mono">{char.mp} <span className="text-white/40 text-xs">/ {char.maxMp}</span></div>
+            ) : (
             <div className="flex items-center gap-1">
               <input type="number" min={0} max={char.maxMp} value={char.mp}
                 onChange={e => onChange({ ...char, mp: Math.max(0, Math.min(char.maxMp, e.target.valueAsNumber || 0)) })}
                 className="w-14 px-1 py-0.5 rounded bg-zinc-800 border border-white/10 text-sm text-white/90 focus:outline-none focus:border-amber-500/50" />
               <span className="text-white/40 text-xs">/ {char.maxMp}</span>
             </div>
+            )}
           </div>
         )}
       </div>
@@ -338,10 +459,14 @@ function CharacterSheet({
             {ruleset.attributes.map((attr: AttributeDef) => (
               <div key={attr.id} className="rounded bg-zinc-800 border border-white/10 p-1.5">
                 <div className="text-xs text-white/40 font-mono">{attr.abbr}</div>
-                <input type="number" min={attr.min} max={attr.max}
-                  value={char.attributes[attr.id] ?? attr.default}
-                  onChange={e => handleAttrChange(attr.id, e.target.valueAsNumber)}
-                  className="w-full bg-transparent text-base font-bold text-amber-200 focus:outline-none text-center" />
+                {locked ? (
+                  <div className="text-base font-bold text-amber-200 text-center">{char.attributes[attr.id] ?? attr.default}</div>
+                ) : (
+                  <input type="number" min={attr.min} max={attr.max}
+                    value={char.attributes[attr.id] ?? attr.default}
+                    onChange={e => handleAttrChange(attr.id, e.target.valueAsNumber)}
+                    className="w-full bg-transparent text-base font-bold text-amber-200 focus:outline-none text-center" />
+                )}
               </div>
             ))}
           </div>
@@ -466,11 +591,15 @@ function InventoryPanel({
             const isConsumable = def.kind === 'consumable'
             const target = getTarget(inst.def)
             return (
-              <div key={inst.def} className="flex items-center gap-2 rounded-lg bg-zinc-800/60 border border-white/10 px-3 py-2">
-                <span className="text-base w-6 text-center flex-shrink-0">{def.icon ?? '📦'}</span>
+              <div key={`${inst.def}_${inst.unidentified ? 'u' : 'i'}`} className="flex items-center gap-2 rounded-lg bg-zinc-800/60 border border-white/10 px-3 py-2">
+                <span className="text-base w-6 text-center flex-shrink-0">{inst.unidentified ? '❓' : def.icon ?? '📦'}</span>
                 <div className="flex-1 min-w-0">
-                  <div className="text-sm text-white/90 truncate">{def.name}</div>
-                  <div className="text-xs text-white/35 capitalize">{def.kind}{def.slot ? ` · ${def.slot}` : ''}</div>
+                  <div className={cn('text-sm truncate', inst.unidentified ? 'text-purple-300/90 italic' : 'text-white/90')}>
+                    {itemDisplayName(def, inst)}
+                  </div>
+                  <div className="text-xs text-white/35 capitalize">
+                    {inst.unidentified ? 'unidentified' : def.kind}{!inst.unidentified && def.slot ? ` · ${def.slot}` : ''}
+                  </div>
                 </div>
                 <span className="text-xs text-white/50 flex-shrink-0">×{inst.qty}</span>
 
@@ -561,7 +690,7 @@ function NewCharacterModal({ ruleset, onAdd, onClose }: {
 type Tab = 'sheet' | 'inventory'
 
 export function PartyWorkspace({
-  ruleset, party, formation, inventory, gold, onPartyChange, onInventoryChange,
+  ruleset, party, reserve = [], formation, inventory, gold, onRosterChange, onInventoryChange,
 }: PartyWorkspaceProps) {
   const [selectedIdx, setSelectedIdx] = useState<number | null>(party.length > 0 ? 0 : null)
   const [showAdd, setShowAdd] = useState(false)
@@ -570,7 +699,7 @@ export function PartyWorkspace({
   const maxParty = ruleset.meta.partySize
 
   function updateParty(newParty: Character[], newFormation?: Formation) {
-    onPartyChange(newParty, newFormation ?? formation)
+    onRosterChange(newParty, newFormation ?? formation, reserve)
   }
 
   function addChar(c: Character) {
@@ -582,12 +711,43 @@ export function PartyWorkspace({
     setSelectedIdx(np.length - 1)
   }
 
+  // Remove index from the formation and shift higher indices down.
+  const remapFormation = (nf: Formation, idx: number): Formation => {
+    const remap = (arr: number[]) => arr.filter(i => i !== idx).map(i => (i > idx ? i - 1 : i))
+    return { front: remap(nf.front), back: remap(nf.back) }
+  }
+
   function removeChar(idx: number) {
     const np = party.filter((_, i) => i !== idx)
-    const remap = (arr: number[]) => arr.filter(i => i !== idx).map(i => (i > idx ? i - 1 : i))
-    const nf = { front: remap(formation.front), back: remap(formation.back) }
-    updateParty(np, nf)
+    updateParty(np, remapFormation(formation, idx))
     setSelectedIdx(np.length > 0 ? Math.min(idx, np.length - 1) : null)
+  }
+
+  // Move a party member to the bench (retained, hidden from the world).
+  function benchChar(idx: number) {
+    const char = party[idx]
+    if (!char) return
+    const np = party.filter((_, i) => i !== idx)
+    onRosterChange(np, remapFormation(formation, idx), [...reserve, char])
+    setSelectedIdx(np.length > 0 ? Math.min(idx, np.length - 1) : null)
+  }
+
+  // Bring a benched member back into the active party (if there's room).
+  function fieldChar(rIdx: number) {
+    const char = reserve[rIdx]
+    if (!char) return
+    if (party.length >= maxParty) { toast('The party is full — bench or dismiss someone first.'); return }
+    const np = [...party, char]
+    const nf = { ...formation }
+    if (np.length <= Math.ceil(maxParty / 2)) nf.front = [...nf.front, np.length - 1]
+    else nf.back = [...nf.back, np.length - 1]
+    onRosterChange(np, nf, reserve.filter((_, i) => i !== rIdx))
+    setSelectedIdx(np.length - 1)
+  }
+
+  // Dismiss a benched member from the roster entirely (recruited → world returns).
+  function dismissReserve(rIdx: number) {
+    onRosterChange(party, formation, reserve.filter((_, i) => i !== rIdx))
   }
 
   function updateChar(idx: number, c: Character) {
@@ -602,10 +762,20 @@ export function PartyWorkspace({
       <div className="w-72 flex-shrink-0 flex flex-col border-r border-white/10 min-h-0">
         <div className="flex items-center justify-between px-3 py-2 border-b border-white/10">
           <div className="text-sm font-semibold text-white/80">Party ({party.length}/{maxParty})</div>
-          <button onClick={() => setShowAdd(true)} disabled={party.length >= maxParty}
-            className="flex items-center gap-1 px-2 py-1 rounded bg-amber-600 hover:bg-amber-500 disabled:opacity-40 text-white text-xs font-medium">
-            <Plus className="w-3 h-3" /> Add
-          </button>
+          <div className="flex items-center gap-1.5">
+            {party.length > 0 && (
+              <button
+                onClick={() => { if (window.confirm('Remove every party member (including the Main Character)?')) { updateParty([], { front: [], back: [] }); setSelectedIdx(null) } }}
+                title="Remove all party members"
+                className="flex items-center gap-1 px-2 py-1 rounded text-white/40 hover:text-red-400 hover:bg-white/10 text-xs font-medium">
+                <Trash2 className="w-3 h-3" /> Clear
+              </button>
+            )}
+            <button onClick={() => setShowAdd(true)} disabled={party.length >= maxParty}
+              className="flex items-center gap-1 px-2 py-1 rounded bg-amber-600 hover:bg-amber-500 disabled:opacity-40 text-white text-xs font-medium">
+              <Plus className="w-3 h-3" /> Add
+            </button>
+          </div>
         </div>
 
         <div className="flex-1 overflow-y-auto p-2 space-y-1.5 min-h-0">
@@ -618,8 +788,23 @@ export function PartyWorkspace({
             <CharacterCard key={char.id} char={char} ruleset={ruleset}
               selected={selectedIdx === idx}
               onSelect={() => { setSelectedIdx(idx); setTab('sheet') }}
-              onRemove={() => removeChar(idx)} />
+              onRemove={() => removeChar(idx)}
+              onBench={() => benchChar(idx)} />
           ))}
+
+          {reserve.length > 0 && (
+            <div className="pt-2 mt-1 border-t border-white/10 space-y-1.5">
+              <div className="px-1 text-[10px] uppercase tracking-wide text-white/35 font-semibold">
+                Reserve ({reserve.length})
+              </div>
+              {reserve.map((char, rIdx) => (
+                <ReserveCard key={char.id} char={char} ruleset={ruleset}
+                  canField={party.length < maxParty}
+                  onField={() => fieldChar(rIdx)}
+                  onDismiss={() => dismissReserve(rIdx)} />
+              ))}
+            </div>
+          )}
         </div>
 
         {party.length > 0 && (

@@ -1,0 +1,430 @@
+/**
+ * Exploration-layer mechanics: trick tiles and party light.
+ * Pure functions — no DOM, no React.
+ */
+
+import type { CellData, EdgeDir, MapData } from './types'
+import type { CellEntity, Character, Dice, Facing, GameMeta, ItemDef, Ruleset, TrickKind } from './engine-types'
+import { BASE, EDGE, boundaryKey } from './constants'
+import { effectiveDoorState } from './event-engine'
+
+type TrickEntity = Extract<CellEntity, { t: 'trick' }>
+
+function rollDice(dice: Dice, rng: () => number): number {
+  if (typeof dice === 'number') return dice
+  const m = /^(\d+)d(\d+)([+-]\d+)?$/.exec(dice.trim())
+  if (!m) return Number(dice) || 0
+  const [, n, sides, mod] = m
+  let total = mod ? Number(mod) : 0
+  for (let i = 0; i < Number(n); i++) total += 1 + Math.floor(rng() * Number(sides))
+  return total
+}
+
+export function getTricks(cell: CellData | undefined): TrickEntity[] {
+  return (cell?.entities ?? []).filter((e): e is TrickEntity => e.t === 'trick')
+}
+
+export function cellHasTrick(cell: CellData | undefined, kind: TrickKind): boolean {
+  return getTricks(cell).some(t => t.kind === kind)
+}
+
+const LEFT:  Record<Facing, Facing> = { N: 'W', W: 'S', S: 'E', E: 'N' }
+const RIGHT: Record<Facing, Facing> = { N: 'E', E: 'S', S: 'W', W: 'N' }
+
+export interface TrickMoveResult {
+  /** Relocation (pit fall or silent teleport). Same-shape as a mapLink target. */
+  teleportTo?: { mapId: string; x: number; y: number }
+  /** New party facing (spinner). */
+  facing?: Facing
+  /** Fall damage rolled once — apply to each living party member. */
+  damage?: number
+  /** Feedback for the message log. Silent tricks contribute nothing. */
+  messages: string[]
+  /** True when a pit dropped the party (fall + damage messaging). */
+  fell?: boolean
+}
+
+/**
+ * Apply on-entry trick tiles for the cell the party just stepped onto.
+ * Order: pit (falls preempt everything) → silent teleport → spinner.
+ * antiMagic / darkness / safeRoom are passive zone queries — see cellHasTrick.
+ */
+export function applyMoveTricks(
+  cell: CellData | undefined,
+  opts: {
+    maps: MapData[]
+    mapId: string
+    x: number
+    y: number
+    facing: Facing
+    rng?: () => number
+  },
+): TrickMoveResult {
+  const rng = opts.rng ?? Math.random
+  const result: TrickMoveResult = { messages: [] }
+  const tricks = getTricks(cell)
+  if (tricks.length === 0) return result
+
+  const pit = tricks.find(t => t.kind === 'pit')
+  if (pit) {
+    let target: { mapId: string; x: number; y: number } | null = null
+    if (pit.mapId !== undefined || pit.x !== undefined || pit.y !== undefined) {
+      target = { mapId: pit.mapId ?? opts.mapId, x: pit.x ?? opts.x, y: pit.y ?? opts.y }
+    } else {
+      // Default: fall through to the next map in the session, same coordinates
+      const idx = opts.maps.findIndex(m => m.id === opts.mapId)
+      const below = idx >= 0 ? opts.maps[idx + 1] : undefined
+      if (below) target = { mapId: below.id, x: opts.x, y: opts.y }
+    }
+    if (target) {
+      result.teleportTo = target
+      result.fell = true
+      result.damage = rollDice(pit.damage ?? '1d6', rng)
+      result.messages.push('The floor gives way! The party plummets into darkness below.')
+      return result
+    }
+  }
+
+  const tp = tricks.find(t => t.kind === 'silentTeleport')
+  if (tp && (tp.x !== undefined || tp.y !== undefined)) {
+    // Silent by design: no message, the party should not notice
+    result.teleportTo = { mapId: tp.mapId ?? opts.mapId, x: tp.x ?? opts.x, y: tp.y ?? opts.y }
+  }
+
+  const spin = tricks.find(t => t.kind === 'spinner')
+  if (spin) {
+    const mode = spin.rotate ?? 'random'
+    const from = opts.facing
+    // Silent by design: the classic spinner gives no feedback at all
+    result.facing =
+      mode === 'left'    ? LEFT[from] :
+      mode === 'right'   ? RIGHT[from] :
+      mode === 'reverse' ? LEFT[LEFT[from]] :
+      ([LEFT[from], RIGHT[from], LEFT[LEFT[from]]] as Facing[])[Math.floor(rng() * 3)]
+  }
+
+  return result
+}
+
+// ── Party light ────────────────────────────────────────────────────────────────
+
+/** View distance (in cells) with no light source on a dark map. */
+export const DARK_BASE_RADIUS = 1
+
+/**
+ * The party's current light radius on a dark map: the strongest equipped
+ * light source across the party, plus any status modifiers targeting the
+ * derived stat 'lightRadius'. Standing in a `darkness` trick zone snuffs
+ * everything to the base radius.
+ */
+export function computeLightRadius(
+  party: Character[],
+  ruleset: Ruleset,
+  cell?: CellData,
+): number {
+  if (cell && cellHasTrick(cell, 'darkness')) return DARK_BASE_RADIUS
+  let radius = DARK_BASE_RADIUS
+  const items = new Map<string, ItemDef>(ruleset.items.map(i => [i.id, i]))
+  for (const ch of party) {
+    if (!ch.alive) continue
+    for (const inst of Object.values(ch.equipment ?? {})) {
+      if (!inst) continue
+      const def = items.get(inst.def)
+      if (def?.lightRadius) radius = Math.max(radius, def.lightRadius)
+    }
+    for (const st of ch.statuses ?? []) {
+      const def = ruleset.statusEffects.find(s => s.id === st.def)
+      for (const mod of def?.modifiers ?? []) {
+        if (mod.target === 'derived' && mod.key === 'lightRadius' && mod.op === 'add') {
+          radius = Math.max(radius, DARK_BASE_RADIUS + mod.amount)
+        }
+      }
+    }
+  }
+  return radius
+}
+
+/**
+ * Advance burn-down light sources by one step. Any equipped item with
+ * `burnSteps` tracks its remaining life in ItemInstance.charges (initialised
+ * on first tick) and is destroyed when it runs out.
+ * Returns the updated party (new object only when something changed).
+ */
+export function tickLightBurn(
+  party: Character[],
+  ruleset: Ruleset,
+): { party: Character[]; messages: string[] } {
+  const messages: string[] = []
+  let changed = false
+  const items = new Map<string, ItemDef>(ruleset.items.map(i => [i.id, i]))
+  const next = party.map(ch => {
+    if (!ch.alive) return ch
+    let chChanged = false
+    const equipment = { ...ch.equipment }
+    for (const [slot, inst] of Object.entries(equipment)) {
+      if (!inst) continue
+      const def = items.get(inst.def)
+      if (!def?.burnSteps || !def.lightRadius) continue
+      const remaining = (inst.charges ?? def.burnSteps) - 1
+      chChanged = true
+      if (remaining <= 0) {
+        delete equipment[slot as keyof typeof equipment]
+        messages.push(`${ch.name}'s ${def.name} gutters out.`)
+      } else {
+        equipment[slot as keyof typeof equipment] = { ...inst, charges: remaining }
+      }
+    }
+    if (!chChanged) return ch
+    changed = true
+    return { ...ch, equipment }
+  })
+  return changed ? { party: next, messages } : { party, messages }
+}
+
+// ── Fog of war: per-cell exploration reveal ─────────────────────────────────────
+
+const RAYS: { dir: EdgeDir; dx: number; dy: number }[] = [
+  { dir: 'N', dx: 0, dy: -1 },
+  { dir: 'S', dx: 0, dy: 1 },
+  { dir: 'E', dx: 1, dy: 0 },
+  { dir: 'W', dx: -1, dy: 0 },
+]
+
+/** True when the boundary on `key` stops line of sight (a solid wall or a shut
+ *  door). Passable hazard edges and revealed secrets do not block. */
+function boundaryBlocksSight(
+  map: MapData,
+  key: string,
+  flags: Record<string, boolean | number | string>,
+): boolean {
+  const b = map.boundaries?.[key]
+  if (!b) return false
+  if (b.door) return effectiveDoorState(b.door, flags) !== 'open'
+  if (b.wall === undefined) return false
+  if (b.wall === EDGE.DAMAGE) return false                 // hazard edge — you see through it
+  if (b.secret && b.revealFlag && flags[b.revealFlag]) return false
+  return true                                              // any solid wall (incl. hidden secret/illusory)
+}
+
+function blocksBase(base: number): boolean {
+  return base === BASE.EMPTY || base === BASE.WALL || base === BASE.VOID
+}
+
+/**
+ * Chart the walked cell into the auto-map trail. The Play-mode minimap and the
+ * full-map (M) view are fogged strictly by this breadcrumb trail — standing on
+ * a cell maps it; seeing down a corridor does not. Returns the same array when
+ * nothing changed so React state stays referentially stable.
+ */
+export function chartWalkedCell(seenCells: string[] | undefined, x: number, y: number): string[] {
+  const key = `${x},${y}`
+  if (seenCells?.includes(key)) return seenCells
+  return [...(seenCells ?? []), key]
+}
+
+/**
+ * Cells the party sees standing on `(x,y)`: the cell itself plus cardinal
+ * line-of-sight out to `maxDist`, stopping at walls and shut doors. A blocking
+ * wall cell is itself revealed (you see its near face) before the ray halts.
+ *
+ * NOT used by the core auto-map (that's `chartWalkedCell` — walked cells
+ * only). Kept as the engine piece for authored map reveals: a Cartographer's
+ * Lens item, a Scry spell, or the `reveal` event effect widening `seenCells`
+ * by line of sight — see docs/roadmap.md.
+ */
+export function seenCellsFrom(
+  map: MapData,
+  x: number,
+  y: number,
+  flags: Record<string, boolean | number | string> = {},
+  maxDist = 6,
+): string[] {
+  const seen = new Set<string>([`${x},${y}`])
+  for (const { dir, dx, dy } of RAYS) {
+    let cx = x
+    let cy = y
+    for (let step = 0; step < maxDist; step++) {
+      if (boundaryBlocksSight(map, boundaryKey(cx, cy, dir), flags)) break
+      const nx = cx + dx
+      const ny = cy + dy
+      seen.add(`${nx},${ny}`)
+      if (blocksBase(map.cells[`${nx},${ny}`]?.base ?? 0)) break
+      cx = nx
+      cy = ny
+    }
+  }
+  return [...seen]
+}
+
+// ── Camp / rest ────────────────────────────────────────────────────────────────
+
+export interface RestResult {
+  party: Character[]
+  /** True when the rest is interrupted — the caller should start the cell's
+   *  zone encounter instead of finishing the rest. */
+  ambushed: boolean
+  message: string
+}
+
+/**
+ * Rest the party: restore HP/MP by the meta fractions (default full), clear
+ * statuses, revive nobody (death is death until a revive effect). On non-safe
+ * cells the rest may be interrupted by an ambush (restAmbushChance, default
+ * 0.25) — the caller rolls the cell's zone encounter table when `ambushed`.
+ * Safe rooms (trick: safeRoom) never ambush.
+ */
+export function restParty(
+  party: Character[],
+  meta: GameMeta,
+  cell: CellData | undefined,
+  rng: () => number = Math.random,
+): RestResult {
+  const safe = cellHasTrick(cell, 'safeRoom')
+  const hasZone = (cell?.entities ?? []).some(e => e.t === 'encounter' && e.mode === 'zone')
+  if (!safe && hasZone && rng() < (meta.restAmbushChance ?? 0.25)) {
+    return { party, ambushed: true, message: 'Something stirs in the dark — the camp is ambushed!' }
+  }
+  const hpFrac = meta.restHpFrac ?? 1
+  const mpFrac = meta.restMpFrac ?? 1
+  const rested = party.map(ch => {
+    if (!ch.alive) return ch
+    return {
+      ...ch,
+      hp: Math.min(ch.maxHp, Math.max(ch.hp, Math.round(ch.maxHp * hpFrac))),
+      mp: Math.min(ch.maxMp, Math.max(ch.mp, Math.round(ch.maxMp * mpFrac))),
+      statuses: [],
+    }
+  })
+  return {
+    party: rested,
+    ambushed: false,
+    message: safe ? 'The party rests safely.' : 'The party makes camp and recovers.',
+  }
+}
+
+/**
+ * Advance persistent statuses one step while exploring. Statuses flagged
+ * `persistsExploring` tick their `tickEffects` (poison bites, regen heals…) on
+ * their step interval and count down `remaining`; a member can be knocked out.
+ * Combat-only statuses are left untouched. Call once per player step, passing
+ * the new step total so per-status intervals line up.
+ */
+export function tickExplorationStatuses(
+  party: Character[],
+  ruleset: Ruleset,
+  stepsTaken: number,
+  rng: () => number = Math.random,
+): { party: Character[]; messages: string[]; changed: boolean } {
+  const messages: string[] = []
+  let changed = false
+  const next = party.map(ch => {
+    if (!ch.alive || !ch.statuses?.length) return ch
+    let hp = ch.hp
+    let mp = ch.mp
+    const kept: Character['statuses'] = []
+    let touched = false
+    for (const st of ch.statuses) {
+      const def = ruleset.statusEffects.find(s => s.id === st.def)
+      if (!def || !def.persistsExploring) { kept.push(st); continue }
+      const interval = Math.max(1, def.exploreStepInterval ?? 1)
+      if (stepsTaken % interval !== 0) { kept.push(st); continue }
+      touched = true
+      for (const eff of def.tickEffects ?? []) {
+        if (eff.t === 'damage') {
+          const d = rollDice(eff.amount, rng)
+          if (d > 0) { hp = Math.max(0, hp - d); messages.push(`${ch.name} suffers ${d} from ${def.name}.`) }
+        } else if (eff.t === 'heal') {
+          hp = Math.min(ch.maxHp, hp + rollDice(eff.amount, rng))
+        } else if (eff.t === 'restoreMp') {
+          mp = Math.min(ch.maxMp, mp + rollDice(eff.amount, rng))
+        }
+      }
+      const remaining = st.remaining - 1
+      if (remaining > 0) kept.push({ ...st, remaining })
+      else messages.push(`${ch.name}'s ${def.name} fades.`)
+    }
+    if (!touched) return ch
+    changed = true
+    const alive = hp > 0
+    if (!alive) messages.push(`${ch.name} has succumbed!`)
+    return { ...ch, hp, mp, statuses: kept, alive }
+  })
+  return { party: next, messages, changed }
+}
+
+// ── FOE patrols ────────────────────────────────────────────────────────────────
+
+type FoeEntity = Extract<CellEntity, { t: 'foe' }>
+
+export interface FoeRuntime {
+  /** Anchor cell key ("x,y") — identifies the patrol in save flags. */
+  cellKey: string
+  entity: FoeEntity
+  pos: { x: number; y: number }
+  dead: boolean
+}
+
+export function foeFlagKey(mapId: string, cellKey: string, field: 'idx' | 'dir' | 'dead'): string {
+  return `foe.${mapId}.${cellKey}.${field}`
+}
+
+function foeRoute(cellKey: string, entity: FoeEntity): { x: number; y: number }[] {
+  const [ax, ay] = cellKey.split(',').map(Number)
+  return [{ x: ax, y: ay }, ...(entity.path ?? [])]
+}
+
+/** All FOEs on a map with their current route positions (from save flags). */
+export function listFoes(
+  map: MapData,
+  flags: Record<string, boolean | number | string>,
+): FoeRuntime[] {
+  const out: FoeRuntime[] = []
+  for (const [key, cell] of Object.entries(map.cells)) {
+    for (const ent of cell.entities ?? []) {
+      if (ent.t !== 'foe') continue
+      const route = foeRoute(key, ent)
+      const idx = Math.min(route.length - 1, Math.max(0, Number(flags[foeFlagKey(map.id, key, 'idx')] ?? 0)))
+      out.push({
+        cellKey: key,
+        entity: ent,
+        pos: route[idx],
+        dead: !!flags[foeFlagKey(map.id, key, 'dead')],
+      })
+    }
+  }
+  return out
+}
+
+/**
+ * Advance every living FOE on the map by one route step (call once per player
+ * step). Returns the flag writes to merge into save state — empty when
+ * nothing moved.
+ */
+export function advanceFoes(
+  map: MapData,
+  flags: Record<string, boolean | number | string>,
+): Record<string, number> {
+  const updates: Record<string, number> = {}
+  for (const [key, cell] of Object.entries(map.cells)) {
+    for (const ent of cell.entities ?? []) {
+      if (ent.t !== 'foe') continue
+      if (flags[foeFlagKey(map.id, key, 'dead')]) continue
+      const route = foeRoute(key, ent)
+      if (route.length < 2) continue
+      const idx = Math.min(route.length - 1, Math.max(0, Number(flags[foeFlagKey(map.id, key, 'idx')] ?? 0)))
+      if ((ent.mode ?? 'loop') === 'loop') {
+        updates[foeFlagKey(map.id, key, 'idx')] = (idx + 1) % route.length
+      } else {
+        let dir = Number(flags[foeFlagKey(map.id, key, 'dir')] ?? 1)
+        let next = idx + dir
+        if (next < 0 || next >= route.length) {
+          dir = -dir
+          next = idx + dir
+        }
+        updates[foeFlagKey(map.id, key, 'idx')] = next
+        updates[foeFlagKey(map.id, key, 'dir')] = dir
+      }
+    }
+  }
+  return updates
+}
