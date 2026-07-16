@@ -1,15 +1,16 @@
-# Epoch Mapper
+# Epoch
 
 A free, open-source **first-person dungeon-crawler engine and authoring tool**
 in the tradition of Eye of the Beholder, Shin Megami Tensei, and Wizardry —
-approachable, free, and tightly integrated with the
-[Epoch](https://github.com/northbridgetechnology/epoch) game library.
+approachable and free.
 
 Draw grid maps, build a full ruleset (classes, spells, items, enemies, NPCs,
 quests, events), and **play the result in a pseudo-3D first-person view** — with
 turn-based combat, party management, exploration hazards, and a save system.
-Export your maps as a print-ready **PDF** or as a compact, self-describing
-**`.epochmap`** binary you can share with other players.
+When your game is done, ship it as a **standalone app** (single double-click
+HTML, hosted web build, or native desktop binary), or export a print-ready
+**PDF** and a compact, self-describing **`.epochmap`** binary you can share with
+other players.
 
 This repository is **both**:
 
@@ -17,25 +18,27 @@ This repository is **both**:
    login, no accounts, no server. State is file-based.
 2. **The npm package `@northbridgetechnology/epoch-mapper`** — the editor
    component, the game engine, the PDF export pipeline, and the `.epochmap`
-   codec, consumed directly by Epoch.
+   codec.
 
-> **Status:** the map editor, the `.epochmap` codec, the custom-marker system,
-> and the Epoch integration are complete — and on top of that sits a full
-> **game engine**: a first-person renderer, turn-based combat in three battle
-> systems (classic / Persona-style 1-More / full SMT press-turn), a 15-table
-> content database with richly seeded defaults, character progression, built-in
-> music + SFX, a world-grid map system, events/quests/NPCs, and deep exploration
-> systems. Finished games ship as **standalone apps** (single HTML, hosted web
-> build, or native desktop). See the **Game engine** and **Distributing a
-> finished game** sections below, [`docs/roadmap.md`](docs/roadmap.md) for
-> deferred specs, [`docs/DISTRIBUTION.md`](docs/DISTRIBUTION.md) for packaging,
-> and [`docs/sprites.md`](docs/sprites.md) for the sprite system.
+> **Status:** the map editor, the `.epochmap` codec (now **v3** — a diffed
+> ruleset makes a stock-content game well under 1 KB), and the custom-marker
+> system are complete — and on top of that sits a full **game engine**: a
+> first-person renderer, turn-based combat in three battle systems (classic /
+> Persona-style 1-More / full SMT press-turn), a 15-table content database with
+> richly seeded defaults, character progression, built-in music + SFX, a
+> world-grid map system, events/quests/NPCs, and deep exploration systems.
+> Finished games ship as **standalone apps** (single HTML, hosted web build, or
+> native desktop) from a lean ~940 KB player. See the **Game engine** and
+> **Distributing a finished game** sections below,
+> [`docs/roadmap.md`](docs/roadmap.md) for deferred specs,
+> [`docs/DISTRIBUTION.md`](docs/DISTRIBUTION.md) for packaging, and
+> [`docs/sprites.md`](docs/sprites.md) for the sprite system.
 
 ---
 
 ## Game engine
 
-Beyond the map editor, Epoch Mapper ships a playable first-person engine. Build
+Beyond the map editor, Epoch ships a playable first-person engine. Build
 content in the **Database** and **Party** workspaces, place it on the grid with
 the **Cell Inspector**, then switch to **Play** to walk your dungeon.
 
@@ -252,8 +255,8 @@ host app can instead own persistence and seed/save the session:
 ```
 
 When `initialSession`/`onSessionChange` are provided the localStorage draft and
-first-visit welcome are skipped. This is exactly how Epoch backs the editor with
-its `DungeonMap` table — see `Epoch/src/components/arcade/DungeonMapPanel.tsx`.
+first-visit welcome are skipped — this is how a host app backs the editor with
+its own database table instead of the file-based default.
 
 ---
 
@@ -350,8 +353,8 @@ file sees your types correctly.
 - **Importing** a file resolves ID conflicts per spec §5.3: a free ID keeps its
   value, an identical definition is reused, and a clashing definition is
   reassigned to the next free ID with the affected imported cells remapped. This
-  logic is exported (`resolveMarkerImport`, `remapMapMarkers`) for reuse in
-  Epoch's server-side import route.
+  logic is exported (`resolveMarkerImport`, `remapMapMarkers`) for reuse in a
+  host app's server-side import route.
 
 ---
 
@@ -397,10 +400,9 @@ In **Play** mode:
 
 ## Stack & deviations from the spec
 
-Next.js (App Router) · TypeScript · Tailwind CSS — the same family as Epoch so
-components port directly. The spec names "Next.js 14"; this repo uses **Next 15
-/ React 19 / Tailwind 3**, matching Epoch's actual modern stack. gzip is
-provided by [`fflate`](https://github.com/101arrowz/fflate) (browser + Node).
+Next.js (App Router) · TypeScript · Tailwind CSS. The spec names "Next.js 14";
+this repo uses **Next 15 / React 19 / Tailwind 3**. gzip is provided by
+[`fflate`](https://github.com/101arrowz/fflate) (browser + Node).
 
 ---
 
@@ -423,14 +425,14 @@ echo "//npm.pkg.github.com/:_authToken=YOUR_GITHUB_PAT" >> ~/.npmrc
 npm publish        # publishConfig already targets npm.pkg.github.com
 ```
 
-Consumers (Epoch) authenticate to the same registry for `@northbridgetechnology`
-— see Epoch's `.npmrc`.
+Consumers authenticate to the same registry for `@northbridgetechnology` — see
+your `.npmrc`.
 
 ---
 
 ## Support the project ☕
 
-Epoch Mapper is free and open source — no accounts, no ads, no paywalls. If it
+Epoch is free and open source — no accounts, no ads, no paywalls. If it
 has saved you time or you simply appreciate the work, you can show your support
 by [**buying me a coffee**](https://www.buymeacoffee.com/northbridgetechnology).
 Every cup helps keep the project maintained and is genuinely appreciated. The

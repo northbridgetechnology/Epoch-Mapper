@@ -1,5 +1,5 @@
 /**
- * Epoch Mapper — shared type definitions.
+ * Epoch — shared type definitions.
  *
  * The in-memory model is built directly on the numeric type-ID taxonomy
  * defined by the `.epochmap` binary format (see EPOCH_MAPPER_SPEC.md §4.3).

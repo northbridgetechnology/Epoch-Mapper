@@ -2,7 +2,7 @@ import Link from 'next/link'
 import { Map as MapIcon, ArrowLeft } from 'lucide-react'
 
 export const metadata = {
-  title: 'About — Epoch Mapper',
+  title: 'About — Epoch',
 }
 
 export default function AboutPage() {
@@ -15,36 +15,26 @@ export default function AboutPage() {
 
         <div className="flex items-center gap-3">
           <MapIcon className="h-8 w-8 text-amber-400" />
-          <h1 className="text-3xl font-bold">Epoch Mapper</h1>
+          <h1 className="text-3xl font-bold">Epoch</h1>
         </div>
 
         <p className="text-white/70 leading-relaxed">
-          Epoch Mapper is a free, open-source dungeon and world map editor built for retro gaming. Draw room layouts,
-          mark shops, inns, bosses, and points of interest as you explore a game. Export your maps as a beautifully
-          formatted PDF or as a compact <code className="text-amber-200">.epochmap</code> file you can share with other
-          players.
+          Epoch is a free, open-source first-person dungeon-crawler engine and authoring tool for retro gaming — in the
+          tradition of Eye of the Beholder, Shin Megami Tensei, and Wizardry. Draw grid maps, build a full ruleset
+          (classes, spells, items, enemies, NPCs, quests, events), and play the result in a pseudo-3D first-person view
+          with turn-based combat, a party, music, and exploration hazards.
         </p>
 
         <p className="text-white/70 leading-relaxed">
           It runs entirely in your browser — no login, no accounts, no server. Your work is auto-saved to this device
-          and exported as files you own. Maps you save in <code className="text-amber-200">.epochmap</code> format embed
-          all of their custom marker definitions, so anyone you share a file with sees the map exactly as you drew it.
+          and exported as files you own. When a game is finished you can ship it as a standalone app — a single
+          double-click <code className="text-amber-200">.html</code>, a hosted web build, or a native desktop binary —
+          or export a print-ready PDF and a compact <code className="text-amber-200">.epochmap</code> file. Everything a
+          game needs (maps, ruleset, baked audio, custom markers) travels inside that one file.
         </p>
 
-        <div className="rounded-xl border border-white/10 p-5 space-y-2">
-          <h2 className="font-semibold text-amber-300">Using Epoch?</h2>
-          <p className="text-white/70 leading-relaxed text-sm">
-            Epoch Mapper powers the dungeon-mapping feature in{' '}
-            <a href="https://github.com/northbridgetechnology/epoch" className="text-amber-300 hover:underline">
-              Epoch
-            </a>
-            , the retro game library. If you use Epoch, your maps sync to your profile, attach to specific games, and are
-            always one click away from your game drawer.
-          </p>
-        </div>
-
         <div className="rounded-xl border border-amber-500/20 bg-amber-500/[0.04] p-5 space-y-2">
-          <h2 className="font-semibold text-amber-300">☕ Enjoying Epoch Mapper?</h2>
+          <h2 className="font-semibold text-amber-300">☕ Enjoying Epoch?</h2>
           <p className="text-white/70 leading-relaxed text-sm">
             It&apos;s free and always will be — no accounts, no ads, no paywalls. If it&apos;s saved you time or
             you just appreciate the work, you can show your support by{' '}

@@ -1,5 +1,5 @@
 /**
- * Procedural map generator for Epoch Mapper.
+ * Procedural map generator for Epoch.
  * Produces either a plain floor-filled map (base) or a BSP dungeon (generated).
  * Pure utility — no React, no DOM.
  */

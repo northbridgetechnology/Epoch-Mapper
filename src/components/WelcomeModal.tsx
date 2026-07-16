@@ -37,7 +37,7 @@ export function WelcomeModal({ onClose }: { onClose: () => void }) {
         onClick={(e) => e.stopPropagation()}
       >
         <div className="sticky top-0 z-10 flex items-center justify-between px-6 py-4 border-b border-white/10 bg-zinc-950/95 backdrop-blur">
-          <h2 className="text-lg font-bold text-white">Welcome to Epoch Mapper</h2>
+          <h2 className="text-lg font-bold text-white">Welcome to Epoch</h2>
           <button
             onClick={onClose}
             className="grid place-items-center h-8 w-8 rounded-md text-white/50 hover:text-white hover:bg-white/10"
@@ -48,9 +48,9 @@ export function WelcomeModal({ onClose }: { onClose: () => void }) {
         </div>
 
         <div className="px-6 py-5 space-y-5">
-          <Section title="What is Epoch Mapper?">
+          <Section title="What is Epoch?">
             <p>
-              Epoch Mapper is a free, open-source first-person dungeon-crawler engine and authoring tool — in the
+              Epoch is a free, open-source first-person dungeon-crawler engine and authoring tool — in the
               tradition of Eye of the Beholder, Shin Megami Tensei, and Wizardry. Draw grid maps, build a full ruleset,
               and <strong className="text-white/85">play the result in a pseudo-3D first-person view</strong> with
               turn-based combat, a party, character progression, music, and exploration hazards. When your game is done,
@@ -282,8 +282,9 @@ export function WelcomeModal({ onClose }: { onClose: () => void }) {
             <ul className="list-disc pl-5 space-y-1">
               <li>Drag a .epochmap file onto the app, or use File → Import. Custom marker definitions load automatically.</li>
               <li>
-                If you are using Epoch (the game library), importing a map also saves it to your profile database and
-                attaches it to the matching game.
+                A whole game — every map, the full ruleset, baked audio, and custom markers — rides inside one compact
+                <code className="text-amber-200"> .epochmap</code>. Games built on the stock ruleset stay tiny (well
+                under 1 KB), so they are easy to share, host, or bake into a standalone build.
               </li>
             </ul>
           </Section>

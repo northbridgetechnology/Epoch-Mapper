@@ -19,5 +19,5 @@
 
 export async function exportMapsAsPdf(): Promise<void> {
   // Unreachable in the player UI; guard defensively rather than crash.
-  console.warn('PDF export is only available in the Epoch Mapper editor, not the standalone player.')
+  console.warn('PDF export is only available in the Epoch editor, not the standalone player.')
 }

@@ -58,7 +58,7 @@ export function Toolbar(props: ToolbarProps) {
       {/* Left: brand + file menu */}
       <div className="flex items-center gap-2">
         <MapIcon className="h-5 w-5 text-amber-400 shrink-0" />
-        <span className="hidden sm:block font-bold text-white text-sm tracking-wide">Epoch Mapper</span>
+        <span className="hidden sm:block font-bold text-white text-sm tracking-wide">Epoch</span>
 
         <div className="relative ml-1" ref={fileMenuRef}>
           <button

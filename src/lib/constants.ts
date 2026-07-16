@@ -1,5 +1,5 @@
 /**
- * Epoch Mapper — built-in type tables and grid constants.
+ * Epoch — built-in type tables and grid constants.
  *
  * The ID values here are normative: they are the on-disk IDs written into the
  * `.epochmap` binary format (EPOCH_MAPPER_SPEC.md §4.3). Do not renumber.

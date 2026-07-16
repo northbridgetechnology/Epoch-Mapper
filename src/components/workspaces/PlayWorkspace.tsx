@@ -141,7 +141,7 @@ function PartyHud({ party, gold, steps }: { party: Character[]; gold: number; st
         )
       })}
       <div className="ml-auto flex items-center gap-2 flex-shrink-0">
-        <a href={COFFEE_URL} target="_blank" rel="noopener noreferrer" title="Enjoying Epoch Mapper? Buy me a coffee ☕"
+        <a href={COFFEE_URL} target="_blank" rel="noopener noreferrer" title="Enjoying Epoch? Buy me a coffee ☕"
           className="flex items-center px-3 py-1.5 rounded-lg border border-white/10 bg-zinc-900/60 hover:border-amber-400/40 hover:bg-zinc-800 transition-colors">
           <span className="text-sm leading-none">☕</span>
         </a>

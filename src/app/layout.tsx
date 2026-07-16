@@ -4,7 +4,7 @@ import { BuyMeACoffee } from '@/components/BuyMeACoffee'
 import './globals.css'
 
 export const metadata: Metadata = {
-  title: 'Epoch Mapper',
+  title: 'Epoch',
   description:
     'A free, open-source dungeon and world map editor for retro gaming. Draw room layouts, mark points of interest, and export to PDF or the compact .epochmap format.',
 }
