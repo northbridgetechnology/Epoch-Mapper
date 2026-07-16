@@ -3,10 +3,10 @@
 import { useEffect, useState } from 'react'
 
 /**
- * Buy Me a Coffee support button (bottom-right). While the Play workspace is
- * mounted it hides itself entirely — Play renders an inline coffee chip in the
- * party HUD next to the Steps counter instead (see PlayWorkspace), keeping the
- * corner free for the HUD readouts.
+ * Buy Me a Coffee support button (bottom-left, in the tool-palette column, just
+ * right of the activity bar and inline with its GitHub link). While the Play
+ * workspace is mounted it hides itself entirely — Play renders an inline coffee
+ * chip in the party HUD next to the Steps counter instead (see PlayWorkspace).
  *
  * We try the official vendor widget first: it reads its config from its own
  * <script> data-* attributes and injects a floating button. Next.js can't run a
@@ -31,9 +31,11 @@ const DATA: Record<string, string> = {
   'data-description': 'Support me on Buy me a coffee!',
   'data-message': 'Thank you for visiting!',
   'data-color': BMC_COLOR,
-  'data-position': 'Right',
-  'data-x_margin': '18',
-  'data-y_margin': '18',
+  // Bottom-left, sitting in the same column as the editor's tool palette
+  // (Terrain / Overlays / Edges), just right of the 48px activity bar.
+  'data-position': 'Left',
+  'data-x_margin': '56',
+  'data-y_margin': '10',
 }
 
 export function BuyMeACoffee() {
@@ -72,7 +74,7 @@ export function BuyMeACoffee() {
       target="_blank"
       rel="noopener noreferrer"
       aria-label="Buy me a coffee"
-      className="fixed bottom-[18px] right-[18px] z-[9998] inline-flex items-center gap-2 rounded-full px-4 py-2.5 text-sm font-semibold text-white shadow-lg ring-1 ring-black/10 transition-transform hover:scale-105"
+      className="fixed bottom-[10px] left-[56px] z-[9998] inline-flex items-center gap-2 rounded-full px-4 py-2.5 text-sm font-semibold text-white shadow-lg ring-1 ring-black/10 transition-transform hover:scale-105"
       style={{ backgroundColor: BMC_COLOR }}
     >
       <span aria-hidden>☕</span>

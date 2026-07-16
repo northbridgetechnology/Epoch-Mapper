@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Plus, Trash2, MapPin, Eraser, X, Search, Pipette } from 'lucide-react'
+import { Plus, Trash2, MapPin, Eraser, X, Search, Pipette, Github } from 'lucide-react'
 import { toast } from 'sonner'
 import { notify } from '@/lib/notify'
 import { cn, uid } from '@/lib/utils'
@@ -2198,6 +2198,16 @@ export function DungeonMapper({
               {ws.icon}
             </button>
           ))}
+          {/* Source link, pinned to the bottom of the activity bar */}
+          <a
+            href="https://github.com/northbridgetechnology/Epoch-Mapper"
+            target="_blank"
+            rel="noopener noreferrer"
+            title="View source on GitHub"
+            className="mt-auto w-9 h-9 grid place-items-center rounded-lg text-white/40 hover:text-white hover:bg-white/10 transition-colors"
+          >
+            <Github className="h-5 w-5" />
+          </a>
         </nav>
       )}
 
