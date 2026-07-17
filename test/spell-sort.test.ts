@@ -105,7 +105,7 @@ const items = [
 
 test('itemGroups: kind groups in ITEM_KINDS order, name within', () => {
   const { groups, rows } = itemGroups(items, 'kind')
-  assert.deepEqual(groups?.map(g => g.id).slice(0, 3), ['weapon', 'armor', 'consumable'])
+  assert.deepEqual(groups?.map(g => g.id).slice(0, 3), ['weapon', 'armor', 'accessory'])
   assert.deepEqual(rows.map(r => r.item.id), ['blade', 'plate', 'potion', 'coin'])
 })
 

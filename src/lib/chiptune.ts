@@ -249,6 +249,23 @@ export const SFX_DEFS: Record<string, SfxSeg[]> = {
 
 export type SfxName = keyof typeof SFX_DEFS
 
+/** Friendly labels for the built-in SFX kit, and which engine action each one
+ *  is the default for. Drives the Audio → SFX list and the event-sound slots. */
+export const SFX_META: { name: SfxName; label: string; event?: string }[] = [
+  { name: 'door',    label: 'Door open',      event: 'door' },
+  { name: 'locked',  label: 'Locked / denied', event: 'locked' },
+  { name: 'lever',   label: 'Lever / switch', event: 'lever' },
+  { name: 'chest',   label: 'Chest / treasure', event: 'chest' },
+  { name: 'save',    label: 'Save game',      event: 'save' },
+  { name: 'levelup', label: 'Level up',       event: 'levelup' },
+  { name: 'confirm', label: 'Confirm',        event: 'confirm' },
+  { name: 'blip',    label: 'Blip / cursor',  event: 'blip' },
+  { name: 'hit',     label: 'Hit',            event: 'hit' },
+  { name: 'crit',    label: 'Critical hit',   event: 'crit' },
+  { name: 'heal',    label: 'Heal',           event: 'heal' },
+  { name: 'spell',   label: 'Spell cast',     event: 'spell' },
+]
+
 // ── Rendering (browser-only) ────────────────────────────────────────────────────
 
 const RATE = 44100

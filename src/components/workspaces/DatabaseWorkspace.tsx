@@ -1,13 +1,15 @@
 'use client'
 
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
-import { Plus, Trash2, Copy, Crown, Package, List, Skull, Swords, Sparkles, Zap, Store, Puzzle, ScrollText, Shield, Sword, Shirt, Music, BookOpen, Flame, Upload, Play, Square, MessageSquare } from 'lucide-react'
+import { Plus, Trash2, Copy, Crown, Package, List, Skull, Swords, Sparkles, Zap, Store, Puzzle, ScrollText, Shield, Sword, Shirt, Music, BookOpen, Flame, Upload, Play, Square, MessageSquare, Search } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import type { ClassDef, ItemSlot, DamageType, WeaponTypeDef, ArmorTypeDef, AudioTrackDef, SpellSchoolDef, SkillDef, Effect, EnemyAbility, EnemyDef, EncounterTableDef, EventDef, ItemDef, LootTableDef, QuestDef, ShopDef, SpellDef, StatusEffectDef, DialogueDef, Ruleset } from '@/lib/engine-types'
 import { CLASS_SCHEMA, blankClass } from '@/lib/class-schema'
 import { WEAPON_TYPE_SCHEMA, ARMOR_TYPE_SCHEMA, DAMAGE_TYPE_OPTIONS, blankWeaponType, blankArmorType } from '@/lib/type-schema'
 import { blankAudioTrack } from '@/lib/music'
+import { SFX_META } from '@/lib/chiptune'
+import type { SfxEvent } from '@/lib/engine-types'
 import { SKILL_SCHEMA, blankSkill, skillGroups, type SkillSort } from '@/lib/skill-schema'
 import { putTrack, deleteTrack, hasTrack } from '@/lib/audio-store'
 import { music } from '@/lib/audio-controller'
@@ -15,6 +17,7 @@ import { EVENT_SCHEMA, QUEST_SCHEMA, blankEventDef, blankQuest, blankDialogue } 
 import { DialogueEditor } from '../forms/DialogueEditor'
 import { ConditionBuilder } from '@/components/CellInspector'
 import { SimulatePanel } from '@/components/SimulatePanel'
+import { usePanelWidth } from '@/components/ui/ResizablePanel'
 import { SchemaForm } from '../forms/SchemaForm'
 import { EffectBuilder } from '../forms/EffectBuilder'
 import { ITEM_SCHEMA, LOOT_TABLE_SCHEMA, blankItem, itemGroups, type ItemSort } from '@/lib/item-schema'
@@ -28,7 +31,7 @@ const CATEGORIES: { id: Category; icon: React.ReactNode; label: string }[] = [
   { id: 'items',          icon: <Package className="w-4 h-4" />,  label: 'Items' },
   { id: 'weapon_types',   icon: <Sword className="w-4 h-4" />,    label: 'Weapon Types' },
   { id: 'armor_types',    icon: <Shirt className="w-4 h-4" />,    label: 'Armor Types' },
-  { id: 'audio',          icon: <Music className="w-4 h-4" />,    label: 'Music' },
+  { id: 'audio',          icon: <Music className="w-4 h-4" />,    label: 'Audio' },
   { id: 'classes',        icon: <Shield className="w-4 h-4" />,   label: 'Classes' },
   { id: 'loot_tables',    icon: <List className="w-4 h-4" />,     label: 'Loot Tables' },
   { id: 'bestiary',       icon: <Skull className="w-4 h-4" />,    label: 'Bestiary' },
@@ -849,11 +852,17 @@ function SortedList({ label, rows, groups, sortOptions, sort, onSort, selectedId
   onDelete: (id: string) => void
 }) {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
+  const [query, setQuery] = useState('')
   const toggle = (gid: string) => setCollapsed(prev => {
     const next = new Set(prev)
     if (next.has(gid)) next.delete(gid); else next.add(gid)
     return next
   })
+
+  const q = query.trim().toLowerCase()
+  const shown = q
+    ? rows.filter(r => r.name.toLowerCase().includes(q) || (r.sub ?? '').toLowerCase().includes(q) || r.id.toLowerCase().includes(q))
+    : rows
 
   const row = (r: SortedRow) => (
     <div key={r.key}
@@ -886,10 +895,23 @@ function SortedList({ label, rows, groups, sortOptions, sort, onSort, selectedId
           <Plus className="w-3 h-3" /> New
         </button>
       </div>
+      <div className="px-2 py-1.5 border-b border-white/5">
+        <div className="relative">
+          <Search className="w-3 h-3 text-white/25 absolute left-2 top-1/2 -translate-y-1/2 pointer-events-none" />
+          <input type="text" value={query} onChange={e => setQuery(e.target.value)}
+            placeholder={`Search ${label.toLowerCase()}…`}
+            className="w-full pl-6 pr-6 py-1 rounded bg-zinc-800 border border-white/10 text-xs text-white/85 placeholder:text-white/25 focus:outline-none focus:border-amber-500/40" />
+          {query && (
+            <button onClick={() => setQuery('')} title="Clear"
+              className="absolute right-1.5 top-1/2 -translate-y-1/2 text-white/30 hover:text-white/70 text-xs">✕</button>
+          )}
+        </div>
+      </div>
       <div className="flex-1 overflow-y-auto p-1.5 space-y-0.5 min-h-0">
         {rows.length === 0 && <div className="text-center text-white/25 text-xs py-6">Nothing yet — click New</div>}
+        {rows.length > 0 && shown.length === 0 && <div className="text-center text-white/25 text-xs py-6">No matches for “{query}”</div>}
         {groups ? groups.map(g => {
-          const members = rows.filter(r => r.groupId === g.id)
+          const members = shown.filter(r => r.groupId === g.id)
           if (members.length === 0) return null
           const containsSel = selectedId != null && members.some(r => r.id === selectedId)
           const open = containsSel || !collapsed.has(g.id)
@@ -907,7 +929,7 @@ function SortedList({ label, rows, groups, sortOptions, sort, onSort, selectedId
               {open && members.map(row)}
             </div>
           )
-        }) : rows.map(row)}
+        }) : shown.map(row)}
       </div>
     </div>
   )
@@ -1626,6 +1648,57 @@ function SpellSchoolEditor({ school, ruleset, onChange }: {
 const MAX_TRACK_BYTES = 25 * 1024 * 1024      // hard cap
 const WARN_TRACK_BYTES = 8 * 1024 * 1024      // soft warning (keeps .epochmap lean)
 
+/** Synthetic list id for the global Event Sounds panel. */
+const SFX_SLOTS_ID = '__sfxslots__'
+
+/** Assign which SFX plays for each engine event (door, chest, level-up…).
+ *  Writes ruleset.meta.sfxSlots; unset events fall back to their built-in. */
+function SfxSlotPanel({ ruleset, onRulesetChange }: {
+  ruleset: Ruleset
+  onRulesetChange: (r: Ruleset) => void
+}) {
+  const sfxTracks = ruleset.audioTracks.filter(t => t.role === 'sfx')
+  const slots = ruleset.meta.sfxSlots ?? {}
+
+  function setSlot(event: SfxEvent, id: string) {
+    const next: Partial<Record<SfxEvent, string>> = { ...slots }
+    if (id) next[event] = id; else delete next[event]
+    onRulesetChange({ ...ruleset, meta: { ...ruleset.meta, sfxSlots: next } })
+  }
+  function preview(id: string) {
+    const t = ruleset.audioTracks.find(x => x.id === id)
+    if (t) { music.unlock(); music.playSfxTrack(t) }
+  }
+
+  return (
+    <div className="p-4 space-y-3 overflow-y-auto h-full">
+      <div>
+        <div className="text-base font-bold text-white/90">Event Sounds</div>
+        <p className="text-xs text-white/40 mt-0.5">The sound effect played for each engine action. Per-object overrides (a specific door or chest) still win over these.</p>
+      </div>
+      <div className="space-y-1.5">
+        {SFX_META.filter(s => s.event).map(s => {
+          const event = s.event as SfxEvent
+          const cur = slots[event] ?? `sfx.${s.name}`
+          return (
+            <div key={event} className="flex items-center gap-2">
+              <div className="w-32 flex-shrink-0 text-sm text-white/70">{s.label}</div>
+              <select value={cur} onChange={e => setSlot(event, e.target.value)}
+                className="flex-1 px-2 py-1.5 rounded bg-zinc-800 border border-white/10 text-sm text-white/85 focus:outline-none focus:border-amber-500/40">
+                {sfxTracks.map(t => <option key={t.id} value={t.id}>{t.icon ?? '🔊'} {t.name}</option>)}
+              </select>
+              <button onClick={() => preview(cur)} title="Preview"
+                className="flex-shrink-0 p-1.5 rounded text-white/50 hover:text-white hover:bg-white/10 border border-white/10">
+                <Play className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 function AudioTrackEditor({ track, onChange }: {
   track: AudioTrackDef
   onChange: (t: AudioTrackDef) => void
@@ -1662,7 +1735,14 @@ function AudioTrackEditor({ track, onChange }: {
     }
   }
 
+  const isSfx = track.role === 'sfx'
+
   async function togglePreview() {
+    if (isSfx) {
+      music.unlock()
+      music.playSfxTrack(track) // one-shot, no persistent "playing" state
+      return
+    }
     if (previewing || music.currentTrackId() === track.id) {
       music.stop({ fadeMs: 150 })
       setPreviewing(false)
@@ -1694,6 +1774,19 @@ function AudioTrackEditor({ track, onChange }: {
         <input type="text" value={track.name}
           onChange={e => onChange({ ...track, name: e.target.value })}
           className="w-full px-2 py-1.5 rounded bg-zinc-800 border border-white/10 text-sm text-white/85 focus:outline-none focus:border-amber-500/50" />
+      </div>
+
+      <div>
+        <label className="block text-xs font-medium text-white/60 mb-1">Type</label>
+        <div className="inline-flex rounded-lg border border-white/10 overflow-hidden">
+          {(['music', 'sfx'] as const).map(r => (
+            <button key={r}
+              onClick={() => onChange({ ...track, role: r, loop: r === 'music' })}
+              className={cn('px-3 py-1.5 text-xs', (track.role ?? 'music') === r ? 'bg-amber-500/15 text-amber-200' : 'text-white/55 hover:text-white/80', r === 'sfx' ? 'border-l border-white/10' : '')}>
+              {r === 'music' ? '🎵 Music' : '🔊 Sound effect'}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* Source */}
@@ -1768,6 +1861,7 @@ export function DatabaseWorkspace({ ruleset, onRulesetChange }: DatabaseWorkspac
   const [selectedId, setSelectedId] = useState<string | null>(
     ruleset.items[0]?.id ?? null,
   )
+  const [listWidth, listHandle] = usePanelWidth('db.list', 'left', 224, 180, 460)
 
   // ── items ──
 
@@ -2157,8 +2251,9 @@ export function DatabaseWorkspace({ ruleset, onRulesetChange }: DatabaseWorkspac
         ))}
       </nav>
 
-      {/* Entry list */}
-      <div className="w-56 flex-shrink-0 border-r border-white/10 bg-zinc-950 min-h-0">
+      {/* Entry list (drag the right edge to resize) */}
+      <div className="relative flex-shrink-0 border-r border-white/10 bg-zinc-950 min-h-0" style={{ width: listWidth }}>
+        {listHandle}
         {category === 'items' && (
           <ItemList items={ruleset.items} selectedId={selectedId} onSelect={setSelectedId} onAdd={addItem} onDelete={deleteItem} />
         )}
@@ -2197,8 +2292,18 @@ export function DatabaseWorkspace({ ruleset, onRulesetChange }: DatabaseWorkspac
             selectedId={selectedId} onSelect={setSelectedId} onAdd={addSchool} onDelete={deleteSchool} />
         )}
         {category === 'audio' && (
-          <GenericDefList label="Music" entries={ruleset.audioTracks.map(t => ({ id: t.id, icon: t.icon ?? '🎵', name: t.name }))}
-            selectedId={selectedId} onSelect={setSelectedId} onAdd={addTrack} onDelete={deleteTrackDef} />
+          <SortedList label="Audio"
+            rows={[
+              { key: SFX_SLOTS_ID, id: SFX_SLOTS_ID, icon: '🎚️', name: 'Event Sounds', sub: 'which SFX plays for each action', groupId: 'special' },
+              ...ruleset.audioTracks.map(t => ({
+                key: t.id, id: t.id, icon: t.icon ?? (t.role === 'sfx' ? '🔊' : '🎵'),
+                name: t.name, sub: t.source, groupId: t.role === 'sfx' ? 'sfx' : 'music',
+              })),
+            ]}
+            groups={[{ id: 'special', label: 'Global' }, { id: 'music', label: 'Music' }, { id: 'sfx', label: 'Sound Effects' }]}
+            sortOptions={[{ id: 'type', label: 'Type' }]} sort="type" onSort={() => {}}
+            selectedId={selectedId} onSelect={setSelectedId} onAdd={addTrack}
+            onDelete={id => { if (id !== SFX_SLOTS_ID) deleteTrackDef(id) }} />
         )}
         {category === 'classes' && (
           <GenericDefList label="Classes" entries={ruleset.classes.map(c => ({ id: c.id, icon: c.icon ?? '🎓', name: c.name }))}
@@ -2248,6 +2353,8 @@ export function DatabaseWorkspace({ ruleset, onRulesetChange }: DatabaseWorkspac
           </div>
         ) : category === 'spell_schools' && selectedSchool ? (
           <SpellSchoolEditor school={selectedSchool} ruleset={ruleset} onChange={updateSchool} />
+        ) : category === 'audio' && selectedId === SFX_SLOTS_ID ? (
+          <SfxSlotPanel ruleset={ruleset} onRulesetChange={onRulesetChange} />
         ) : category === 'audio' && selectedTrack ? (
           <AudioTrackEditor track={selectedTrack} onChange={updateTrack} />
         ) : category === 'classes' && selectedClass ? (

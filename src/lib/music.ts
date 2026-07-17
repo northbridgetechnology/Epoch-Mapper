@@ -12,11 +12,32 @@
  * (rather than cutting to silence) — battle music is opt-in.
  */
 
-import type { AudioTrackDef, GameMeta } from './engine-types'
+import type { AudioTrackDef, GameMeta, Ruleset, SfxEvent } from './engine-types'
 
 /** Default values for a blank new AudioTrackDef. */
 export function blankAudioTrack(id: string): AudioTrackDef {
   return { id, name: 'New Track', source: 'upload', loop: true, volume: 1 }
+}
+
+/** Default values for a blank new SFX AudioTrackDef. */
+export function blankSfxTrack(id: string): AudioTrackDef {
+  return { id, name: 'New Sound', role: 'sfx', source: 'upload', loop: false, volume: 1 }
+}
+
+export const isSfxTrack = (t: AudioTrackDef): boolean => t.role === 'sfx'
+
+/**
+ * The SFX track to play for an engine event: a per-object override wins, then
+ * the ruleset's event→SFX assignment, then the matching built-in (`sfx.<event>`).
+ * Returns undefined only if none of those resolve (caller can then no-op).
+ */
+export function resolveSfxTrack(
+  event: SfxEvent,
+  ruleset: Ruleset,
+  overrideId?: string,
+): AudioTrackDef | undefined {
+  const byId = (id?: string) => (id ? ruleset.audioTracks.find(t => t.id === id) : undefined)
+  return byId(overrideId) ?? byId(ruleset.meta.sfxSlots?.[event]) ?? byId(`sfx.${event}`)
 }
 
 export interface MusicContext {

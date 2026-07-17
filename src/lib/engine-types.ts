@@ -25,7 +25,7 @@ export type DamageType =
 export type Dice = number | string
 
 export type ItemSlot = 'weapon' | 'offhand' | 'head' | 'body' | 'hands' | 'feet' | 'ring' | 'amulet'
-export type ItemKind = 'weapon' | 'armor' | 'consumable' | 'key' | 'quest' | 'misc'
+export type ItemKind = 'weapon' | 'armor' | 'accessory' | 'consumable' | 'key' | 'quest' | 'misc'
 /** Equip weight tier for weapons and armor (FF-style class proficiency). */
 export type EquipWeight = 'heavy' | 'medium' | 'light'
 
@@ -311,9 +311,13 @@ export interface EncounterTableDef extends Definition {
  *  tracks are synthesized on demand from the chiptune library (zero assets —
  *  they regenerate anywhere, nothing to bake). */
 export interface AudioTrackDef extends Definition {
+  /** 'music' = looping background track (the default when absent);
+   *  'sfx' = a one-shot sound effect (door, chest, hit…). */
+  role?: 'music' | 'sfx'
   /** 'upload' = blob in IndexedDB under this id (baked on export);
    *  'url' = streamed from `src`;
-   *  'builtin' = synthesized from the chiptune spec with this id. */
+   *  'builtin' = synthesized from the chiptune spec with this id (music) or
+   *  the SFX kit entry named by the id minus its `sfx.` prefix (sfx). */
   source: 'upload' | 'url' | 'builtin'
   /** For 'url': the external address. For 'upload': the original filename
    *  (informational — the blob is keyed by id, not by this). */
@@ -325,6 +329,13 @@ export interface AudioTrackDef extends Definition {
   /** Baseline gain 0..1 applied before the player's master volume (default 1). */
   volume?: number
 }
+
+/** Engine actions that emit a sound effect and can be re-skinned via
+ *  `meta.sfxSlots`. The string matches the built-in SFX kit entry it
+ *  defaults to. */
+export type SfxEvent =
+  | 'door' | 'locked' | 'lever' | 'chest' | 'save' | 'levelup'
+  | 'confirm' | 'blip' | 'hit' | 'crit' | 'heal' | 'spell'
 
 export interface LootTableDef extends Definition {
   gold?: { min: number; max: number }
@@ -467,6 +478,10 @@ export interface GameMeta {
   /** Short stinger played once when a boss battle starts, chaining straight
    *  into the boss loop. */
   bossIntroId?: DefRef<AudioTrackDef>
+  /** Sound-effect assignments: engine event → SFX AudioTrackDef id. Lets a
+   *  game re-skin the door/chest/lever/save/level-up (etc.) sounds without
+   *  code. Unset events fall back to the matching built-in SFX. */
+  sfxSlots?: Partial<Record<SfxEvent, DefRef<AudioTrackDef>>>
   /** Turn system for all battles (classic / oneMore / pressTurn). Global game
    *  rule; legacy per-map MapData.combatMode is honored only when this is
    *  unset. Default 'classic'. */
@@ -547,6 +562,10 @@ export interface ObjectInstance {
   dialogue?: string
   trapEffects?: Effect[]
   onInteract?: Effect[]
+  /** SFX AudioTrackDef id to play on this object's signature action (a door
+   *  opening, a chest opening, a lever thrown). Overrides the ruleset-wide
+   *  event sound; absent = the ruleset default for that event. */
+  sound?: DefRef<AudioTrackDef>
 }
 
 /** A condition gate for CellEvent.conditions — ALL must pass for the event to fire. */
@@ -791,6 +810,9 @@ export interface DoorDef {
   requiredFlags?: string[]
   toggleFlag?: string
   oneWay?: boolean
+  /** SFX AudioTrackDef id for this door's open/close; overrides the ruleset
+   *  'door' event sound. Absent = the ruleset default. */
+  sound?: DefRef<AudioTrackDef>
 }
 
 /** A lever mounted on one face of a wall boundary. Interacting from the
@@ -805,6 +827,9 @@ export interface SwitchDef {
    *  usable/visible from. A switch on the N edge of a cell that should be
    *  used from that cell faces S. */
   facing: import('./types').EdgeDir
+  /** SFX AudioTrackDef id for throwing this lever; overrides the ruleset
+   *  'lever' event sound. Absent = the ruleset default. */
+  sound?: DefRef<AudioTrackDef>
 }
 
 /**

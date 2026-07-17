@@ -153,6 +153,33 @@ class MusicController {
     })
   }
 
+  /** Play an SFX AudioTrackDef one-shot — a built-in synth (id `sfx.<name>`),
+   *  an uploaded blob, or a URL. Cached by track id, routed through the SFX
+   *  bus so it ignores music ducking. */
+  playSfxTrack(track: AudioTrackDef): void {
+    if (!this.supported() || !this.unlocked) return
+    const ctx = this.ensureCtx()
+    if (!ctx || !this.sfxBus) return
+    const fire = (buf: AudioBuffer) => {
+      const src = ctx.createBufferSource()
+      src.buffer = buf
+      src.connect(this.sfxBus!)
+      src.start()
+    }
+    const cached = this.sfxBuffers.get(track.id)
+    if (cached) { fire(cached); return }
+    const load = async (): Promise<AudioBuffer | null> => {
+      if (track.source === 'builtin') return renderSfx(track.id.replace(/^sfx\./, ''))
+      const raw = await this.fetchArrayBuffer(track)
+      return raw ? await ctx.decodeAudioData(raw) : null
+    }
+    void load().then(buf => {
+      if (!buf) return
+      this.sfxBuffers.set(track.id, buf)
+      fire(buf)
+    }).catch(() => { /* ignore */ })
+  }
+
   setVolume(v: number): void {
     this.volume = Math.min(1, Math.max(0, v))
     this.applyMaster()

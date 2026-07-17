@@ -383,6 +383,7 @@ function describeItem(def: ItemDef | undefined, ruleset: Ruleset): React.ReactNo
   if (def.kind === 'consumable') bits.push(summarizeEffects(def.onUse ?? [], ruleset))
   else if (def.kind === 'weapon') bits.push('Weapon')
   else if (def.kind === 'armor') bits.push('Armor')
+  else if (def.kind === 'accessory') bits.push('Accessory')
   else if (def.kind === 'key') bits.push('Key item')
   else if (def.kind === 'quest') bits.push('Quest item')
   const mods = (def.modifiers ?? []).map(m => `${m.op === 'mul' ? '×' : '+'}${m.amount} ${m.key}`).join(', ')
@@ -404,7 +405,7 @@ function itemActions(def: ItemDef | undefined): { id: ItemAction; label: string 
   if (!def) return []
   const out: { id: ItemAction; label: string }[] = []
   if (def.kind === 'consumable' && (def.onUse?.length ?? 0) > 0) out.push({ id: 'use', label: 'Use' })
-  if ((def.kind === 'weapon' || def.kind === 'armor') && def.slot) out.push({ id: 'equip', label: 'Equip' })
+  if ((def.kind === 'weapon' || def.kind === 'armor' || def.kind === 'accessory') && def.slot) out.push({ id: 'equip', label: 'Equip' })
   if (def.kind !== 'key' && def.kind !== 'quest') out.push({ id: 'drop', label: 'Drop' })   // story items protected
   return out
 }

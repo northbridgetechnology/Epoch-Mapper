@@ -8,7 +8,7 @@ import type {
   ItemDef, WeaponTypeDef, ArmorTypeDef, SpellSchoolDef, SkillDef, EnemyDef, EncounterTableDef, LootTableDef, ShopDef,
   Ruleset,
 } from './engine-types'
-import { CHIP_TRACKS, CHIP_BOSS_INTRO } from './chiptune'
+import { CHIP_TRACKS, CHIP_BOSS_INTRO, SFX_META } from './chiptune'
 
 // ── Attributes ─────────────────────────────────────────────────────────────────
 
@@ -132,6 +132,26 @@ export const DEFAULT_MUSIC_SLOTS = {
   victoryMusicId: 'chip.victory',
   gameOverMusicId: 'chip.gameover',
 } as const
+
+/** Built-in one-shot SFX, surfaced as AudioTrackDefs so they're managed in the
+ *  Audio database next to music (previewable, replaceable with an upload). The
+ *  `sfx.` id prefix keeps them out of the music namespace; playback strips it
+ *  to find the synth spec in the SFX kit. */
+export const DEFAULT_SFX_TRACKS: AudioTrackDef[] = SFX_META.map(s => ({
+  id: `sfx.${s.name}`,
+  name: s.label,
+  icon: '🔊',
+  description: 'Built-in synthesized sound effect. Replace with an upload any time.',
+  role: 'sfx' as const,
+  source: 'builtin' as const,
+  loop: false,
+  volume: 1,
+}))
+
+/** Default event→SFX assignments: each engine event points at its built-in. */
+export const DEFAULT_SFX_SLOTS = Object.fromEntries(
+  SFX_META.filter(s => s.event).map(s => [s.event!, `sfx.${s.name}`]),
+) as Record<string, string>
 
 // ── Spell schools ───────────────────────────────────────────────────────────────
 // Ids are the historical school strings, so legacy spells/classes (which stored
@@ -1346,7 +1366,7 @@ export const DEFAULT_ITEMS: ItemDef[] = [
   {
     id: 'item.magatama', name: 'Magatama', icon: '🔮', color: '#00cec9',
     description: 'A comma-shaped jewel of spiritual power. Sharpens both mind and soul.',
-    kind: 'misc', slot: 'amulet',
+    kind: 'accessory', slot: 'amulet',
     value: 1000, stackable: false,
     modifiers: [
       { target: 'attribute', key: 'intellect', op: 'add', amount: 3 },
@@ -1356,7 +1376,7 @@ export const DEFAULT_ITEMS: ItemDef[] = [
   {
     id: 'item.bead_ring', name: 'Prayer Beads', icon: '📿', color: '#ffeaa7',
     description: 'Sacred beads worn around the wrist. Boosts spiritual defense.',
-    kind: 'misc', slot: 'ring',
+    kind: 'accessory', slot: 'ring',
     value: 600, stackable: false,
     modifiers: [
       { target: 'attribute', key: 'spirit', op: 'add', amount: 3 },
@@ -1366,7 +1386,7 @@ export const DEFAULT_ITEMS: ItemDef[] = [
   {
     id: 'item.lucky_charm', name: 'Lucky Charm', icon: '🍀', color: '#00b894',
     description: 'A four-leaf clover pressed in glass. Raises fortune considerably.',
-    kind: 'misc', slot: 'ring',
+    kind: 'accessory', slot: 'ring',
     value: 400, stackable: false,
     modifiers: [{ target: 'attribute', key: 'luck', op: 'add', amount: 6 }],
   },
@@ -1649,49 +1669,49 @@ export const DEFAULT_ITEMS: ItemDef[] = [
   {
     id: 'item.ring_of_might', name: 'Ring of Might', icon: '💍', color: '#e17055',
     description: 'A heavy band that lends the arm its certainty.',
-    kind: 'misc', slot: 'ring',
+    kind: 'accessory', slot: 'ring',
     value: 900, stackable: false, unidentifiedName: '?Ring',
     modifiers: [{ target: 'attribute', key: 'might', op: 'add', amount: 3 }],
   },
   {
     id: 'item.ring_of_magus', name: 'Ring of the Magus', icon: '💍', color: '#8e44ad',
     description: 'A sapphire band humming with stored theory.',
-    kind: 'misc', slot: 'ring',
+    kind: 'accessory', slot: 'ring',
     value: 1100, stackable: false, unidentifiedName: '?Ring',
     modifiers: [{ target: 'attribute', key: 'intellect', op: 'add', amount: 4 }],
   },
   {
     id: 'item.band_of_alacrity', name: 'Band of Alacrity', icon: '💍', color: '#00b894',
     description: 'Time seems politely slower while you wear it.',
-    kind: 'misc', slot: 'ring',
+    kind: 'accessory', slot: 'ring',
     value: 1000, stackable: false, unidentifiedName: '?Ring',
     modifiers: [{ target: 'attribute', key: 'agility', op: 'add', amount: 4 }],
   },
   {
     id: 'item.amulet_of_warding', name: 'Amulet of Warding', icon: '🧿', color: '#0984e3',
     description: 'An evil eye that stares back on your behalf.',
-    kind: 'misc', slot: 'amulet',
+    kind: 'accessory', slot: 'amulet',
     value: 1200, stackable: false, unidentifiedName: '?Amulet',
     modifiers: [{ target: 'derived', key: 'defense', op: 'add', amount: 3 }],
   },
   {
     id: 'item.amulet_of_vitality', name: 'Amulet of Vitality', icon: '📿', color: '#e74c3c',
     description: 'A drop of garnet warm as a heartbeat.',
-    kind: 'misc', slot: 'amulet',
+    kind: 'accessory', slot: 'amulet',
     value: 800, stackable: false,
     modifiers: [{ target: 'attribute', key: 'endurance', op: 'add', amount: 3 }],
   },
   {
     id: 'item.signet_of_fortune', name: 'Signet of Fortune', icon: '💍', color: '#f9ca24',
     description: 'Its previous owners were all, briefly, very lucky.',
-    kind: 'misc', slot: 'ring',
+    kind: 'accessory', slot: 'ring',
     value: 700, stackable: false,
     modifiers: [{ target: 'attribute', key: 'luck', op: 'add', amount: 4 }],
   },
   {
     id: 'item.ring_of_greed', name: 'Ring of Greed', icon: '💍', color: '#f39c12',
     description: 'Gorgeous, heavy, and warm to the touch. It wants to be worn.',
-    kind: 'misc', slot: 'ring',
+    kind: 'accessory', slot: 'ring',
     value: 50, stackable: false, unidentifiedName: '?Gold Ring', cursed: true,
     modifiers: [
       { target: 'attribute', key: 'might', op: 'add', amount: 2 },
@@ -1743,7 +1763,7 @@ export const DEFAULT_ITEMS: ItemDef[] = [
   {
     id: 'item.veil_of_stars', name: 'Veil of Stars', icon: '🌌', color: '#6c5ce7',
     description: 'A necklace of seven stones that are not from around here.',
-    kind: 'misc', slot: 'amulet',
+    kind: 'accessory', slot: 'amulet',
     value: 6500, stackable: false,
     modifiers: [
       { target: 'attribute', key: 'intellect', op: 'add', amount: 3 },
@@ -2912,7 +2932,7 @@ export function normalizeRuleset(r: Ruleset): Ruleset {
   // improvement for silent drafts, while authored audio is left untouched.
   const hadNoAudio = !(r.audioTracks && r.audioTracks.length)
   const meta = hadNoAudio
-    ? { ...DEFAULT_MUSIC_SLOTS, ...Object.fromEntries(Object.entries(r.meta).filter(([, v]) => v !== undefined)) } as typeof r.meta
+    ? { ...DEFAULT_MUSIC_SLOTS, sfxSlots: DEFAULT_SFX_SLOTS, ...Object.fromEntries(Object.entries(r.meta).filter(([, v]) => v !== undefined)) } as typeof r.meta
     : r.meta
 
   return {
@@ -2925,9 +2945,9 @@ export function normalizeRuleset(r: Ruleset): Ruleset {
     // Built-in tracks merge into every ruleset (they cost nothing and the
     // 'chip.' namespace can't collide with authored ids) so the library is
     // always available in the pickers; authored tracks stay untouched.
-    audioTracks: hadNoAudio ? DEFAULT_AUDIO_TRACKS : [
+    audioTracks: hadNoAudio ? [...DEFAULT_AUDIO_TRACKS, ...DEFAULT_SFX_TRACKS] : [
       ...(r.audioTracks ?? []),
-      ...DEFAULT_AUDIO_TRACKS.filter(t => !(r.audioTracks ?? []).some(x => x.id === t.id)),
+      ...[...DEFAULT_AUDIO_TRACKS, ...DEFAULT_SFX_TRACKS].filter(t => !(r.audioTracks ?? []).some(x => x.id === t.id)),
     ],
     items: migrated.items,
     spells: r.spells ?? [],
@@ -2956,6 +2976,7 @@ export function makeDefaultRuleset(startMapId = 'map1'): Ruleset {
       permadeath: false,
       startingGold: 100,
       ...DEFAULT_MUSIC_SLOTS,
+      sfxSlots: DEFAULT_SFX_SLOTS,
     },
     attributes: DEFAULT_ATTRIBUTES,
     classes: DEFAULT_CLASSES,
@@ -2963,7 +2984,7 @@ export function makeDefaultRuleset(startMapId = 'map1'): Ruleset {
     weaponTypes: DEFAULT_WEAPON_TYPES,
     armorTypes: DEFAULT_ARMOR_TYPES,
     spellSchools: DEFAULT_SPELL_SCHOOLS,
-    audioTracks: DEFAULT_AUDIO_TRACKS,
+    audioTracks: [...DEFAULT_AUDIO_TRACKS, ...DEFAULT_SFX_TRACKS],
     items: DEFAULT_ITEMS,
     spells: DEFAULT_SPELLS,
     skills: DEFAULT_SKILLS,

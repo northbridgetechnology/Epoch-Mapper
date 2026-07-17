@@ -69,7 +69,7 @@ test('the SFX kit is well-formed', () => {
 
 test('fresh rulesets ship the library and a fully scored slot set', () => {
   const rs = makeDefaultRuleset()
-  assert.equal(rs.audioTracks.length, 17)
+  assert.equal(rs.audioTracks.length, 29)   // 17 music + 12 SFX
   assert.ok(rs.audioTracks.every(t => t.source === 'builtin'))
   for (const [slot, id] of Object.entries(DEFAULT_MUSIC_SLOTS)) {
     assert.equal((rs.meta as unknown as Record<string, unknown>)[slot], id, slot)
@@ -81,14 +81,14 @@ test('normalizeRuleset: silent drafts get the library + slots; authored audio un
   const silent = { ...makeDefaultRuleset(), audioTracks: [] as typeof DEFAULT_AUDIO_TRACKS }
   silent.meta = { ...silent.meta, defaultMusicId: undefined, battleMusicId: undefined, bossMusicId: undefined, titleMusicId: undefined, victoryMusicId: undefined, gameOverMusicId: undefined, bossIntroId: undefined }
   const healed = normalizeRuleset(silent as Ruleset)
-  assert.equal(healed.audioTracks.length, 17)
+  assert.equal(healed.audioTracks.length, 29)
   assert.equal(healed.meta.battleMusicId, 'chip.battle')
 
   const authored = makeDefaultRuleset()
   authored.audioTracks = [{ id: 'mine', name: 'Mine', source: 'upload', loop: true, volume: 1 }]
   authored.meta = { ...authored.meta, battleMusicId: 'mine' }
   const kept = normalizeRuleset(authored)
-  assert.equal(kept.audioTracks.length, 18)                       // authored + merged built-ins
+  assert.equal(kept.audioTracks.length, 30)                       // authored + merged music + SFX
   assert.equal(kept.audioTracks[0].id, 'mine')                    // authored first, untouched
   assert.equal(kept.meta.battleMusicId, 'mine')                   // slots stay as authored
 })

@@ -324,6 +324,20 @@ function ObjectEntityEditor({
         )}
       </div>
 
+      {/* Open sound (chest) — overrides the ruleset 'chest' event sound */}
+      {obj.kind === 'chest' && (
+        <div>
+          <label className={LABEL}>Open Sound <span className="text-white/30">(optional)</span></label>
+          <select value={obj.sound ?? ''} onChange={e => update({ sound: e.target.value || undefined })}
+            className={cn(INPUT, 'w-full')}>
+            <option value="">— default (Chest) —</option>
+            {ruleset.audioTracks.filter(t => t.role === 'sfx').map(t => (
+              <option key={t.id} value={t.id}>{t.icon ?? '🔊'} {t.name}</option>
+            ))}
+          </select>
+        </div>
+      )}
+
       {/* Loot (chest/door/trap) */}
       {(obj.kind === 'chest' || obj.kind === 'trap' || obj.kind === 'door') && (
         <div>

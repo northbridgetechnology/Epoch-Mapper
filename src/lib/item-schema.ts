@@ -10,6 +10,7 @@ export type ItemSort = 'kind' | 'slot' | 'value' | 'name'
 export const ITEM_KINDS = [
   { value: 'weapon', label: 'Weapon' },
   { value: 'armor', label: 'Armor' },
+  { value: 'accessory', label: 'Accessory' },
   { value: 'consumable', label: 'Consumable' },
   { value: 'key', label: 'Key Item' },
   { value: 'quest', label: 'Quest Item' },

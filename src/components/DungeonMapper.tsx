@@ -16,7 +16,8 @@ import { parseDotEpochmap, serializeDotEpochmap } from '@/lib/epochmap-codec'
 import { zipSync } from 'fflate'
 import { gatherAudioBlobs, restoreAudioBlobs, clearAudioStore } from '@/lib/audio-store'
 import { music } from '@/lib/audio-controller'
-import { resolveTrack, trackById } from '@/lib/music'
+import { resolveTrack, trackById, resolveSfxTrack } from '@/lib/music'
+import type { SfxEvent } from '@/lib/engine-types'
 import { resolveMarkerImport, remapMapMarkers } from '@/lib/markers'
 import { exportMapsAsPdf } from '@/lib/dungeon-export'
 import { Map, Database, Users, Play, Settings } from 'lucide-react'
@@ -213,6 +214,14 @@ export interface DungeonMapperProps {
    * with `initialSession` (the embedded game) and `layout="fill"`.
    */
   distribution?: boolean
+}
+
+/** Play an engine event's sound: a per-instance override wins, then the
+ *  ruleset's event→SFX assignment, else the built-in. */
+function playSfx(event: SfxEvent, ruleset: Ruleset, overrideId?: string): void {
+  const track = resolveSfxTrack(event, ruleset, overrideId)
+  if (track) music.playSfxTrack(track)
+  else music.sfx(event)
 }
 
 export function DungeonMapper({
@@ -540,7 +549,7 @@ export function DungeonMapper({
     if (Object.keys(result.flagSets).length > 0) {
       setFlags(prev => ({ ...prev, ...result.flagSets }))
     }
-    result.sounds.forEach(name => music.sfx(name))
+    result.sounds.forEach(name => playSfx(name as SfxEvent, ruleset))
     result.messages.forEach(msg => toast(msg))
     if (result.goldDelta !== 0) {
       setGold(g => g + result.goldDelta)
@@ -995,13 +1004,13 @@ export function DungeonMapper({
         if (sw.facing === OPP[facingDir]) {
           const wasOn = !!flags[sw.flag]
           if (sw.mode === 'once' && wasOn) {
-            music.sfx('locked')
+            playSfx('locked', ruleset, sw.sound)
           toast('The lever is stuck fast.')
             return
           }
           const curCell = activeMap.cells[`${activeMap.playerX},${activeMap.playerY}`] ?? null
           applyExploreEffect(applyFlagWriteWithReactions(sw.flag, !wasOn, curCell, makeEventContext(), ruleset))
-          music.sfx('lever')
+          playSfx('lever', ruleset, sw.sound)
           toast(wasOn
             ? 'You hear a heavy thud echo through the halls…'
             : 'You hear something click in the distance…')
@@ -1031,7 +1040,7 @@ export function DungeonMapper({
             updateActiveMap(m => ({
               boundaries: { ...(m.boundaries ?? {}), [bk]: { ...boundary, door: { ...door, state: 'open' as const } } }
             }))
-            music.sfx('confirm')
+            playSfx('confirm', ruleset, door.sound)
             toast('Door unlocked!')
           } else {
             toast('The door is sealed shut. Something must unlock it…')
@@ -1042,14 +1051,14 @@ export function DungeonMapper({
           updateActiveMap(m => ({
             boundaries: { ...(m.boundaries ?? {}), [bk]: { ...boundary, door: { ...door, state: 'open' as const } } }
           }))
-          music.sfx('door')
+          playSfx('door', ruleset, door.sound)
           toast('The door creaks open.')
           return
         } else if (door.state === 'open') {
           updateActiveMap(m => ({
             boundaries: { ...(m.boundaries ?? {}), [bk]: { ...boundary, door: { ...door, state: 'closed' as const } } }
           }))
-          music.sfx('door')
+          playSfx('door', ruleset, door.sound)
           toast('The door swings shut.')
           return
         } else if (door.state === 'locked') {
@@ -1057,10 +1066,10 @@ export function DungeonMapper({
             updateActiveMap(m => ({
               boundaries: { ...(m.boundaries ?? {}), [bk]: { ...boundary, door: { ...door, state: 'open' as const } } }
             }))
-            music.sfx('confirm')
+            playSfx('confirm', ruleset, door.sound)
             toast('Door unlocked!')
           } else {
-            music.sfx('locked')
+            playSfx('locked', ruleset, door.sound)
             toast('This door is locked.')
           }
           return
@@ -1119,7 +1128,7 @@ export function DungeonMapper({
             parts.push(`${qty > 1 ? `${qty}× ` : ''}${def?.name ?? item}`)
           }
           if (result.gold > 0) parts.push(`${result.gold} gold`)
-          music.sfx(parts.length > 0 ? 'chest' : 'blip')
+          playSfx(parts.length > 0 ? 'chest' : 'blip', ruleset, obj.sound)
           toast(parts.length > 0 ? `Found: ${parts.join(', ')}!` : 'The chest is empty.')
           return
         }
@@ -1339,7 +1348,7 @@ export function DungeonMapper({
   const handleSaveSlot = useCallback((slot: number) => {
     if (!canSaveHere) { notify('You can only save at a save point.'); return }
     saveToSlot(slot, buildSaveState())
-    music.sfx('save')
+    playSfx('save', ruleset)
     notify(`Saved to slot ${slot + 1}.`)
   }, [canSaveHere, buildSaveState])
 
@@ -2286,7 +2295,7 @@ export function DungeonMapper({
                 }
               }
               savePartyTemplate(updatedParty, formation, reserve)
-              if (levelUps.length > 0) music.sfx('levelup')
+              if (levelUps.length > 0) playSfx('levelup', ruleset)
               levelUps.forEach(name => toast.success(`${name} leveled up!`))
               setCombatState(null)
               if (pendingFoeKillRef.current) {
@@ -3156,6 +3165,21 @@ function BoundaryInspector({ bk, x, y, dir, boundary, ruleset, onChange, onClose
               ? 'Player must carry the key item to open this door.'
               : 'Player can open and close this door freely.'}
           </p>
+        </div>
+
+        {/* Open/close sound override */}
+        <div>
+          <div className="text-xs font-semibold text-white/40 uppercase tracking-wider mb-2">Sound</div>
+          <select
+            value={door.sound ?? ''}
+            onChange={e => onChange(bk, { ...boundary, door: { ...door, sound: e.target.value || undefined } })}
+            className="w-full rounded bg-zinc-800 border border-white/10 text-sm text-white/80 px-2 py-1.5 focus:outline-none focus:border-amber-500/40"
+          >
+            <option value="">— default (Door open) —</option>
+            {ruleset.audioTracks.filter(t => t.role === 'sfx').map(t => (
+              <option key={t.id} value={t.id}>{t.icon ?? '🔊'} {t.name}</option>
+            ))}
+          </select>
         </div>
 
         {/* Key item picker */}
