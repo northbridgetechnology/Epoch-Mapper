@@ -1604,6 +1604,7 @@ function SkillList({ skills, ruleset, selectedId, onSelect, onAdd, onDelete }: {
     if (s.hpCostPct) bits.push(`${Math.round(s.hpCostPct * 100)}% HP`)
     if (s.mpCost) bits.push(`${s.mpCost} MP`)
     if (s.cooldown) bits.push(`CD ${s.cooldown}`)
+    if (s.ammoCost) bits.push(`${s.ammoCost}🔫`)
     return bits.length ? bits.join(' · ') : 'free'
   }
   const { rows, groups } = useMemo(() => {

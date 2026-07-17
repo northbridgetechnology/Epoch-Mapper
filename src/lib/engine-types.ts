@@ -244,6 +244,10 @@ export interface SkillDef extends Definition {
   mpCost?: number
   /** Rounds before this skill can be used again by the same actor. */
   cooldown?: number
+  /** Rounds of ammo this skill spends from the equipped ranged weapon (a
+   *  firearm's clip or a bow's reserve). 0/absent = the skill uses no ammo.
+   *  Multi-shot skills cost several; skills that hit an empty clip are gated. */
+  ammoCost?: number
   target: SpellTarget
   effects: Effect[]
   /** Auto-learned when a character of classId reaches level. */

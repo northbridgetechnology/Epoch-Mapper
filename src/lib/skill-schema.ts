@@ -55,6 +55,7 @@ export const SKILL_SCHEMA: FieldSchema[] = [
   { key: 'hpCostPct',   label: 'HP Cost (fraction of max HP, e.g. 0.1 = 10%)', type: 'number', min: 0, max: 1, optional: true },
   { key: 'mpCost',      label: 'MP Cost',     type: 'number', min: 0, max: 999, optional: true },
   { key: 'cooldown',    label: 'Cooldown (battle rounds)', type: 'number', min: 0, max: 99, optional: true },
+  { key: 'ammoCost',    label: 'Ammo cost (rounds spent; blank = no ammo)', type: 'number', min: 0, max: 99, optional: true },
   { key: 'target',      label: 'Target',      type: { kind: 'enum', options: SKILL_TARGETS } },
   { key: 'effects',     label: 'Effects',     type: 'effects' },
   {

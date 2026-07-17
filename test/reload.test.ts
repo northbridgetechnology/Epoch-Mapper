@@ -10,7 +10,7 @@ import { makeDefaultRuleset } from '../src/lib/default-ruleset'
 import { applyConsumable, applyEffectToChar } from '../src/lib/apply-effects'
 import {
   resolvePlayerAttack, resolvePlayerReload, applyCombatOutcome, consumeCombatAmmo,
-  reloadableRounds, isReloadCompatibleSkill,
+  reloadableRounds, isReloadCompatibleSkill, canUseSkill, resolvePlayerUseSkill,
 } from '../src/lib/combat-engine'
 import type { CombatState, CombatActor } from '../src/lib/combat-engine'
 import type { Character, ItemInstance, Ruleset, SkillDef } from '../src/lib/engine-types'
@@ -137,6 +137,62 @@ test('a full clip with a fresh box: applyConsumable path reloads and spends ammo
   const res = applyConsumable('item.reload_kit', 0, party, inv, rs)!
   assert.equal(res.party[0].equipment.weapon!.charges, 6)        // filled to clip
   assert.equal(res.inventory.find(i => i.def === 'item.pistol_ammo')!.qty, 4) // 10 - 6
+})
+
+// ── skill ammo cost (the per-skill toggle) ───────────────────────────────────
+const gunSkill: SkillDef = { id: 'sk.burst', name: 'Burst', ammoCost: 2, target: 'enemy',
+  effects: [{ t: 'damage', dmgType: 'physical', amount: '1d4' }] }
+const buffSkill: SkillDef = { id: 'sk.steady', name: 'Steady', target: 'self',
+  effects: [{ t: 'status', status: 'status.charged' }] }
+const rsWithSkills: Ruleset = { ...ruleset, skills: [...(ruleset.skills ?? []), gunSkill, buffSkill] }
+
+test('a skill with ammoCost spends the clip and is gated when it can’t pay', () => {
+  const st = state(actor({ type: 'pistol_round', clipSize: 6, loaded: 6 }))
+  assert.equal(canUseSkill(st, gunSkill).ok, true)
+  const r = resolvePlayerUseSkill(st, 'sk.burst', [1], rsWithSkills, () => 0.5)
+  assert.equal(r.actors[0].ammo!.loaded, 4) // 6 - 2
+
+  const low = state(actor({ type: 'pistol_round', clipSize: 6, loaded: 1 }))
+  const gate = canUseSkill(low, gunSkill)
+  assert.equal(gate.ok, false)
+  assert.match(gate.reason ?? '', /ammo/i)
+  assert.equal(resolvePlayerUseSkill(low, 'sk.burst', [1], rsWithSkills, () => 0.5), low) // blocked
+})
+
+test('an ammo skill requires a ranged weapon; a bow skill draws reserve', () => {
+  const melee = state(actor(undefined))
+  assert.equal(canUseSkill(melee, gunSkill).ok, false) // no ranged weapon
+  const bow = state(actor({ type: 'arrow', clipSize: 0, loaded: 0 }), { arrow: 5 })
+  const r = resolvePlayerUseSkill(bow, 'sk.burst', [1], rsWithSkills, () => 0.5)
+  assert.equal(r.ammoUsed!.arrow, 2)
+})
+
+test('firing skills can’t pair with Reload; ammo-free buffs can', () => {
+  assert.equal(isReloadCompatibleSkill(gunSkill), false)
+  assert.equal(isReloadCompatibleSkill(buffSkill), true)
+})
+
+// ── seeded gunslinger kit ────────────────────────────────────────────────────
+test('new gunslinger skills and statuses are seeded and ammo-tagged', () => {
+  const byId = (id: string) => ruleset.skills!.find(s => s.id === id)
+  assert.equal(byId('skill.fan_hammer')!.ammoCost, 3)
+  assert.equal(byId('skill.kill_eye')!.ammoCost, 1)
+  assert.ok(!byId('skill.gs_litany')!.ammoCost, 'the Litany is ammo-free (reload-pairable)')
+  assert.equal(isReloadCompatibleSkill(byId('skill.palaver')!), true)
+  assert.ok(!byId('skill.deadeye')!.ammoCost, 'existing skills left untouched — ammo is opt-in')
+  for (const s of ['status.winged', 'status.marked', 'status.bleeding']) {
+    assert.ok(ruleset.statusEffects.find(x => x.id === s), `${s} exists`)
+  }
+  // Every skill referenced by the new kit resolves to a real status.
+  const gunslingerSkills = ruleset.skills!.filter(s => s.learn?.some(l => l.classId === 'class.gunslinger'))
+  for (const sk of gunslingerSkills) {
+    for (const e of sk.effects) {
+      if (e.t === 'status' || e.t === 'cure') {
+        const ref = e.t === 'status' ? e.status : e.status
+        if (ref !== 'all') assert.ok(ruleset.statusEffects.find(x => x.id === ref), `${sk.id} → ${ref}`)
+      }
+    }
+  }
 })
 
 console.log(`\nreload: ${passed} passed`)

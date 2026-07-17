@@ -266,6 +266,76 @@ export const DEFAULT_SKILLS: SkillDef[] = [
     effects: [{ t: 'status', status: 'status.charged' }],
     learn: [{ classId: 'class.gunslinger', level: 5 }],
   },
+  // ── Gunslinger: Dark Tower–flavoured kit ──────────────────────────────────────
+  {
+    id: 'skill.gs_litany', name: "Gunslinger's Litany", icon: '🕯️', color: '#b8860b',
+    description: 'I do not aim with my hand — I aim with my eye. A steadying creed that primes the whole line for a killing shot. (No ammo — may be used while reloading.)',
+    cooldown: 4, target: 'allAllies',
+    effects: [{ t: 'status', status: 'status.charged' }],
+    learn: [{ classId: 'class.gunslinger', level: 3 }],
+  },
+  {
+    id: 'skill.leg_shot', name: 'Leg Shot', icon: '🦵', color: '#c0392b',
+    description: 'A called shot to the knee — hobbles the target so it acts late and misses more.',
+    cooldown: 2, ammoCost: 1, target: 'enemy',
+    effects: [
+      { t: 'damage', dmgType: 'physical', amount: '1d6+2', canCrit: true },
+      { t: 'status', status: 'status.winged', chance: 0.9 },
+    ],
+    learn: [{ classId: 'class.gunslinger', level: 6 }],
+  },
+  {
+    id: 'skill.palaver', name: 'Palaver', icon: '💬', color: '#e67e22',
+    description: 'A cold word and a colder stare that singles a foe out — Marked enemies take more from every hit. (No ammo — may be used while reloading.)',
+    cooldown: 3, target: 'allEnemies',
+    effects: [{ t: 'status', status: 'status.marked', chance: 0.85 }],
+    learn: [{ classId: 'class.gunslinger', level: 7 }],
+  },
+  {
+    id: 'skill.kill_eye', name: 'Kill with the Eye', icon: '👁️', color: '#2c3e50',
+    description: 'One breath held, one perfect shot placed exactly where it will do the most harm.',
+    hpCostPct: 0.06, cooldown: 3, ammoCost: 1, target: 'enemy',
+    effects: [{ t: 'damage', dmgType: 'physical', amount: '4d6+6', canCrit: true }],
+    learn: [{ classId: 'class.gunslinger', level: 8 }],
+  },
+  {
+    id: 'skill.suppressing_fire', name: 'Suppressing Fire', icon: '🔫', color: '#7f8c8d',
+    description: 'Rake the line to keep heads down — light damage and shaken aim across all foes.',
+    cooldown: 2, ammoCost: 2, target: 'allEnemies',
+    effects: [
+      { t: 'damage', dmgType: 'physical', amount: '1d4+1', canCrit: false },
+      { t: 'status', status: 'status.sukunda', chance: 0.6 },
+    ],
+    learn: [{ classId: 'class.gunslinger', level: 9 }],
+  },
+  {
+    id: 'skill.gut_shot', name: 'Gut Shot', icon: '🩸', color: '#a93226',
+    description: 'A cruel low shot that leaves the wound weeping — damage now, and bleeding after.',
+    cooldown: 2, ammoCost: 1, target: 'enemy',
+    effects: [
+      { t: 'damage', dmgType: 'physical', amount: '2d6+2', canCrit: true },
+      { t: 'status', status: 'status.bleeding', chance: 0.8 },
+    ],
+    learn: [{ classId: 'class.gunslinger', level: 10 }],
+  },
+  {
+    id: 'skill.khef', name: 'Khef', icon: '🌊', color: '#16a085',
+    description: 'Share the water of life — steadies the party, clearing fear and charm and bolstering resolve. (No ammo — may be used while reloading.)',
+    hpCostPct: 0.05, cooldown: 4, target: 'allAllies',
+    effects: [
+      { t: 'cure', status: 'status.panicked' },
+      { t: 'cure', status: 'status.charmed' },
+      { t: 'status', status: 'status.rakukaja' },
+    ],
+    learn: [{ classId: 'class.gunslinger', level: 11 }],
+  },
+  {
+    id: 'skill.fan_hammer', name: 'Fan the Hammer', icon: '🤠', color: '#8e44ad',
+    description: 'Empty the piece in a single roaring fan of lead — hits every foe, but burns through the clip.',
+    hpCostPct: 0.08, cooldown: 3, ammoCost: 3, target: 'allEnemies',
+    effects: [{ t: 'damage', dmgType: 'physical', amount: '2d6+3', canCrit: true }],
+    learn: [{ classId: 'class.gunslinger', level: 12 }],
+  },
   {
     id: 'skill.concentrate', name: 'Concentrate', icon: '🌀', color: '#6c5ce7',
     description: 'Still the mind — the next damaging spell strikes for double.',
@@ -542,6 +612,25 @@ export const DEFAULT_STATUS_EFFECTS: StatusEffectDef[] = [
     id: 'status.stopped', name: 'Stopped', icon: '⏱️', color: '#636e72',
     description: 'Frozen outside of time. Cannot act.',
     kind: 'control', durationTurns: 2, blocksAction: true,
+  },
+  {
+    id: 'status.winged', name: 'Winged', icon: '🦵', color: '#c0392b',
+    description: 'A leg shot — hobbled and slow. Acts late and struggles to evade.',
+    kind: 'debuff', durationTurns: 3, blocksAction: false,
+    modifiers: [{ target: 'attribute', key: 'agility', op: 'add', amount: -8 }],
+  },
+  {
+    id: 'status.marked', name: 'Marked', icon: '🎯', color: '#e67e22',
+    description: 'Singled out — every hit against them bites deeper.',
+    kind: 'debuff', durationTurns: 3, blocksAction: false,
+    modifiers: [{ target: 'derived', key: 'defense', op: 'add', amount: -5 }],
+  },
+  {
+    id: 'status.bleeding', name: 'Bleeding', icon: '🩸', color: '#c0392b',
+    description: 'An open wound that keeps taking its toll, even between fights.',
+    kind: 'dot', durationTurns: 3, blocksAction: false,
+    tickEffects: [{ t: 'damage', dmgType: 'physical', amount: '1d4' }],
+    persistsExploring: true, exploreStepInterval: 3,
   },
 ]
 

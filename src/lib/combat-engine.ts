@@ -1036,7 +1036,20 @@ export function canUseSkill(state: CombatState, skill: SkillDef): { ok: boolean;
   if ((skill.mpCost ?? 0) > user.mp) return { ok: false, reason: 'Not enough MP' }
   const readyAt = state.skillCooldowns?.[`${state.turnIdx}:${skill.id}`] ?? 0
   if (state.round < readyAt) return { ok: false, reason: `Ready in ${readyAt - state.round} round${readyAt - state.round === 1 ? '' : 's'}` }
+  const ammoCost = skill.ammoCost ?? 0
+  if (ammoCost > 0) {
+    if (!user.ammo) return { ok: false, reason: 'Requires a ranged weapon' }
+    if (skillAmmoAvailable(state, user) < ammoCost) return { ok: false, reason: 'Not enough ammo' }
+  }
   return { ok: true }
+}
+
+/** Rounds the actor's equipped ranged weapon can spend right now (firearm clip
+ *  or bow reserve). Infinity when the weapon needs no ammo. */
+function skillAmmoAvailable(state: CombatState, actor: CombatActor): number {
+  const ammo = actor.ammo
+  if (!ammo) return Infinity
+  return ammo.clipSize > 0 ? ammo.loaded : (state.ammoReserve?.[ammo.type] ?? 0) - (state.ammoUsed?.[ammo.type] ?? 0)
 }
 
 export function resolvePlayerUseSkill(
@@ -1065,9 +1078,24 @@ export function resolvePlayerUseSkill(
   const skillCooldowns = skill.cooldown
     ? { ...(state.skillCooldowns ?? {}), [`${state.turnIdx}:${skill.id}`]: state.round + skill.cooldown }
     : state.skillCooldowns
+
+  // Spend ammo: a firearm skill draws from the loaded clip, a bow skill from
+  // the shared reserve (both already gated by canUseSkill above).
+  const ammoCost = skill.ammoCost ?? 0
+  let ammoUsed = state.ammoUsed
+  let firedActors = actors
+  if (ammoCost > 0 && user.ammo) {
+    if (user.ammo.clipSize > 0) {
+      firedActors = actors.map((a, i) => i === state.turnIdx && a.ammo
+        ? { ...a, ammo: { ...a.ammo, loaded: Math.max(0, a.ammo.loaded - ammoCost) } } : a)
+    } else {
+      ammoUsed = { ...(state.ammoUsed ?? {}), [user.ammo.type]: (state.ammoUsed?.[user.ammo.type] ?? 0) + ammoCost }
+    }
+  }
+
   return finishAction(
     proceedAfterAction(
-      withDowned({ ...state, actors, skillCooldowns, log: [...state.log, entry, ...log] }, events),
+      withDowned({ ...state, actors: firedActors, ammoUsed, skillCooldowns, log: [...state.log, entry, ...log] }, events),
       ruleset, rand,
       { weak: events.some(e => e.kind === 'weak'), crit: events.some(e => e.kind === 'crit') },
     ),
@@ -1078,9 +1106,10 @@ export function resolvePlayerUseSkill(
 // ── Player: reload ────────────────────────────────────────────────────────────
 
 /** A skill may be used in the same turn as a reload only if it doesn't fire the
- *  weapon — i.e. it deals no direct damage (buffs, heals, taunts, debuffs). */
+ *  weapon — i.e. it deals no direct damage and spends no ammo (buffs, heals,
+ *  taunts, debuffs). */
 export function isReloadCompatibleSkill(skill: SkillDef): boolean {
-  return !skill.effects.some(e => e.t === 'damage')
+  return !skill.effects.some(e => e.t === 'damage') && !(skill.ammoCost && skill.ammoCost > 0)
 }
 
 /** How many rounds a Reload would move into the clip right now (0 = can't). */
