@@ -231,16 +231,23 @@ export function ConversationEditor({ npc, ruleset, onRulesetChange }: {
 
   const quickModel = useMemo<QuickModel>(() => (dlg ? toQuick(dlg) : null) ?? EMPTY_QUICK, [dlg])
 
-  /** Upsert a dialogue def and point this NPC at it — one atomic ruleset write. */
+  /** Upsert a dialogue def and point this NPC at it — one atomic ruleset write.
+   *  Copy-on-write: editing a linked Database entry forks a private copy for
+   *  this NPC so the shared original (and every other NPC using it) is never
+   *  silently mutated. The fork flips the NPC back to "owns a private copy",
+   *  which clears the "In Database" badge and re-enables Save to Database. */
   function writeDialogue(def: DialogueDef) {
-    const list = dialogues.some(d => d.id === def.id)
-      ? dialogues.map(d => (d.id === def.id ? def : d))
-      : [...dialogues, def]
+    const forking = isShared
+    const write = forking ? { ...def, id: privateDefId } : def
+    const list = dialogues.some(d => d.id === write.id)
+      ? dialogues.map(d => (d.id === write.id ? write : d))
+      : [...dialogues, write]
     onRulesetChange({
       ...ruleset,
       dialogues: list,
-      npcs: (ruleset.npcs ?? []).map(n => (n.id === npc.id ? { ...n, dialogue: def.id } : n)),
+      npcs: (ruleset.npcs ?? []).map(n => (n.id === npc.id ? { ...n, dialogue: write.id } : n)),
     })
+    if (forking) toast('Editing a private copy — the shared version is untouched. Save to Database to publish it.')
   }
 
   function assign(id: string | undefined) {
@@ -344,9 +351,9 @@ export function ConversationEditor({ npc, ruleset, onRulesetChange }: {
             onChange={e => rename(e.target.value)}
             className={`${input} flex-1 text-xs`} />
           {isShared && (
-            <span title="A shared Database entry — edits here affect every NPC that uses it"
+            <span title="Linked from the Database. Editing it here makes a private copy for this NPC — the shared version stays put. Update the shared entry itself in Database → Dialogue."
               className="flex items-center gap-1 flex-shrink-0 text-[11px] text-emerald-300/80 bg-emerald-500/10 border border-emerald-500/20 rounded px-2 py-1">
-              <Library className="w-3 h-3" /> In Database
+              <Library className="w-3 h-3" /> Linked
             </span>
           )}
         </div>
