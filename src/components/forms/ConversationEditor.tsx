@@ -17,10 +17,12 @@
  */
 
 import { useMemo, useState } from 'react'
-import { Play, MessageSquare, GitBranch, Link2, Trash2 } from 'lucide-react'
+import { toast } from 'sonner'
+import { Play, MessageSquare, GitBranch, Link2, Trash2, Save, Library } from 'lucide-react'
 import type { DialogueDef, Effect, NpcDef, Ruleset } from '@/lib/engine-types'
 import { toQuick, fromQuick, isQuickShaped, EMPTY_QUICK, type QuickModel, type QuickAction } from '@/lib/dialogue-quick'
 import { blankDialogue } from '@/lib/npc-schema'
+import { ConfirmModal } from '../ConfirmModal'
 import { DialogueEditor } from './DialogueEditor'
 import { DialoguePreview } from './DialoguePreview'
 
@@ -218,9 +220,14 @@ export function ConversationEditor({ npc, ruleset, onRulesetChange }: {
   const [mode, setMode] = useState<'quick' | 'advanced'>(quickOk ? 'quick' : 'advanced')
   const [previewing, setPreviewing] = useState(false)
   const [reuse, setReuse] = useState(false)
+  const [pendingReuse, setPendingReuse] = useState<string | null>(null)
 
   const effectiveMode = mode === 'quick' && !quickOk ? 'advanced' : mode
-  const privateId = npc.dialogue ?? `dlg.${npc.id}`
+  // The auto-managed id an NPC's own conversation lives under. A conversation
+  // pointing anywhere else is a shared Database entry (reused across NPCs).
+  const privateDefId = `dlg.${npc.id}`
+  const targetId = npc.dialogue ?? privateDefId
+  const isShared = !!npc.dialogue && npc.dialogue !== privateDefId
 
   const quickModel = useMemo<QuickModel>(() => (dlg ? toQuick(dlg) : null) ?? EMPTY_QUICK, [dlg])
 
@@ -241,11 +248,10 @@ export function ConversationEditor({ npc, ruleset, onRulesetChange }: {
   }
 
   function removeConversation() {
-    // Drop the assignment; also delete the def if it's this NPC's private one
-    // and no other NPC references it.
+    // Drop the assignment; only delete the def if it's this NPC's own private
+    // one (never a shared Database entry, which other NPCs may use).
     const id = npc.dialogue
-    const stillUsed = id && (ruleset.npcs ?? []).some(n => n.id !== npc.id && n.dialogue === id)
-    const keepDefs = id === privateId && !stillUsed ? dialogues.filter(d => d.id !== id) : dialogues
+    const keepDefs = id === privateDefId ? dialogues.filter(d => d.id !== id) : dialogues
     onRulesetChange({
       ...ruleset,
       dialogues: keepDefs,
@@ -255,14 +261,38 @@ export function ConversationEditor({ npc, ruleset, onRulesetChange }: {
   }
 
   function commitQuick(next: QuickModel) {
-    writeDialogue(fromQuick(next, privateId, dlg?.name ?? `${npc.name} — conversation`))
+    writeDialogue(fromQuick(next, targetId, dlg?.name ?? `${npc.name} — conversation`))
+  }
+
+  function rename(name: string) {
+    if (dlg) writeDialogue({ ...dlg, name })
+  }
+
+  /** Promote this NPC's private conversation into a named, reusable Database
+   *  entry with its own id; the NPC then references the shared entry. */
+  function saveToDatabase() {
+    const source = dlg ?? fromQuick(quickModel, targetId, `${npc.name} — conversation`)
+    const name = source.name?.trim() || `${npc.name} — conversation`
+    const base = `dlg.${name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '') || 'conversation'}`
+    let libId = base, n = 2
+    while (dialogues.some(d => d.id === libId)) libId = `${base}_${n++}`
+    const promoted = { ...source, id: libId, name }
+    // Replace the private original with the library entry, repoint the NPC.
+    const list = [...dialogues.filter(d => d.id !== source.id), promoted]
+    onRulesetChange({
+      ...ruleset,
+      dialogues: list,
+      npcs: (ruleset.npcs ?? []).map(nn => (nn.id === npc.id ? { ...nn, dialogue: libId } : nn)),
+    })
+    toast.success('Saved to Database — reusable from any NPC')
   }
 
   // Advanced always needs a concrete def to edit; synthesize one that persists
   // on first change if none exists yet.
-  const advDef: DialogueDef = dlg ?? { ...blankDialogue(privateId), name: `${npc.name} — conversation` }
-  const previewDef = effectiveMode === 'quick' ? fromQuick(quickModel, privateId, npc.name) : advDef
+  const advDef: DialogueDef = dlg ?? { ...blankDialogue(targetId), name: `${npc.name} — conversation` }
+  const previewDef = effectiveMode === 'quick' ? fromQuick(quickModel, targetId, npc.name) : advDef
   const hasContent = !!dlg
+  const pendingName = pendingReuse ? dialogues.find(d => d.id === pendingReuse)?.name ?? pendingReuse : ''
 
   return (
     <div className="space-y-3">
@@ -289,25 +319,53 @@ export function ConversationEditor({ npc, ruleset, onRulesetChange }: {
           className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs text-white/70 hover:text-white hover:bg-white/10 border border-white/10">
           <Play className="w-3.5 h-3.5" /> Preview
         </button>
+        {hasContent && !isShared && (
+          <button onClick={saveToDatabase} title="Save this conversation to the Database so any NPC can reuse it"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs text-white/70 hover:text-white hover:bg-white/10 border border-white/10">
+            <Save className="w-3.5 h-3.5" /> Save to Database
+          </button>
+        )}
         <button onClick={() => setReuse(r => !r)} title="Point at an existing shared conversation"
           className="p-1.5 rounded-lg text-white/40 hover:text-white/80 hover:bg-white/10 border border-white/10">
           <Link2 className="w-3.5 h-3.5" />
         </button>
         {hasContent && (
-          <button onClick={removeConversation} title="Remove this conversation"
+          <button onClick={removeConversation} title={isShared ? 'Detach this shared conversation from the NPC' : 'Remove this conversation'}
             className="p-1.5 rounded-lg text-white/40 hover:text-red-400 hover:bg-white/10 border border-white/10">
             <Trash2 className="w-3.5 h-3.5" />
           </button>
         )}
       </div>
 
+      {/* Name + shared indicator */}
+      {hasContent && (
+        <div className="flex items-center gap-2">
+          <input type="text" value={dlg?.name ?? ''} placeholder="Conversation name"
+            onChange={e => rename(e.target.value)}
+            className={`${input} flex-1 text-xs`} />
+          {isShared && (
+            <span title="A shared Database entry — edits here affect every NPC that uses it"
+              className="flex items-center gap-1 flex-shrink-0 text-[11px] text-emerald-300/80 bg-emerald-500/10 border border-emerald-500/20 rounded px-2 py-1">
+              <Library className="w-3 h-3" /> In Database
+            </span>
+          )}
+        </div>
+      )}
+
       {reuse && (
         <div className="rounded-lg border border-white/10 bg-zinc-900/60 p-2.5">
           <label className="text-[11px] uppercase tracking-wide text-white/40">Use an existing conversation</label>
-          <select value={npc.dialogue ?? ''} onChange={e => { assign(e.target.value || undefined); setReuse(false) }}
+          <select value={npc.dialogue ?? ''}
+            onChange={e => {
+              const id = e.target.value || undefined
+              setReuse(false)
+              // Switching away replaces what's attached — confirm if there's content.
+              if (id && id !== npc.dialogue && hasContent) setPendingReuse(id)
+              else assign(id)
+            }}
             className={`${input} w-full mt-1`}>
             <option value="">— none —</option>
-            {dialogues.map(d => <option key={d.id} value={d.id}>{d.name} ({d.id})</option>)}
+            {dialogues.filter(d => d.id !== privateDefId).map(d => <option key={d.id} value={d.id}>{d.name} ({d.id})</option>)}
           </select>
           <p className="text-[11px] text-white/30 mt-1">Handy when several NPCs share one script. Editing it affects all of them.</p>
         </div>
@@ -330,6 +388,16 @@ export function ConversationEditor({ npc, ruleset, onRulesetChange }: {
       {previewing && (
         <DialoguePreview dialogue={previewDef} ruleset={ruleset}
           speaker={npc.name} portrait={npc.portrait} onClose={() => setPreviewing(false)} />
+      )}
+
+      {pendingReuse && (
+        <ConfirmModal
+          title="Replace this NPC’s conversation?"
+          message={<>Attaching <span className="text-white/90 font-medium">“{pendingName}”</span> will replace the conversation currently on <span className="text-white/90 font-medium">{npc.name}</span>. {isShared ? 'The current shared entry stays in the Database.' : 'Your current conversation stays in the Database — Save it first if you want to reuse it later.'}</>}
+          confirmLabel="Replace"
+          onConfirm={() => assign(pendingReuse)}
+          onClose={() => setPendingReuse(null)}
+        />
       )}
     </div>
   )
