@@ -363,3 +363,8 @@ export function portraitGrid(id: string): { w: number; h: number; grid: string[]
   const def = PORTRAITS[id]
   return def ? { w: W, h: H, grid: def.grid } : null
 }
+
+/** Raw grid access for validation tests and the SVG template exporter. */
+export function _portraitDefs(): Record<string, { w: number; h: number; label: string; palette: Record<string, string>; grid: string[] }> {
+  return Object.fromEntries(Object.entries(PORTRAITS).map(([id, d]) => [id, { w: W, h: H, label: d.label, palette: d.palette, grid: d.grid }]))
+}
