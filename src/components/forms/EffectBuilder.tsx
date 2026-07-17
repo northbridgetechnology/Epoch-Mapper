@@ -45,7 +45,7 @@ const ALL_VERBS = [
 
 type Verb = typeof ALL_VERBS[number]['t']
 
-function blankEffect(verb: Verb): Effect {
+export function blankEffect(verb: Verb): Effect {
   switch (verb) {
     case 'heal':         return { t: 'heal', amount: 10 }
     case 'restoreMp':    return { t: 'restoreMp', amount: 10 }
@@ -77,7 +77,7 @@ function blankEffect(verb: Verb): Effect {
   }
 }
 
-function effectLabel(e: Effect, ruleset: Ruleset): string {
+export function effectLabel(e: Effect, ruleset: Ruleset): string {
   switch (e.t) {
     case 'heal':         return `Heal ${e.amount} HP`
     case 'restoreMp':    return `Restore ${e.amount} MP`

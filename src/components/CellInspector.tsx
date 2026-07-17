@@ -298,7 +298,7 @@ function ObjectEntityEditor({
             ))}
           </select>
           <p className="text-[10px] text-white/25 mt-1">
-            Lines, portrait, and stats come from the NPC entry in the Database workspace.
+            Portrait, stats, and conversation come from the NPC entry in the Characters workspace.
           </p>
         </div>
       )}

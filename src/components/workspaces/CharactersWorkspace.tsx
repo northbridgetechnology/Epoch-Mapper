@@ -98,7 +98,7 @@ function CastTab({ ruleset, onRulesetChange, party }: {
       </div>
       <div className="flex-1 min-h-0">
         {selected ? (
-          <NpcEditor npc={selected} ruleset={ruleset} onChange={updateNpc} />
+          <NpcEditor npc={selected} ruleset={ruleset} onChange={updateNpc} onRulesetChange={onRulesetChange} />
         ) : (
           <div className="h-full flex flex-col items-center justify-center text-white/20 text-sm gap-2">
             <Users className="w-8 h-8 opacity-30" />

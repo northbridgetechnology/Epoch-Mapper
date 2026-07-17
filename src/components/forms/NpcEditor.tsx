@@ -2,8 +2,8 @@
 
 /**
  * Shared NPC (character) definition editor — the stat block (via the NPC schema),
- * a portrait picker, a reference to the NPC's dialogue tree, and its ambient
- * barks. Dialogue trees themselves are authored in the Database → Dialogue tab.
+ * a portrait picker, the NPC's conversation (authored inline via the embedded
+ * ConversationEditor), and its ambient barks.
  */
 
 import { Plus, Trash2 } from 'lucide-react'
@@ -11,13 +11,14 @@ import type { NpcDef, Ruleset } from '@/lib/engine-types'
 import { NPC_SCHEMA } from '@/lib/npc-schema'
 import { SchemaForm } from './SchemaForm'
 import { PortraitPicker } from './PortraitPicker'
+import { ConversationEditor } from './ConversationEditor'
 
-export function NpcEditor({ npc, ruleset, onChange }: {
+export function NpcEditor({ npc, ruleset, onChange, onRulesetChange }: {
   npc: NpcDef
   ruleset: Ruleset
   onChange: (n: NpcDef) => void
+  onRulesetChange: (r: Ruleset) => void
 }) {
-  const dialogues = ruleset.dialogues ?? []
   const barks = npc.barks ?? []
   return (
     <div className="p-4 space-y-4 overflow-y-auto h-full">
@@ -31,21 +32,10 @@ export function NpcEditor({ npc, ruleset, onChange }: {
         <PortraitPicker value={npc.portrait} onChange={p => onChange({ ...npc, portrait: p })} allowEmoji columns={8} />
       </div>
 
-      {/* Dialogue reference */}
+      {/* Conversation — authored inline (Quick or Advanced) */}
       <div className="pt-2 border-t border-white/10">
-        <div className="text-xs font-medium text-white/50 uppercase tracking-wide mb-1.5">Dialogue</div>
-        <select
-          value={npc.dialogue ?? ''}
-          onChange={e => onChange({ ...npc, dialogue: e.target.value || undefined })}
-          className="w-full px-2 py-1.5 rounded bg-zinc-800 border border-white/10 text-sm text-white/85 focus:outline-none focus:border-amber-500/40"
-        >
-          <option value="">— none —</option>
-          {dialogues.map(d => <option key={d.id} value={d.id}>{d.name} ({d.id})</option>)}
-        </select>
-        <p className="text-[11px] text-white/30 mt-1">
-          The branching conversation shown when the party talks to this NPC. Author trees in the
-          <span className="text-white/45"> Database → Dialogue</span> tab.
-        </p>
+        <div className="text-xs font-medium text-white/50 uppercase tracking-wide mb-1.5">Conversation</div>
+        <ConversationEditor npc={npc} ruleset={ruleset} onRulesetChange={onRulesetChange} />
       </div>
 
       {/* Ambient barks */}
