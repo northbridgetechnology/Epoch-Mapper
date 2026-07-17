@@ -105,6 +105,26 @@ export function applyEffectToChar(
         msgs.push(`${target.name} cannot grasp ${spell.name}.`)
       }
     }
+  } else if (effect.t === 'reload') {
+    const inst = target.equipment?.weapon
+    const def = inst ? ruleset.items.find(d => d.id === inst.def) : undefined
+    if (!inst || !def || !def.charges) {
+      msgs.push(`${target.name} has no reloadable weapon equipped.`)
+    } else if (effect.weaponType && def.weaponType !== effect.weaponType) {
+      const wt = ruleset.weaponTypes?.find(w => w.id === effect.weaponType)?.name ?? 'that weapon'
+      msgs.push(`This ammo doesn't fit ${wt === 'that weapon' ? 'the equipped weapon' : `a ${wt}`}.`)
+    } else {
+      const max = def.charges
+      const cur = inst.charges ?? max
+      const next = Math.min(max, cur + (effect.amount ?? max))
+      if (next <= cur) {
+        msgs.push(`${def.name} is already fully loaded.`)
+      } else {
+        newParty = newParty.map((c, i) =>
+          i === targetIdx ? { ...c, equipment: { ...c.equipment, weapon: { ...inst, charges: next } } } : c)
+        msgs.push(`${target.name} reloads ${def.name} (${next}/${max}).`)
+      }
+    }
   }
 
   return { party: newParty, inventory: newInv, messages: msgs }

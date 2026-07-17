@@ -1252,9 +1252,11 @@ export const DEFAULT_ITEMS: ItemDef[] = [
   },
   {
     id: 'item.pistol', name: 'Pistol', icon: '🔫', color: '#636e72',
-    description: 'A semi-automatic handgun. Fast and concealable.',
+    description: 'A semi-automatic handgun. Fast and concealable. A full clip holds 6 rounds — Fire in battle to spend a bullet; reload with Pistol Ammo.',
     kind: 'weapon', slot: 'weapon', weaponType: 'wtype.gun',
     value: 500, stackable: false,
+    charges: 6,
+    onUse: [{ t: 'damage', dmgType: 'physical', amount: '1d8+3', canCrit: true }],
     modifiers: [
       { target: 'attribute', key: 'agility', op: 'add', amount: 2 },
       { target: 'attribute', key: 'might', op: 'add', amount: 3 },
@@ -1262,10 +1264,24 @@ export const DEFAULT_ITEMS: ItemDef[] = [
   },
   {
     id: 'item.assault_rifle', name: 'Assault Rifle', icon: '🔫', color: '#2d3436',
-    description: 'A military-grade rifle. High damage at range.',
+    description: 'A military-grade rifle. High damage at range. A magazine holds 5 rounds — Fire in battle to spend a bullet; reload with Rifle Ammo.',
     kind: 'weapon', slot: 'weapon', weaponType: 'wtype.heavy_gun', twoHanded: true,
     value: 1500, stackable: false,
+    charges: 5,
+    onUse: [{ t: 'damage', dmgType: 'physical', amount: '2d6+4', canCrit: true }],
     modifiers: [{ target: 'attribute', key: 'might', op: 'add', amount: 8 }],
+  },
+  {
+    id: 'item.pistol_ammo', name: 'Pistol Ammo', icon: '🧰', color: '#b8860b',
+    description: 'A box of pistol rounds. Reloads an equipped Firearm to a full clip.',
+    kind: 'consumable', value: 60, stackable: true,
+    onUse: [{ t: 'reload', weaponType: 'wtype.gun' }],
+  },
+  {
+    id: 'item.rifle_ammo', name: 'Rifle Ammo', icon: '🧰', color: '#8b5a2b',
+    description: 'A magazine of rifle rounds. Reloads an equipped Heavy Gun to a full magazine.',
+    kind: 'consumable', value: 120, stackable: true,
+    onUse: [{ t: 'reload', weaponType: 'wtype.heavy_gun' }],
   },
   // ── Armor ──────────────────────────────────────────────────────────────────────
   {

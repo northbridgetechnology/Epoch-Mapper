@@ -22,6 +22,7 @@ const ALL_VERBS = [
   // Items & Economy
   { t: 'giveItem',    label: '📦 Give Item',          group: 'Items' },
   { t: 'takeItem',    label: '📤 Take Item',          group: 'Items' },
+  { t: 'reload',      label: '🔄 Reload Weapon',      group: 'Items' },
   { t: 'gold',        label: '🪙 Give Gold',          group: 'Items' },
   { t: 'identify',    label: '🔍 Identify All',       group: 'Items' },
   { t: 'removeCurse', label: '⛓️ Remove Curse',       group: 'Items' },
@@ -57,6 +58,7 @@ export function blankEffect(verb: Verb): Effect {
     case 'startCombat':  return { t: 'startCombat', encounter: '' }
     case 'giveItem':     return { t: 'giveItem', item: '', qty: 1 }
     case 'takeItem':     return { t: 'takeItem', item: '', qty: 1 }
+    case 'reload':       return { t: 'reload' }
     case 'gold':         return { t: 'gold', amount: 50 }
     case 'setFlag':      return { t: 'setFlag', flag: '', value: true }
     case 'teleport':     return { t: 'teleport', mapId: '', x: 0, y: 0 }
@@ -100,6 +102,10 @@ export function effectLabel(e: Effect, ruleset: Ruleset): string {
     case 'takeItem': {
       const name = ruleset.items.find(i => i.id === e.item)?.name ?? e.item
       return `Take ${name} ×${e.qty ?? 1}`
+    }
+    case 'reload': {
+      const wt = e.weaponType ? ruleset.weaponTypes?.find(w => w.id === e.weaponType)?.name ?? e.weaponType : null
+      return `Reload ${wt ? `${wt} ` : ''}weapon ${e.amount != null ? `+${e.amount}` : '(full)'}`
     }
     case 'gold':      return `Give ${e.amount} gold`
     case 'identify':  return 'Identify all carried items'
@@ -344,6 +350,26 @@ function EffectRow({ effect, ruleset, onChange, onRemove }: EffectRowProps) {
                 onChange={ev => onChange({ ...e, qty: Math.max(1, ev.target.valueAsNumber || 1) } as Effect)}
                 className={cn(INPUT_CLS, 'w-14')}
               />
+            </div>
+          </>
+        )}
+
+        {/* reload */}
+        {e.t === 'reload' && (
+          <>
+            <div className="flex items-center gap-1">
+              <span className="text-xs text-white/40">Weapon type</span>
+              <select value={e.weaponType ?? ''} onChange={ev => onChange({ ...e, weaponType: ev.target.value || undefined })}
+                className="px-1.5 py-0.5 rounded bg-zinc-700 border border-white/10 text-xs text-white/90 focus:outline-none">
+                <option value="">Any equipped weapon</option>
+                {(ruleset.weaponTypes ?? []).map(w => <option key={w.id} value={w.id}>{w.icon} {w.name}</option>)}
+              </select>
+            </div>
+            <div className="flex items-center gap-1">
+              <span className="text-xs text-white/40">Amount</span>
+              <input type="number" min={1} value={e.amount ?? ''} placeholder="full"
+                onChange={ev => onChange({ ...e, amount: ev.target.value === '' ? undefined : Math.max(1, ev.target.valueAsNumber || 1) })}
+                className={cn(INPUT_CLS, 'w-16')} />
             </div>
           </>
         )}

@@ -86,6 +86,10 @@ export type Effect =
   | { t: 'gameEnd'; text?: string }
   /** Recruit an NPC into the party (dialogue "will you join me?", quest reward). */
   | { t: 'recruit'; npc: DefRef<NpcDef> }
+  /** Replenish charges (ammo/bullets) on the user's equipped weapon. `weaponType`
+   *  limits it to a matching type (e.g. only reload firearms); `amount` adds that
+   *  many charges (capped at the weapon's max), or refills fully when absent. */
+  | { t: 'reload'; weaponType?: DefRef<WeaponTypeDef>; amount?: number }
 
 // ── Stat modifier ──────────────────────────────────────────────────────────────
 

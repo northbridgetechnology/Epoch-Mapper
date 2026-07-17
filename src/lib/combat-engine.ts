@@ -1046,6 +1046,18 @@ export function resolvePlayerUseItem(
   const fromEquip = opts?.equipSlot
   if (fromEquip ? !def.charges : def.kind !== 'consumable') return state
 
+  // Ammo/reload consumables refund charges the equipped weapon spent this
+  // battle (in combat we can only give back what was fired — the persistent
+  // top-up beyond that happens out of combat). Don't waste the item on a
+  // weapon with nothing to reload.
+  const weaponKey = `${user.idx}:weapon`
+  const reloadBack = !fromEquip
+    ? def.onUse.reduce((n, e) => e.t === 'reload' ? n + (e.amount ?? Infinity) : n, 0)
+    : 0
+  if (reloadBack > 0 && def.onUse.every(e => e.t === 'reload')) {
+    if (((state.equipChargesUsed ?? {})[weaponKey] ?? 0) <= 0) return state
+  }
+
   const box = { s: state.rngState }
   const rand = rng ?? (() => nextRand(box))
   const useEntry: CombatLogEntry = { text: `${user.name} uses ${def.name}!`, kind: 'info' }
@@ -1053,9 +1065,13 @@ export function resolvePlayerUseItem(
     def.onUse, state.turnIdx, targetActorIdxs, state.actors, ruleset, rand,
   )
   const chargeKey = fromEquip ? `${user.idx}:${fromEquip}` : null
-  const equipChargesUsed = chargeKey
-    ? { ...(state.equipChargesUsed ?? {}), [chargeKey]: ((state.equipChargesUsed ?? {})[chargeKey] ?? 0) + 1 }
-    : state.equipChargesUsed
+  let equipChargesUsed = state.equipChargesUsed
+  if (chargeKey) {
+    equipChargesUsed = { ...(state.equipChargesUsed ?? {}), [chargeKey]: ((state.equipChargesUsed ?? {})[chargeKey] ?? 0) + 1 }
+  } else if (reloadBack > 0) {
+    const spent = (state.equipChargesUsed ?? {})[weaponKey] ?? 0
+    if (spent > 0) equipChargesUsed = { ...(state.equipChargesUsed ?? {}), [weaponKey]: Math.max(0, spent - reloadBack) }
+  }
   const itemsUsed = chargeKey
     ? state.itemsUsed
     : { ...state.itemsUsed, [itemId]: (state.itemsUsed[itemId] ?? 0) + 1 }
