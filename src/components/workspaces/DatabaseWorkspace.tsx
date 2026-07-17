@@ -1551,6 +1551,17 @@ function WeaponTypeEditor({ wtype, ruleset, onChange }: {
           {ruleset.attributes.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
         </select>
       </div>
+      <div>
+        <label className="block text-xs font-medium text-white/60 mb-0.5">Ammo Type (bows/firearms — the category this consumes)</label>
+        <input type="text" list="ammo-type-tags" value={wtype.ammoType ?? ''} placeholder="none (melee) — e.g. arrow, pistol_round"
+          onChange={e => onChange({ ...wtype, ammoType: e.target.value.trim() || undefined })}
+          className="w-full px-2 py-1.5 rounded bg-zinc-800 border border-white/10 text-xs text-white/85 focus:outline-none focus:border-amber-500/50" />
+        <datalist id="ammo-type-tags">
+          {Array.from(new Set((ruleset.items ?? []).filter(i => i.kind === 'ammo' && i.ammoType).map(i => i.ammoType as string)))
+            .map(tag => <option key={tag} value={tag} />)}
+        </datalist>
+        <p className="text-[10px] text-white/30 mt-0.5">Ammo items tagged with this category feed the weapon. A weapon item with a clip size (Charges) fires from its clip and reloads; without one it draws each shot from inventory.</p>
+      </div>
     </div>
   )
 }

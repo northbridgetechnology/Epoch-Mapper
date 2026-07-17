@@ -50,6 +50,12 @@ export interface CombatActor {
   /** Party only: post-equipment attribute snapshot — drives spell-school
    *  power scaling (SpellSchoolDef.keyAttribute). */
   attrs?: Record<string, number>
+  /** Party only: the equipped ranged weapon's ammo hookup. `clipSize > 0` = a
+   *  firearm (fire from the loaded clip, Reload from the shared reserve);
+   *  `clipSize === 0` = a bow (each shot draws straight from the reserve). The
+   *  reserve itself is tracked battle-wide on CombatState (a shared pool), not
+   *  here. Absent = melee or a weapon that needs no ammo. */
+  ammo?: { type: string; clipSize: number; loaded: number }
 }
 
 /** A discrete thing that happened during one action — drives view feedback
@@ -81,6 +87,11 @@ export interface CombatState {
    *  `${memberIdx}:${slot}` — applied to party equipment by
    *  applyCombatOutcome(), spent even on flee or defeat. */
   equipChargesUsed?: Record<string, number>
+  /** Rounds carried per ammo category at battle start (shared reserve). */
+  ammoReserve?: Record<string, number>
+  /** Rounds drawn from the reserve this battle (bow shots + reload top-ups),
+   *  keyed by ammo category — applied to the shared inventory when combat ends. */
+  ammoUsed?: Record<string, number>
   /** Seeded PRNG stream state — battles are deterministic given the same
    *  initial seed and action sequence (callers may still inject an rng). */
   rngState: number
@@ -242,6 +253,13 @@ function partyActorFromChar(
   const weaponDamageType = weaponItem?.damageType ?? wtype?.damageType ?? 'physical'
   const weaponRange: 'melee' | 'ranged' = wtype?.range ?? 'melee'
 
+  // Ammo hookup: a ranged weapon whose type declares an ammoType. Firearms
+  // (weapon item has a clip via `charges`) fire from the loaded clip; bows (no
+  // clip) draw each shot from the shared reserve tracked on CombatState.
+  const ammo: CombatActor['ammo'] = wtype?.ammoType && weaponItem
+    ? { type: wtype.ammoType, clipSize: weaponItem.charges ?? 0, loaded: weaponItem.charges ? (weaponInst?.charges ?? weaponItem.charges) : 0 }
+    : undefined
+
   let attack = readAttr(attrs, scalingAttrId, 10) + Math.floor(char.level * 0.5)
   let defense = Math.floor(readAttr(attrs, 'attr.endurance', 10) / 2)
   let speed = readAttr(attrs, 'attr.agility', 10) + armorSpeedMod
@@ -271,6 +289,7 @@ function partyActorFromChar(
     weaponDamageType,
     weaponRange,
     attrs,
+    ammo,
   }
 }
 
@@ -678,6 +697,9 @@ export interface InitCombatOpts {
   antiMagic?: boolean
   /** Turn system for this battle (from the map). Default 'classic'. */
   combatMode?: CombatMode
+  /** Shared inventory at battle start — used to snapshot each fighter's ammo
+   *  reserve (arrows/rounds) for their equipped ranged weapon. */
+  inventory?: ItemInstance[]
 }
 
 export function initCombat(
@@ -688,6 +710,14 @@ export function initCombat(
   const partyActors = party
     .map((c, i) => partyActorFromChar(c, i, opts?.formation?.back?.includes(i) ? 1 : 0, opts?.ruleset))
     .filter(a => a.alive)
+
+  // Battle-wide ammo reserve: total rounds carried per ammo category. A shared
+  // pool so two archers drawing the same arrows don't each see the full count.
+  const ammoReserve: Record<string, number> = {}
+  for (const inst of opts?.inventory ?? []) {
+    const tag = opts?.ruleset?.items.find(d => d.id === inst.def)?.ammoType
+    if (tag) ammoReserve[tag] = (ammoReserve[tag] ?? 0) + inst.qty
+  }
 
   const enemyActors: CombatActor[] = encounter.enemies.map((e, i) => ({
     kind: 'enemy',
@@ -764,6 +794,8 @@ export function initCombat(
     drops: [],
     round: 1,
     antiMagic: opts?.antiMagic || undefined,
+    ammoReserve,
+    ammoUsed: {},
   }
 }
 
@@ -779,6 +811,14 @@ export function resolvePlayerAttack(
   const defender = state.actors[targetActorIdx]
   if (!attacker || !defender || !defender.alive || defender.kind !== 'enemy') return state
 
+  // Ranged ammo gate: a firearm fires from its loaded clip, a bow from the
+  // shared reserve. With none available the attack isn't allowed (HUD disables
+  // it too). `spendReserve` is set when this shot draws from the reserve pool.
+  const ammo = attacker.ammo
+  const reserveLeft = ammo ? (state.ammoReserve?.[ammo.type] ?? 0) - (state.ammoUsed?.[ammo.type] ?? 0) : 0
+  if (ammo && (ammo.clipSize > 0 ? ammo.loaded <= 0 : reserveLeft <= 0)) return state
+  const spendReserve = !!ammo && ammo.clipSize === 0
+
   const box = { s: state.rngState }
   const rand = rng ?? (() => nextRand(box))
   const result = calcHit(attacker, defender, rand, tuning(ruleset), ruleset)
@@ -788,10 +828,18 @@ export function resolvePlayerAttack(
   const newHp = Math.max(0, defender.hp - dmg)
   const died = newHp === 0
 
-  let newActors = state.actors.map((a, i) =>
-    i === targetActorIdx ? { ...a, hp: newHp, alive: !died } : a,
-  )
+  let newActors = state.actors.map((a, i) => {
+    if (i === targetActorIdx) return { ...a, hp: newHp, alive: !died }
+    // Firearms spend one round from the loaded clip; bows draw from the reserve.
+    if (i === state.turnIdx && ammo && ammo.clipSize > 0) {
+      return { ...a, ammo: { ...ammo, loaded: ammo.loaded - 1 } }
+    }
+    return a
+  })
   if (!result.miss && boost) newActors = stripStatus(newActors, state.turnIdx, boost.statusId)
+  const ammoUsed = spendReserve
+    ? { ...(state.ammoUsed ?? {}), [ammo!.type]: (state.ammoUsed?.[ammo!.type] ?? 0) + 1 }
+    : state.ammoUsed
   result.damage = dmg
 
   const entry: CombatLogEntry = result.miss
@@ -814,7 +862,7 @@ export function resolvePlayerAttack(
   } else if (!result.miss && result.resisted) {
     events.push({ target: targetActorIdx, kind: 'resist' })
   }
-  return finishAction(proceedAfterAction(withDowned({ ...state, actors: newActors, log: newLog }, events), ruleset, rand, { weak: result.weak, crit: result.crit, miss: result.miss }), box, events, state)
+  return finishAction(proceedAfterAction(withDowned({ ...state, actors: newActors, ammoUsed, log: newLog }, events), ruleset, rand, { weak: result.weak, crit: result.crit, miss: result.miss }), box, events, state)
 }
 
 // ── Player: cast spell ────────────────────────────────────────────────────────
@@ -1027,6 +1075,72 @@ export function resolvePlayerUseSkill(
   )
 }
 
+// ── Player: reload ────────────────────────────────────────────────────────────
+
+/** A skill may be used in the same turn as a reload only if it doesn't fire the
+ *  weapon — i.e. it deals no direct damage (buffs, heals, taunts, debuffs). */
+export function isReloadCompatibleSkill(skill: SkillDef): boolean {
+  return !skill.effects.some(e => e.t === 'damage')
+}
+
+/** How many rounds a Reload would move into the clip right now (0 = can't). */
+export function reloadableRounds(state: CombatState, actor: CombatActor | undefined): number {
+  const ammo = actor?.ammo
+  if (!ammo || ammo.clipSize <= 0) return 0
+  const reserveLeft = (state.ammoReserve?.[ammo.type] ?? 0) - (state.ammoUsed?.[ammo.type] ?? 0)
+  return Math.max(0, Math.min(ammo.clipSize - ammo.loaded, reserveLeft))
+}
+
+/** Reload the equipped firearm's clip from the shared reserve, optionally
+ *  alongside one non-firing skill (buff/taunt/heal). Costs the turn. */
+export function resolvePlayerReload(
+  state: CombatState,
+  ruleset: Ruleset,
+  opts?: { skillId?: string; skillTargets?: number[] },
+  rng?: () => number,
+): CombatState {
+  const user = state.actors[state.turnIdx]
+  if (!user || !user.alive || user.kind !== 'party') return state
+
+  const move = reloadableRounds(state, user)
+  const skill = opts?.skillId ? (ruleset.skills ?? []).find(s => s.id === opts.skillId) : undefined
+  const skillOk = !!skill && isReloadCompatibleSkill(skill) && canUseSkill(state, skill).ok
+  if (move <= 0 && !skillOk) return state
+
+  const box = { s: state.rngState }
+  const rand = rng ?? (() => nextRand(box))
+  const log: CombatLogEntry[] = []
+  let actors = state.actors
+  let ammoUsed = state.ammoUsed
+
+  if (move > 0 && user.ammo) {
+    const loaded = user.ammo.loaded + move
+    actors = actors.map((a, i) => i === state.turnIdx ? { ...a, ammo: { ...a.ammo!, loaded } } : a)
+    ammoUsed = { ...(state.ammoUsed ?? {}), [user.ammo.type]: (state.ammoUsed?.[user.ammo.type] ?? 0) + move }
+    log.push({ text: `${user.name} reloads (${loaded}/${user.ammo.clipSize}).`, kind: 'info' })
+  }
+
+  let events: CombatEvent[] = []
+  let skillCooldowns = state.skillCooldowns
+  if (skillOk && skill) {
+    const hpCost = Math.ceil(user.maxHp * (skill.hpCostPct ?? 0))
+    actors = actors.map((a, i) => i === state.turnIdx ? { ...a, hp: a.hp - hpCost, mp: a.mp - (skill.mpCost ?? 0) } : a)
+    log.push({ text: `${user.name} uses ${skill.name}!`, kind: 'spell' })
+    const r = resolveCombatEffects(skill.effects, state.turnIdx, opts?.skillTargets ?? [], actors, ruleset, rand)
+    actors = r.actors; log.push(...r.log); events = r.events
+    if (skill.cooldown) skillCooldowns = { ...(state.skillCooldowns ?? {}), [`${state.turnIdx}:${skill.id}`]: state.round + skill.cooldown }
+  }
+
+  return finishAction(
+    proceedAfterAction(
+      withDowned({ ...state, actors, ammoUsed, skillCooldowns, log: [...state.log, ...log] }, events),
+      ruleset, rand,
+      { weak: events.some(e => e.kind === 'weak'), crit: events.some(e => e.kind === 'crit') },
+    ),
+    box, events, state,
+  )
+}
+
 // ── Player: use item ──────────────────────────────────────────────────────────
 
 export function resolvePlayerUseItem(
@@ -1046,18 +1160,6 @@ export function resolvePlayerUseItem(
   const fromEquip = opts?.equipSlot
   if (fromEquip ? !def.charges : def.kind !== 'consumable') return state
 
-  // Ammo/reload consumables refund charges the equipped weapon spent this
-  // battle (in combat we can only give back what was fired — the persistent
-  // top-up beyond that happens out of combat). Don't waste the item on a
-  // weapon with nothing to reload.
-  const weaponKey = `${user.idx}:weapon`
-  const reloadBack = !fromEquip
-    ? def.onUse.reduce((n, e) => e.t === 'reload' ? n + (e.amount ?? Infinity) : n, 0)
-    : 0
-  if (reloadBack > 0 && def.onUse.every(e => e.t === 'reload')) {
-    if (((state.equipChargesUsed ?? {})[weaponKey] ?? 0) <= 0) return state
-  }
-
   const box = { s: state.rngState }
   const rand = rng ?? (() => nextRand(box))
   const useEntry: CombatLogEntry = { text: `${user.name} uses ${def.name}!`, kind: 'info' }
@@ -1065,13 +1167,9 @@ export function resolvePlayerUseItem(
     def.onUse, state.turnIdx, targetActorIdxs, state.actors, ruleset, rand,
   )
   const chargeKey = fromEquip ? `${user.idx}:${fromEquip}` : null
-  let equipChargesUsed = state.equipChargesUsed
-  if (chargeKey) {
-    equipChargesUsed = { ...(state.equipChargesUsed ?? {}), [chargeKey]: ((state.equipChargesUsed ?? {})[chargeKey] ?? 0) + 1 }
-  } else if (reloadBack > 0) {
-    const spent = (state.equipChargesUsed ?? {})[weaponKey] ?? 0
-    if (spent > 0) equipChargesUsed = { ...(state.equipChargesUsed ?? {}), [weaponKey]: Math.max(0, spent - reloadBack) }
-  }
+  const equipChargesUsed = chargeKey
+    ? { ...(state.equipChargesUsed ?? {}), [chargeKey]: ((state.equipChargesUsed ?? {})[chargeKey] ?? 0) + 1 }
+    : state.equipChargesUsed
   const itemsUsed = chargeKey
     ? state.itemsUsed
     : { ...state.itemsUsed, [itemId]: (state.itemsUsed[itemId] ?? 0) + 1 }
@@ -1092,6 +1190,21 @@ export function consumeCombatItems(inventory: ItemInstance[], state: CombatState
     .map(inst => {
       const used = state.itemsUsed[inst.def] ?? 0
       return used > 0 ? { ...inst, qty: Math.max(0, inst.qty - used) } : inst
+    })
+    .filter(inst => inst.qty > 0)
+}
+
+/** Apply a finished battle's ammo draw (bow shots + reloads) to the shared
+ *  inventory, spending rounds from the matching ammo items in carry order. */
+export function consumeCombatAmmo(inventory: ItemInstance[], state: CombatState, ruleset: Ruleset): ItemInstance[] {
+  const remaining: Record<string, number> = { ...(state.ammoUsed ?? {}) }
+  return inventory
+    .map(inst => {
+      const tag = ruleset.items.find(d => d.id === inst.def)?.ammoType
+      if (!tag || !remaining[tag]) return inst
+      const take = Math.min(inst.qty, remaining[tag])
+      remaining[tag] -= take
+      return { ...inst, qty: inst.qty - take }
     })
     .filter(inst => inst.qty > 0)
 }
@@ -1299,6 +1412,11 @@ export function applyCombatOutcome(
       const def = ruleset.items.find(it => it.id === inst.def)
       const remaining = Math.max(0, (inst.charges ?? def?.charges ?? 0) - used)
       next = { ...next, equipment: { ...next.equipment, [slot]: { ...inst, charges: remaining } } }
+    }
+    // Persist the firearm clip: the loaded round count fired down this battle
+    // sticks to the equipped weapon until reloaded.
+    if (actor.ammo && actor.ammo.clipSize > 0 && next.equipment.weapon) {
+      next = { ...next, equipment: { ...next.equipment, weapon: { ...next.equipment.weapon, charges: actor.ammo.loaded } } }
     }
     return next
   })

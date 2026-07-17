@@ -25,7 +25,7 @@ export type DamageType =
 export type Dice = number | string
 
 export type ItemSlot = 'weapon' | 'offhand' | 'head' | 'body' | 'hands' | 'feet' | 'ring' | 'amulet'
-export type ItemKind = 'weapon' | 'armor' | 'accessory' | 'consumable' | 'key' | 'quest' | 'misc'
+export type ItemKind = 'weapon' | 'armor' | 'accessory' | 'consumable' | 'ammo' | 'key' | 'quest' | 'misc'
 /** Equip weight tier for weapons and armor (FF-style class proficiency). */
 export type EquipWeight = 'heavy' | 'medium' | 'light'
 
@@ -154,6 +154,11 @@ export interface WeaponTypeDef extends Definition {
   damageType: DamageType
   /** Melee weapons take/deal back-rank penalties; ranged ignore them. */
   range: 'melee' | 'ranged'
+  /** Ammo category this weapon type consumes (matches ItemDef.ammoType on ammo
+   *  items). Set on bows/firearms. Absent = the weapon needs no ammo. A weapon
+   *  ITEM with a clip (`charges`) draws from that loaded clip and is refilled by
+   *  Reload; without a clip the weapon draws one round straight from inventory. */
+  ammoType?: string
 }
 
 /** An armor archetype (light armor, plate, robe, shield…). Armor items
@@ -190,7 +195,14 @@ export interface ItemDef extends Definition {
   value: number
   stackable: boolean
   twoHanded?: boolean
+  /** Weapons: the clip/magazine size for ammo-fed firearms — the max rounds it
+   *  holds loaded. Firing spends from the loaded count (ItemInstance.charges);
+   *  Reload refills it from matching ammo. Also used by wands/staves as their
+   *  onUse charge pool. */
   charges?: number
+  /** Ammo items (kind 'ammo'): the ammo category they belong to, matched
+   *  against WeaponTypeDef.ammoType. Multiple items may share one category. */
+  ammoType?: string
   /** Light shed while equipped (view distance in cells on dark maps). */
   lightRadius?: number
   /** Optional burn-down: the item is consumed after this many steps of being

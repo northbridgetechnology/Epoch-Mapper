@@ -42,7 +42,7 @@ import { OpeningStoryOverlay } from './OpeningStory'
 import { CharacterBuilder } from './CharacterBuilder'
 import { applyMoveTricks, cellHasTrick, chartWalkedCell, tickLightBurn, tickExplorationStatuses, restParty, advanceFoes, listFoes, foeFlagKey } from '@/lib/exploration'
 import { resolveEdgeCrossing, oppositeEdge } from '@/lib/world'
-import { initCombat, applyCombatOutcome, consumeCombatItems, type CombatState } from '@/lib/combat-engine'
+import { initCombat, applyCombatOutcome, consumeCombatItems, consumeCombatAmmo, type CombatState } from '@/lib/combat-engine'
 import { CellInspector } from './CellInspector'
 import { usePanelWidth } from './ui/ResizablePanel'
 import { ShopModal } from './ShopModal'
@@ -880,7 +880,7 @@ export function DungeonMapper({
           const enc = makeFixedEncounter(foeDef, contact.entity.count ?? 1, Math.random)
           pendingFoeKillRef.current = foeFlagKey(activeMap.id, contact.cellKey, 'dead')
           setCombatState(initCombat(party, enc, {
-            formation, ruleset,
+            formation, ruleset, inventory,
             combatMode: ruleset.meta.combatMode ?? activeMap?.combatMode,
             antiMagic: cellHasTrick(cell, 'antiMagic'),
           }))
@@ -1375,7 +1375,7 @@ export function DungeonMapper({
             goldReward: enemies.reduce((s, e) => s + e.gold, 0),
           }
           setCombatState(initCombat(party, enc, {
-            formation, ruleset,
+            formation, ruleset, inventory,
             combatMode: ruleset.meta.combatMode ?? activeMap?.combatMode,
             antiMagic: cellHasTrick(cell, 'antiMagic'),
           }))
@@ -2278,7 +2278,7 @@ export function DungeonMapper({
               if (!combatState) return
               const { party: updatedParty, levelUps } = applyCombatOutcome(party, combatState, ruleset)
               setParty(updatedParty)
-              setInventory(inv => consumeCombatItems(inv, combatState))
+              setInventory(inv => consumeCombatAmmo(consumeCombatItems(inv, combatState), combatState, ruleset))
               if (combatState.phase === 'victory') {
                 setGold(g => g + combatState.goldReward)
                 if (combatState.drops.length > 0) {
@@ -2956,7 +2956,7 @@ export function DungeonMapper({
           encounter={activeEncounter}
           onFight={() => {
             setCombatState(initCombat(party, activeEncounter, {
-              formation, ruleset,
+              formation, ruleset, inventory,
               combatMode: ruleset.meta.combatMode ?? activeMap?.combatMode,
               antiMagic: activeMap ? cellHasTrick(activeMap.cells[`${activeMap.playerX},${activeMap.playerY}`], 'antiMagic') : false,
             }))

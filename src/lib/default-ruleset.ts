@@ -96,9 +96,9 @@ export const DEFAULT_WEAPON_TYPES: WeaponTypeDef[] = [
   { id: 'wtype.spear',      name: 'Spear',      icon: '🔱', color: '#f9ca24', description: 'Long polearms with reach and thrusting power.',                weight: 'medium', scalingAttr: 'attr.might',     damageType: 'physical', range: 'melee' },
   { id: 'wtype.staff',      name: 'Staff',      icon: '🪄', color: '#8e44ad', description: 'Focusing rods that channel magic; feeble as a bludgeon.',      weight: 'light',  scalingAttr: 'attr.intellect', damageType: 'physical', range: 'melee' },
   { id: 'wtype.rod',        name: 'Rod',        icon: '🪄', color: '#a29bfe', description: 'Slender wands that amplify arcane precision.',                 weight: 'light',  scalingAttr: 'attr.intellect', damageType: 'physical', range: 'melee' },
-  { id: 'wtype.bow',        name: 'Bow',        icon: '🏹', color: '#27ae60', description: 'Ranged weapons that strike from the back rank unhindered.',    weight: 'medium', scalingAttr: 'attr.agility',   damageType: 'physical', range: 'ranged' },
-  { id: 'wtype.gun',        name: 'Firearm',    icon: '🔫', color: '#636e72', description: 'Sidearms that reach across the field with agile precision.',    weight: 'medium', scalingAttr: 'attr.agility',   damageType: 'physical', range: 'ranged' },
-  { id: 'wtype.heavy_gun',  name: 'Heavy Gun',  icon: '🔫', color: '#2d3436', description: 'Two-handed firearms — devastating but cumbersome.',            weight: 'heavy',  scalingAttr: 'attr.agility',   damageType: 'physical', range: 'ranged' },
+  { id: 'wtype.bow',        name: 'Bow',        icon: '🏹', color: '#27ae60', description: 'Ranged weapons that strike from the back rank unhindered. Each shot draws an arrow from your pack.', weight: 'medium', scalingAttr: 'attr.agility',   damageType: 'physical', range: 'ranged', ammoType: 'arrow' },
+  { id: 'wtype.gun',        name: 'Firearm',    icon: '🔫', color: '#636e72', description: 'Sidearms that reach across the field with agile precision. Fires from a clip; reload from carried rounds.', weight: 'medium', scalingAttr: 'attr.agility',   damageType: 'physical', range: 'ranged', ammoType: 'pistol_round' },
+  { id: 'wtype.heavy_gun',  name: 'Heavy Gun',  icon: '🔫', color: '#2d3436', description: 'Two-handed firearms — devastating but cumbersome. Fires from a magazine; reload from carried rounds.', weight: 'heavy',  scalingAttr: 'attr.agility',   damageType: 'physical', range: 'ranged', ammoType: 'rifle_round' },
 ]
 
 export const DEFAULT_ARMOR_TYPES: ArmorTypeDef[] = [
@@ -1252,11 +1252,10 @@ export const DEFAULT_ITEMS: ItemDef[] = [
   },
   {
     id: 'item.pistol', name: 'Pistol', icon: '🔫', color: '#636e72',
-    description: 'A semi-automatic handgun. Fast and concealable. A full clip holds 6 rounds — Fire in battle to spend a bullet; reload with Pistol Ammo.',
+    description: 'A semi-automatic handgun. Fast and concealable. Holds a 6-round clip; reload from Pistol Ammo when it runs dry.',
     kind: 'weapon', slot: 'weapon', weaponType: 'wtype.gun',
     value: 500, stackable: false,
     charges: 6,
-    onUse: [{ t: 'damage', dmgType: 'physical', amount: '1d8+3', canCrit: true }],
     modifiers: [
       { target: 'attribute', key: 'agility', op: 'add', amount: 2 },
       { target: 'attribute', key: 'might', op: 'add', amount: 3 },
@@ -1264,24 +1263,27 @@ export const DEFAULT_ITEMS: ItemDef[] = [
   },
   {
     id: 'item.assault_rifle', name: 'Assault Rifle', icon: '🔫', color: '#2d3436',
-    description: 'A military-grade rifle. High damage at range. A magazine holds 5 rounds — Fire in battle to spend a bullet; reload with Rifle Ammo.',
+    description: 'A military-grade rifle. High damage at range. Holds a 5-round magazine; reload from Rifle Ammo when empty.',
     kind: 'weapon', slot: 'weapon', weaponType: 'wtype.heavy_gun', twoHanded: true,
     value: 1500, stackable: false,
     charges: 5,
-    onUse: [{ t: 'damage', dmgType: 'physical', amount: '2d6+4', canCrit: true }],
     modifiers: [{ target: 'attribute', key: 'might', op: 'add', amount: 8 }],
+  },
+  // ── Ammo ─────────────────────────────────────────────────────────────────────
+  {
+    id: 'item.arrows', name: 'Arrows', icon: '🏹', color: '#8d6e63',
+    description: 'A quiver of arrows. Bows draw one per shot straight from your pack.',
+    kind: 'ammo', ammoType: 'arrow', value: 2, stackable: true,
   },
   {
     id: 'item.pistol_ammo', name: 'Pistol Ammo', icon: '🧰', color: '#b8860b',
-    description: 'A box of pistol rounds. Reloads an equipped Firearm to a full clip.',
-    kind: 'consumable', value: 60, stackable: true,
-    onUse: [{ t: 'reload', weaponType: 'wtype.gun' }],
+    description: 'A box of pistol rounds. Reload an equipped Firearm from these.',
+    kind: 'ammo', ammoType: 'pistol_round', value: 8, stackable: true,
   },
   {
     id: 'item.rifle_ammo', name: 'Rifle Ammo', icon: '🧰', color: '#8b5a2b',
-    description: 'A magazine of rifle rounds. Reloads an equipped Heavy Gun to a full magazine.',
-    kind: 'consumable', value: 120, stackable: true,
-    onUse: [{ t: 'reload', weaponType: 'wtype.heavy_gun' }],
+    description: 'A box of rifle rounds. Reload an equipped Heavy Gun from these.',
+    kind: 'ammo', ammoType: 'rifle_round', value: 16, stackable: true,
   },
   // ── Armor ──────────────────────────────────────────────────────────────────────
   {

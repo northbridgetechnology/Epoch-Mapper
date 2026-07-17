@@ -1,16 +1,19 @@
 /**
- * Weapon charges (ammo) — that battle logic honours the remaining count, that
- * spent charges persist, and that the `reload` effect (Pistol/Rifle Ammo)
- * replenishes them both out of combat and in combat.
+ * Ammo system: weapon-type ammo categories, bows drawing from inventory,
+ * firearms firing from a clip + reloading from reserve (optionally alongside a
+ * non-firing skill), and battle-end reconciliation to the clip + inventory.
  * Run with:  tsx test/reload.test.ts
  */
 
 import assert from 'node:assert/strict'
 import { makeDefaultRuleset } from '../src/lib/default-ruleset'
 import { applyConsumable, applyEffectToChar } from '../src/lib/apply-effects'
-import { resolvePlayerUseItem, applyCombatOutcome } from '../src/lib/combat-engine'
-import type { CombatState } from '../src/lib/combat-engine'
-import type { Character, ItemInstance, Ruleset } from '../src/lib/engine-types'
+import {
+  resolvePlayerAttack, resolvePlayerReload, applyCombatOutcome, consumeCombatAmmo,
+  reloadableRounds, isReloadCompatibleSkill,
+} from '../src/lib/combat-engine'
+import type { CombatState, CombatActor } from '../src/lib/combat-engine'
+import type { Character, ItemInstance, Ruleset, SkillDef } from '../src/lib/engine-types'
 
 let passed = 0
 function test(name: string, fn: () => void) {
@@ -20,100 +23,120 @@ function test(name: string, fn: () => void) {
 
 const ruleset: Ruleset = makeDefaultRuleset()
 
-function gunner(weapon: ItemInstance): Character {
-  return {
+// ── seed integrity ──────────────────────────────────────────────────────────
+test('bow/firearm weapon types declare an ammo category', () => {
+  assert.equal(ruleset.weaponTypes.find(w => w.id === 'wtype.bow')!.ammoType, 'arrow')
+  assert.equal(ruleset.weaponTypes.find(w => w.id === 'wtype.gun')!.ammoType, 'pistol_round')
+  assert.equal(ruleset.weaponTypes.find(w => w.id === 'wtype.heavy_gun')!.ammoType, 'rifle_round')
+})
+
+test('guns hold a clip and no longer fire via onUse; ammo items are kind ammo', () => {
+  const pistol = ruleset.items.find(i => i.id === 'item.pistol')!
+  assert.equal(pistol.charges, 6)
+  assert.ok(!pistol.onUse?.length, 'gun fires via basic attack, not onUse')
+  const pa = ruleset.items.find(i => i.id === 'item.pistol_ammo')!
+  assert.equal(pa.kind, 'ammo'); assert.equal(pa.ammoType, 'pistol_round'); assert.equal(pa.stackable, true)
+  assert.equal(ruleset.items.find(i => i.id === 'item.arrows')!.ammoType, 'arrow')
+})
+
+// ── combat: firing consumes ammo, honours the count ──────────────────────────
+function actor(ammo?: CombatActor['ammo']): CombatActor {
+  return { kind: 'party', idx: 0, name: 'Roland', hp: 30, maxHp: 30, mp: 10, maxMp: 10,
+    attack: 20, defense: 4, speed: 6, xp: 0, gold: 0, alive: true, statuses: [], rank: 0, ammo }
+}
+function enemy(): CombatActor {
+  return { kind: 'enemy', idx: 0, name: 'Thug', hp: 200, maxHp: 200, mp: 0, maxMp: 0,
+    attack: 6, defense: 2, speed: 5, xp: 10, gold: 5, alive: true, statuses: [], rank: 0 }
+}
+function state(a: CombatActor, reserve: Record<string, number> = {}): CombatState {
+  return { actors: [a, enemy()], turnIdx: 0, phase: 'player_action', log: [], fleeAttempts: 0,
+    xpReward: 0, goldReward: 0, itemsUsed: {}, rngState: 999, events: [], eventSeq: 0, drops: [],
+    round: 1, ammoReserve: reserve, ammoUsed: {} }
+}
+
+// Each attack advances the turn; reset to the player's turn to fire again.
+const myTurn = (st: CombatState): CombatState => ({ ...st, turnIdx: 0, phase: 'player_action' })
+
+test('firearm attack spends a clip round; empty clip blocks the attack', () => {
+  let st = state(actor({ type: 'pistol_round', clipSize: 6, loaded: 1 }))
+  st = myTurn(resolvePlayerAttack(st, 1, ruleset, () => 0.5))
+  assert.equal(st.actors[0].ammo!.loaded, 0)
+  const after = resolvePlayerAttack(st, 1, ruleset, () => 0.5)
+  assert.equal(after, st, 'no ammo → attack blocked')
+})
+
+test('bow attack draws from the shared reserve; empty reserve blocks it', () => {
+  let st = state(actor({ type: 'arrow', clipSize: 0, loaded: 0 }), { arrow: 2 })
+  st = myTurn(resolvePlayerAttack(st, 1, ruleset, () => 0.5))
+  assert.equal(st.ammoUsed!.arrow, 1)
+  st = myTurn(resolvePlayerAttack(st, 1, ruleset, () => 0.5))
+  assert.equal(st.ammoUsed!.arrow, 2)               // reserve 2 fully drawn
+  const blocked = resolvePlayerAttack(st, 1, ruleset, () => 0.5)
+  assert.equal(blocked, st, 'no arrows left → blocked')
+})
+
+// ── reload ───────────────────────────────────────────────────────────────────
+test('reload moves reserve into the clip, capped by clip size and reserve', () => {
+  const st = state(actor({ type: 'pistol_round', clipSize: 6, loaded: 2 }), { pistol_round: 10 })
+  assert.equal(reloadableRounds(st, st.actors[0]), 4) // 6-2, plenty of reserve
+  const r = resolvePlayerReload(st, ruleset)
+  assert.equal(r.actors[0].ammo!.loaded, 6)
+  assert.equal(r.ammoUsed!.pistol_round, 4)
+})
+
+test('reload can pair a non-firing skill; damage skills are rejected as pairs', () => {
+  const buff: SkillDef = { id: 'sk.brace', name: 'Brace', effects: [{ t: 'status', status: 'status.guard', chance: 1 }], target: 'self' }
+  const shoot: SkillDef = { id: 'sk.shoot', name: 'Aimed Shot', effects: [{ t: 'damage', dmgType: 'physical', amount: '2d6' }], target: 'enemy' }
+  assert.equal(isReloadCompatibleSkill(buff), true)
+  assert.equal(isReloadCompatibleSkill(shoot), false)
+  const rs: Ruleset = { ...ruleset, skills: [...(ruleset.skills ?? []), buff] }
+  const st = state(actor({ type: 'pistol_round', clipSize: 6, loaded: 0 }), { pistol_round: 6 })
+  const r = resolvePlayerReload(st, rs, { skillId: 'sk.brace' })
+  assert.equal(r.actors[0].ammo!.loaded, 6)
+  assert.match(r.log.map(l => l.text).join(' '), /reloads.*Brace/s)
+})
+
+// ── battle-end reconciliation ────────────────────────────────────────────────
+test('clip persists to the equipped weapon; reserve draw leaves the inventory', () => {
+  const char: Character = {
     id: 'c1', name: 'Roland', classId: 'class.gunslinger', raceId: ruleset.races[0].id,
     level: 3, xp: 0, attributes: {}, hp: 30, maxHp: 30, mp: 0, maxMp: 0,
-    equipment: { weapon }, knownSpells: [], statuses: [], alive: true,
+    equipment: { weapon: { def: 'item.pistol', qty: 1, charges: 6 } }, knownSpells: [], statuses: [], alive: true,
   }
-}
-
-// ── seed integrity ──────────────────────────────────────────────────────────
-test('seeded guns carry a clip (charges) and a Fire action (onUse)', () => {
-  const pistol = ruleset.items.find(i => i.id === 'item.pistol')!
-  const rifle = ruleset.items.find(i => i.id === 'item.assault_rifle')!
-  assert.equal(pistol.charges, 6)
-  assert.ok((pistol.onUse?.length ?? 0) > 0, 'pistol fires via onUse')
-  assert.equal(rifle.charges, 5)
+  // fired 4, reloaded 4 back → loaded 6 but 4 drawn from reserve
+  const st = state(actor({ type: 'pistol_round', clipSize: 6, loaded: 2 }), { pistol_round: 10 })
+  st.ammoUsed = { pistol_round: 4 }
+  const { party } = applyCombatOutcome([char], st, ruleset)
+  assert.equal(party[0].equipment.weapon!.charges, 2)       // clip snapshot
+  const inv = consumeCombatAmmo([{ def: 'item.pistol_ammo', qty: 10 }], st, ruleset)
+  assert.equal(inv.find(i => i.def === 'item.pistol_ammo')!.qty, 6) // 10 - 4
 })
 
-test('Pistol/Rifle Ammo are reload consumables typed to their firearm', () => {
-  const pa = ruleset.items.find(i => i.id === 'item.pistol_ammo')!
-  const ra = ruleset.items.find(i => i.id === 'item.rifle_ammo')!
-  assert.equal(pa.kind, 'consumable'); assert.equal(pa.stackable, true)
-  assert.deepEqual(pa.onUse, [{ t: 'reload', weaponType: 'wtype.gun' }])
-  assert.deepEqual(ra.onUse, [{ t: 'reload', weaponType: 'wtype.heavy_gun' }])
-})
-
-// ── out-of-combat reload ─────────────────────────────────────────────────────
-test('Pistol Ammo refills a spent pistol to a full clip', () => {
-  const party = [gunner({ def: 'item.pistol', qty: 1, charges: 2 })]
+// ── out of combat reload ─────────────────────────────────────────────────────
+test('out-of-combat reload pulls rounds from inventory into the clip', () => {
+  const party: Character[] = [{
+    id: 'c1', name: 'Roland', classId: 'class.gunslinger', raceId: ruleset.races[0].id,
+    level: 3, xp: 0, attributes: {}, hp: 30, maxHp: 30, mp: 0, maxMp: 0,
+    equipment: { weapon: { def: 'item.pistol', qty: 1, charges: 1 } }, knownSpells: [], statuses: [], alive: true,
+  }]
   const inv: ItemInstance[] = [{ def: 'item.pistol_ammo', qty: 3 }]
-  const res = applyConsumable('item.pistol_ammo', 0, party, inv, ruleset)!
-  assert.equal(res.party[0].equipment.weapon!.charges, 6)      // 2 → 6 (max)
-  assert.equal(res.inventory.find(i => i.def === 'item.pistol_ammo')!.qty, 2) // one box spent
+  const { party: p, inventory } = applyEffectToChar({ t: 'reload' }, 0, party, inv, ruleset)
+  assert.equal(p[0].equipment.weapon!.charges, 4)                 // 1 + 3
+  assert.equal(inventory.find(i => i.def === 'item.pistol_ammo'), undefined) // all 3 spent
 })
 
-test('reload caps at the weapon max and never overfills', () => {
-  const party = [gunner({ def: 'item.pistol', qty: 1, charges: 6 })]
-  const { party: p } = applyEffectToChar({ t: 'reload', weaponType: 'wtype.gun' }, 0, party, [], ruleset)
-  assert.equal(p[0].equipment.weapon!.charges, 6)
-})
-
-test('reload amount adds a partial refill, capped', () => {
-  const party = [gunner({ def: 'item.pistol', qty: 1, charges: 1 })]
-  const { party: p } = applyEffectToChar({ t: 'reload', weaponType: 'wtype.gun', amount: 3 }, 0, party, [], ruleset)
-  assert.equal(p[0].equipment.weapon!.charges, 4) // 1 + 3
-})
-
-test('wrong-type ammo will not reload (pistol ammo vs rifle)', () => {
-  const party = [gunner({ def: 'item.assault_rifle', qty: 1, charges: 1 })]
-  const { party: p, messages } = applyEffectToChar({ t: 'reload', weaponType: 'wtype.gun' }, 0, party, [], ruleset)
-  assert.equal(p[0].equipment.weapon!.charges, 1) // unchanged
-  assert.match(messages.join(' '), /doesn't fit|no reloadable/i)
-})
-
-// ── battle honours the remaining count + persists spend ───────────────────────
-function baseState(actors: CombatState['actors']): CombatState {
-  return {
-    actors, turnIdx: 0, phase: 'player_action', log: [], fleeAttempts: 0, xpReward: 0, goldReward: 0,
-    itemsUsed: {}, equipChargesUsed: {}, rngState: 12345, events: [], eventSeq: 0, drops: [], round: 1,
-  }
-}
-function partyActor() {
-  return { kind: 'party' as const, idx: 0, name: 'Roland', hp: 30, maxHp: 30, mp: 0, maxMp: 0,
-    attack: 8, defense: 4, speed: 6, xp: 0, gold: 0, alive: true, statuses: [], rank: 0 as const }
-}
-function enemyActor() {
-  return { kind: 'enemy' as const, idx: 0, name: 'Thug', hp: 40, maxHp: 40, mp: 0, maxMp: 0,
-    attack: 6, defense: 2, speed: 5, xp: 10, gold: 5, alive: true, statuses: [], rank: 0 as const }
-}
-
-test('firing the equipped gun in battle spends one charge; it persists to the weapon', () => {
-  let st = baseState([partyActor(), enemyActor()])
-  st = resolvePlayerUseItem(st, 'item.pistol', [1], ruleset, undefined, { equipSlot: 'weapon' })
-  assert.equal(st.equipChargesUsed!['0:weapon'], 1)
-  // Apply to a party member holding a 6-round pistol → 5 left after one shot.
-  const party = [gunner({ def: 'item.pistol', qty: 1, charges: 6 })]
-  const { party: after } = applyCombatOutcome(party, st, ruleset)
-  assert.equal(after[0].equipment.weapon!.charges, 5)
-})
-
-test('in-combat reload refunds fired charges; guarded when nothing was fired', () => {
-  let st = baseState([partyActor(), enemyActor()])
-  // fire twice
-  st = resolvePlayerUseItem(st, 'item.pistol', [1], ruleset, undefined, { equipSlot: 'weapon' })
-  st = resolvePlayerUseItem(st, 'item.pistol', [1], ruleset, undefined, { equipSlot: 'weapon' })
-  assert.equal(st.equipChargesUsed!['0:weapon'], 2)
-  // reload (full) → fired charges refunded
-  st.turnIdx = 0
-  const reloaded = resolvePlayerUseItem(st, 'item.pistol_ammo', [], ruleset)
-  assert.equal(reloaded.equipChargesUsed!['0:weapon'], 0)
-  assert.equal(reloaded.itemsUsed['item.pistol_ammo'], 1) // one box consumed
-  // guard: reloading with nothing fired is a no-op (ammo not wasted)
-  const fresh = baseState([partyActor(), enemyActor()])
-  const noop = resolvePlayerUseItem(fresh, 'item.pistol_ammo', [], ruleset)
-  assert.equal(noop.itemsUsed['item.pistol_ammo'] ?? 0, 0)
+test('a full clip with a fresh box: applyConsumable path reloads and spends ammo', () => {
+  const party: Character[] = [{
+    id: 'c1', name: 'Roland', classId: 'class.gunslinger', raceId: ruleset.races[0].id,
+    level: 3, xp: 0, attributes: {}, hp: 30, maxHp: 30, mp: 0, maxMp: 0,
+    equipment: { weapon: { def: 'item.pistol', qty: 1, charges: 0 } }, knownSpells: [], statuses: [], alive: true,
+  }]
+  // a "field reload" consumable that runs the reload effect
+  const rs: Ruleset = { ...ruleset, items: [...ruleset.items, { id: 'item.reload_kit', name: 'Reload', kind: 'consumable', value: 0, stackable: true, onUse: [{ t: 'reload' }] }] }
+  const inv: ItemInstance[] = [{ def: 'item.reload_kit', qty: 1 }, { def: 'item.pistol_ammo', qty: 10 }]
+  const res = applyConsumable('item.reload_kit', 0, party, inv, rs)!
+  assert.equal(res.party[0].equipment.weapon!.charges, 6)        // filled to clip
+  assert.equal(res.inventory.find(i => i.def === 'item.pistol_ammo')!.qty, 4) // 10 - 6
 })
 
 console.log(`\nreload: ${passed} passed`)

@@ -106,23 +106,34 @@ export function applyEffectToChar(
       }
     }
   } else if (effect.t === 'reload') {
+    // Reload the equipped firearm's clip from matching ammo in the inventory.
     const inst = target.equipment?.weapon
     const def = inst ? ruleset.items.find(d => d.id === inst.def) : undefined
-    if (!inst || !def || !def.charges) {
-      msgs.push(`${target.name} has no reloadable weapon equipped.`)
+    const wtype = def?.weaponType ? ruleset.weaponTypes?.find(w => w.id === def.weaponType) : undefined
+    if (!inst || !def || !def.charges || !wtype?.ammoType) {
+      msgs.push(`${target.name} has no reloadable firearm equipped.`)
     } else if (effect.weaponType && def.weaponType !== effect.weaponType) {
-      const wt = ruleset.weaponTypes?.find(w => w.id === effect.weaponType)?.name ?? 'that weapon'
-      msgs.push(`This ammo doesn't fit ${wt === 'that weapon' ? 'the equipped weapon' : `a ${wt}`}.`)
+      msgs.push(`That ammo doesn't fit the equipped weapon.`)
     } else {
       const max = def.charges
-      const cur = inst.charges ?? max
-      const next = Math.min(max, cur + (effect.amount ?? max))
-      if (next <= cur) {
-        msgs.push(`${def.name} is already fully loaded.`)
+      const loaded = inst.charges ?? max
+      const need = Math.min(max - loaded, effect.amount ?? max)
+      const reserve = newInv.filter(i => ruleset.items.find(d => d.id === i.def)?.ammoType === wtype.ammoType)
+        .reduce((n, i) => n + i.qty, 0)
+      const move = Math.min(need, reserve)
+      if (move <= 0) {
+        msgs.push(loaded >= max ? `${def.name} is already fully loaded.` : `No ${wtype.name} ammo to reload.`)
       } else {
         newParty = newParty.map((c, i) =>
-          i === targetIdx ? { ...c, equipment: { ...c.equipment, weapon: { ...inst, charges: next } } } : c)
-        msgs.push(`${target.name} reloads ${def.name} (${next}/${max}).`)
+          i === targetIdx ? { ...c, equipment: { ...c.equipment, weapon: { ...inst, charges: loaded + move } } } : c)
+        // Spend `move` rounds from matching ammo items, in carry order.
+        let left = move
+        newInv = newInv.map(it => {
+          if (left <= 0 || ruleset.items.find(d => d.id === it.def)?.ammoType !== wtype.ammoType) return it
+          const take = Math.min(it.qty, left); left -= take
+          return { ...it, qty: it.qty - take }
+        }).filter(it => it.qty > 0)
+        msgs.push(`${target.name} reloads ${def.name} (${loaded + move}/${max}).`)
       }
     }
   }

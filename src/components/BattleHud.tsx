@@ -12,7 +12,7 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Swords, Wand2, Shield, FlaskConical, Wind, ChevronLeft, Check, Zap } from 'lucide-react'
+import { Swords, Wand2, Shield, FlaskConical, Wind, ChevronLeft, Check, Zap, RefreshCw } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import {
   type CombatState,
@@ -23,6 +23,9 @@ import {
   resolvePlayerDefend,
   resolvePlayerUseItem,
   resolvePlayerUseSkill,
+  resolvePlayerReload,
+  reloadableRounds,
+  isReloadCompatibleSkill,
   canUseSkill,
   resolveEnemyTurn,
   resolveAllOutAttack,
@@ -40,6 +43,7 @@ type Mode =
   | { k: 'items' }
   | { k: 'allies'; spell?: SpellDef; item?: ItemDef; equipSlot?: string; skill?: SkillDef }
   | { k: 'skillList' }
+  | { k: 'reload' }
 
 /** A consumable the party can still use this battle (qty net of itemsUsed). */
 export interface UsableItem {
@@ -58,6 +62,18 @@ export interface BattleHudProps {
   usableItems: UsableItem[]
   selectedIdx: number | null
   onAttack: () => void
+  /** The current actor's ranged weapon has no ammo → Attack is disabled. */
+  outOfAmmo: boolean
+  /** The current actor holds a firearm with rounds available to reload. */
+  canReload: boolean
+  /** Short ammo readout for the current actor (clip/reserve), or null. */
+  ammoLabel: string | null
+  /** Skills that may be used in the same turn as a Reload (non-firing). */
+  reloadSkills: SkillDef[]
+  /** Open the Reload submenu. */
+  onReload: () => void
+  /** Execute a reload, optionally pairing one non-firing skill. */
+  onDoReload: (skillId?: string) => void
   onOpenSpells: () => void
   onChooseSpell: (spell: SpellDef) => void
   onOpenItems: () => void
@@ -188,6 +204,24 @@ export function useBattleController({ combat, ruleset, party, inventory, onActio
     setMode({ k: 'menu' }); setSel(null)
   }
 
+  function execReload(skillId?: string) {
+    const cur = combatRef.current
+    if (!cur) return
+    let targets: number[] = []
+    if (skillId) {
+      const sk = (ruleset.skills ?? []).find(s => s.id === skillId)
+      const allies = cur.actors.map((a, i) => ({ a, i })).filter(({ a }) => a.kind === 'party' && a.alive).map(({ i }) => i)
+      switch (sk?.target) {
+        case 'allEnemies': case 'enemyRow': targets = aliveEnemyIdxs; break
+        case 'enemy': targets = aliveEnemyIdxs.slice(0, 1); break
+        case 'allAllies': targets = allies; break
+        default: targets = [cur.turnIdx] // self / ally
+      }
+    }
+    onAction(resolvePlayerReload(cur, ruleset, skillId ? { skillId, skillTargets: targets } : undefined))
+    setMode({ k: 'menu' }); setSel(null)
+  }
+
   function execSkill(skill: SkillDef, targetIdxs: number[]) {
     const cur = combatRef.current
     if (!cur) return
@@ -279,7 +313,7 @@ export function useBattleController({ combat, ruleset, party, inventory, onActio
         } else if (e.key === 'Escape') {
           e.preventDefault(); backOut(); setSel(null)
         }
-      } else if (mode.k === 'spells' || mode.k === 'items' || mode.k === 'allies' || mode.k === 'skillList') {
+      } else if (mode.k === 'spells' || mode.k === 'items' || mode.k === 'allies' || mode.k === 'skillList' || mode.k === 'reload') {
         if (e.key === 'Escape') { e.preventDefault(); setMode({ k: 'menu' }) }
       }
     }
@@ -302,10 +336,24 @@ export function useBattleController({ combat, ruleset, party, inventory, onActio
     onSelectTarget: selectTarget,
   }
 
+  const actorAmmo = currentActor?.ammo
+  const reserveLeft = actorAmmo ? (combat.ammoReserve?.[actorAmmo.type] ?? 0) - (combat.ammoUsed?.[actorAmmo.type] ?? 0) : 0
+  const outOfAmmo = !!actorAmmo && (actorAmmo.clipSize > 0 ? actorAmmo.loaded <= 0 : reserveLeft <= 0)
+  const canReload = !!actorAmmo && actorAmmo.clipSize > 0 && reloadableRounds(combat, currentActor) > 0
+  const ammoLabel = actorAmmo
+    ? actorAmmo.clipSize > 0
+      ? `🔫 ${actorAmmo.loaded}/${actorAmmo.clipSize} · ${Math.max(0, reserveLeft)} spare`
+      : `🏹 ${Math.max(0, reserveLeft)}`
+    : null
+  const reloadSkills = usableSkills.filter(s => s.ok && isReloadCompatibleSkill(s.def)).map(s => s.def)
+
   const hud: BattleHudProps = {
     combat, mode, currentActor, castableSpells, usableItems,
     selectedIdx: sel,
     onAttack: () => enterTargets(),
+    outOfAmmo, canReload, ammoLabel, reloadSkills,
+    onReload: () => setMode({ k: 'reload' }),
+    onDoReload: execReload,
     onOpenSpells: () => setMode({ k: 'spells' }),
     onChooseSpell: chooseSpell,
     onOpenItems: () => setMode({ k: 'items' }),
@@ -365,6 +413,7 @@ export function BattleHud({
   usableSkills, onOpenSkills, onChooseSkill,
   onAllyTarget, onConfirmTarget, onFlee, onBack,
   selectableParty, onSelectActor, canAllOut, onAllOut,
+  outOfAmmo, canReload, ammoLabel, reloadSkills, onReload, onDoReload,
 }: BattleHudProps) {
   const logEndRef = useRef<HTMLDivElement>(null)
   useEffect(() => { logEndRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [combat.log.length])
@@ -437,7 +486,17 @@ export function BattleHud({
                 <Swords className="w-3.5 h-3.5" /> All-Out Attack!
               </button>
             )}
-            <MenuButton icon={<Swords className="w-3.5 h-3.5" />} label="Attack" onClick={onAttack} />
+            {ammoLabel && (
+              <div className={cn('px-2 pb-0.5 text-[10px]', outOfAmmo ? 'text-red-300/80' : 'text-white/40')}>
+                {outOfAmmo ? 'Out of ammo' : ammoLabel}
+              </div>
+            )}
+            <MenuButton icon={<Swords className="w-3.5 h-3.5" />} label="Attack" onClick={onAttack}
+              disabled={outOfAmmo} title={outOfAmmo ? 'Out of ammo — reload or act another way' : undefined} />
+            {canReload && (
+              <MenuButton icon={<RefreshCw className="w-3.5 h-3.5" />} label="Reload" onClick={onReload}
+                title="Reload the clip — costs your turn; you may add a non-firing skill" />
+            )}
             <MenuButton icon={<Wand2 className="w-3.5 h-3.5" />} label="Spell"
               onClick={onOpenSpells} disabled={castableSpells.length === 0}
               title={combat.antiMagic ? 'An anti-magic field smothers all spellcraft here'
@@ -485,6 +544,18 @@ export function BattleHud({
                 onClick={() => onChooseSkill(def)} disabled={!ok} title={reason} />
             ))}
             <MenuButton icon={<ChevronLeft className="w-3.5 h-3.5" />} label="Back" onClick={onBack} />
+          </div>
+        ) : mode.k === 'reload' ? (
+          <div className="space-y-0.5 max-h-24 overflow-y-auto">
+            <div className="px-2 pb-0.5 text-[10px] text-white/40">Reload — add a skill?</div>
+            <MenuButton icon={<RefreshCw className="w-3.5 h-3.5" />} label="Reload only" onClick={() => onDoReload()} />
+            {reloadSkills.map(def => (
+              <MenuButton key={def.id}
+                icon={<span className="text-sm leading-none">{def.icon ?? '💥'}</span>}
+                label={`+ ${def.name}${def.hpCostPct ? ` (${Math.round(def.hpCostPct * 100)}% HP)` : def.mpCost ? ` (${def.mpCost} MP)` : ''}`}
+                onClick={() => onDoReload(def.id)} />
+            ))}
+            <MenuButton icon={<ChevronLeft className="w-3.5 h-3.5" />} label="Back" onClick={() => onBack()} />
           </div>
         ) : mode.k === 'targets' ? (
           <div className="space-y-1">
