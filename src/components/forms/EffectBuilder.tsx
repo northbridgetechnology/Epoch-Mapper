@@ -13,6 +13,7 @@ const ALL_VERBS = [
   { t: 'heal',        label: '💊 Heal HP',          group: 'Healing' },
   { t: 'restoreMp',   label: '🔮 Restore MP',        group: 'Healing' },
   { t: 'fullHeal',    label: '✨ Full Heal & MP',     group: 'Healing' },
+  { t: 'revive',      label: '💚 Revive (target)',    group: 'Healing' },
   { t: 'reviveRandom',label: '💫 Revive Random',      group: 'Healing' },
   // Combat
   { t: 'damage',      label: '⚔️ Damage',             group: 'Combat' },
@@ -52,6 +53,7 @@ export function blankEffect(verb: Verb): Effect {
     case 'restoreMp':    return { t: 'restoreMp', amount: 10 }
     case 'fullHeal':     return { t: 'fullHeal' }
     case 'reviveRandom': return { t: 'reviveRandom' }
+    case 'revive':       return { t: 'revive', hpPercent: 0.5 }
     case 'damage':       return { t: 'damage', dmgType: 'physical', amount: '1d6', canCrit: true }
     case 'status':       return { t: 'status', status: '', chance: 1.0 }
     case 'cure':         return { t: 'cure', status: 'all' }
@@ -85,6 +87,7 @@ export function effectLabel(e: Effect, ruleset: Ruleset): string {
     case 'restoreMp':    return `Restore ${e.amount} MP`
     case 'fullHeal':     return 'Full Heal & MP'
     case 'reviveRandom': return 'Revive random ally'
+    case 'revive':       return `Revive target (${Math.round((e.hpPercent ?? 0.5) * 100)}% HP)`
     case 'damage':       return `${e.dmgType} damage ${e.amount}`
     case 'status': {
       const name = ruleset.statusEffects.find(s => s.id === e.status)?.name ?? e.status
@@ -480,6 +483,17 @@ function EffectRow({ effect, ruleset, onChange, onRemove }: EffectRowProps) {
             className="px-1.5 py-0.5 rounded bg-zinc-700 border border-white/10 text-xs text-white/90 focus:outline-none">
             {Object.keys(SFX_DEFS).map(n => <option key={n} value={n}>{n}</option>)}
           </select>
+        )}
+
+        {/* revive */}
+        {e.t === 'revive' && (
+          <div className="flex items-center gap-1">
+            <span className="text-xs text-white/40">Revive at</span>
+            <input type="number" min={1} max={100} value={Math.round((e.hpPercent ?? 0.5) * 100)}
+              onChange={ev => onChange({ ...e, hpPercent: Math.min(1, Math.max(0.01, (ev.target.valueAsNumber || 50) / 100)) })}
+              className={cn(INPUT_CLS, 'w-14')} />
+            <span className="text-xs text-white/40">% HP · targets a fallen ally</span>
+          </div>
         )}
 
         {/* No-param effects */}

@@ -843,7 +843,7 @@ export const DEFAULT_SPELLS: SpellDef[] = [
     school: 'divine', level: 5, mpCost: 16, target: 'ally',
     inCombat: true, outOfCombat: true,
     description: 'Revives a fallen ally with 50% of their max HP.',
-    effects: [{ t: 'reviveRandom' }],
+    effects: [{ t: 'revive', hpPercent: 0.5 }],
   },
   // ── Cure (Support) ────────────────────────────────────────────────────────────
   {
@@ -1188,9 +1188,9 @@ export const DEFAULT_ITEMS: ItemDef[] = [
   },
   {
     id: 'item.bead', name: 'Bead', icon: '⚪', color: '#f5f6fa',
-    description: 'A sacred bead of revival. Revives a fallen ally with half HP.', kind: 'consumable',
+    description: 'A sacred bead of revival. Revives a chosen fallen ally with half HP.', kind: 'consumable',
     value: 500, stackable: true,
-    onUse: [{ t: 'reviveRandom' }],
+    onUse: [{ t: 'revive', hpPercent: 0.5 }],
   },
   {
     id: 'item.bead_chain', name: 'Bead Chain', icon: '📿', color: '#ffeaa7',

@@ -7,6 +7,12 @@
 
 import type { Character, Effect, ItemDef, ItemInstance, Ruleset } from './engine-types'
 
+/** True when any of these effects can bring a fallen ally back — used by the
+ *  targeting UIs to let the player point at a downed character. */
+export function revivesTheDead(effects: Effect[] | undefined): boolean {
+  return !!effects?.some(e => e.t === 'revive' || e.t === 'fullHeal')
+}
+
 /** Result of applying an out-of-combat effect to the party. */
 export interface ApplyResult {
   party: Character[]
@@ -68,7 +74,17 @@ export function applyEffectToChar(
   let newInv = inventory
 
   const target = party[targetIdx]
-  if (!target || !target.alive) return { party, inventory, messages: [] }
+  if (!target) return { party, inventory, messages: [] }
+
+  // Revive is the one effect that acts on a fallen ally; everything else needs
+  // a living target.
+  if (effect.t === 'revive') {
+    if (target.alive) return { party, inventory, messages: [`${target.name} is already standing.`] }
+    const hp = Math.max(1, Math.floor(target.maxHp * (effect.hpPercent ?? 0.5)))
+    newParty = newParty.map((c, i) => i === targetIdx ? { ...c, hp, mp: c.mp, alive: true, statuses: [] } : c)
+    return { party: newParty, inventory: newInv, messages: [`${target.name} is revived!`] }
+  }
+  if (!target.alive) return { party, inventory, messages: [] }
 
   if (effect.t === 'heal') {
     const amount = rollDice(effect.amount)

@@ -417,6 +417,13 @@ function resolveCombatEffects(
         const { a: revived, i: ri } = dead[Math.floor(rng() * dead.length)]
         cur = cur.map((a, i) => i === ri ? { ...a, hp: Math.max(1, Math.floor(a.maxHp * 0.25)), alive: true } : a)
         log.push({ text: `${revived.name} is revived!`, kind: 'info' })
+
+      } else if (eff.t === 'revive') {
+        if (target.alive) continue // revive only affects the fallen
+        const hp = Math.max(1, Math.floor(target.maxHp * (eff.hpPercent ?? 0.5)))
+        cur = cur.map((a, i) => i === tIdx ? { ...a, hp, alive: true, statuses: [] } : a)
+        events.push({ target: tIdx, kind: 'heal', amount: hp })
+        log.push({ text: `${target.name} is revived!`, kind: 'info' })
       }
     }
   }

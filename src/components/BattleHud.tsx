@@ -34,6 +34,7 @@ import {
   upcomingTurns,
 } from '@/lib/combat-engine'
 import { buildBattlePlacements, type BattleViewState } from '@/lib/battle-scene'
+import { revivesTheDead } from '@/lib/apply-effects'
 import type { Character, ItemDef, ItemInstance, Ruleset, SkillDef, SpellDef } from '@/lib/engine-types'
 
 type Mode =
@@ -571,10 +572,13 @@ export function BattleHud({
             <div className="px-2 text-[10px] uppercase tracking-wide text-emerald-300/70">
               {mode.k === 'allies' && mode.item ? 'Use on…' : 'Cast on…'}
             </div>
-            {combat.actors.map((a, i) => (a.kind === 'party' && a.alive) ? (
-              <MenuButton key={i} icon={<span className="text-sm leading-none">{a.icon ?? '🧑'}</span>}
-                label={a.name} onClick={() => onAllyTarget(i)} />
-            ) : null)}
+            {(() => {
+              const reviveMode = mode.k === 'allies' && revivesTheDead(mode.item?.onUse ?? mode.spell?.effects ?? mode.skill?.effects)
+              return combat.actors.map((a, i) => (a.kind === 'party' && (a.alive || reviveMode)) ? (
+                <MenuButton key={i} icon={<span className="text-sm leading-none">{a.icon ?? '🧑'}</span>}
+                  label={a.alive ? a.name : `💀 ${a.name}`} onClick={() => onAllyTarget(i)} />
+              ) : null)
+            })()}
             <MenuButton icon={<ChevronLeft className="w-3.5 h-3.5" />} label="Back" onClick={onBack} />
           </div>
         )}

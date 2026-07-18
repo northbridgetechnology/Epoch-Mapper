@@ -61,6 +61,9 @@ export type Effect =
   | { t: 'status'; status: DefRef<StatusEffectDef>; chance?: number }
   | { t: 'cure'; status: DefRef<StatusEffectDef> | 'all' }
   | { t: 'reviveRandom' | 'fullHeal' }
+  /** Revive the targeted fallen ally, restoring `hpPercent` of their max HP
+   *  (default 0.5). No effect on a living target. */
+  | { t: 'revive'; hpPercent?: number }
   | { t: 'giveItem'; item: DefRef<ItemDef>; qty?: number }
   | { t: 'takeItem'; item: DefRef<ItemDef>; qty?: number }
   | { t: 'gold'; amount: number }

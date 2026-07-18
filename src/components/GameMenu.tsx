@@ -20,7 +20,7 @@ import {
 import type { Character, Effect, Formation, ItemDef, ItemInstance, Ruleset, SpellDef } from '@/lib/engine-types'
 import { deriveMaxHp, deriveMaxMp } from '@/lib/engine-types'
 import { Portrait } from '@/lib/portraits'
-import { applyConsumable, applyEffectToChar } from '@/lib/apply-effects'
+import { applyConsumable, applyEffectToChar, revivesTheDead } from '@/lib/apply-effects'
 import { canEquip } from '@/lib/equipment'
 import { itemDisplayName } from '@/lib/item-schema'
 import { questStageFlagKey, dialogueSeenFlagKey } from '@/lib/event-engine'
@@ -455,7 +455,7 @@ function ItemScreen({ ruleset, party, inventory, onExit, onApply, onDesc }: {
       if (e.key === 'Escape') { setMode('list'); return true }
     } else if (mode === 'target') {
       if (tStep(e)) return true
-      if (e.key === 'Enter' || e.key === ' ') { if (party[tCur]?.alive) doUse(tCur); return true }
+      if (e.key === 'Enter' || e.key === ' ') { if (party[tCur] && (party[tCur].alive || revivesTheDead(selDef?.onUse))) doUse(tCur); return true }
       if (e.key === 'Escape') { setMode('action'); return true }
     } else if (mode === 'member') {
       if (tStep(e)) return true
@@ -513,7 +513,7 @@ function ItemScreen({ ruleset, party, inventory, onExit, onApply, onDesc }: {
           <div className="space-y-0.5">
             <Heading>{mode === 'target' ? 'Use on…' : 'Equip to…'}</Heading>
             {party.map((c, i) => (
-              <Row key={c.id} sel={i === tCur} disabled={mode === 'target' && !c.alive}
+              <Row key={c.id} sel={i === tCur} disabled={mode === 'target' && !c.alive && !revivesTheDead(selDef?.onUse)}
                 onClick={() => (mode === 'target' ? doUse(i) : doEquip(i))}>
                 <Avatar char={c} size={18} /><span className="flex-1 truncate">{c.name}</span><HpMp char={c} />
               </Row>
