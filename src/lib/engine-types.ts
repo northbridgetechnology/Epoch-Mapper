@@ -203,6 +203,9 @@ export interface ItemDef extends Definition {
   /** Ammo items (kind 'ammo'): the ammo category they belong to, matched
    *  against WeaponTypeDef.ammoType. Multiple items may share one category. */
   ammoType?: string
+  /** Class lock: when set, only these classes may equip the item (on top of the
+   *  usual slot/type checks). Absent/empty = any class that meets the type. */
+  classes?: DefRef<ClassDef>[]
   /** Light shed while equipped (view distance in cells on dark maps). */
   lightRadius?: number
   /** Optional burn-down: the item is consumed after this many steps of being

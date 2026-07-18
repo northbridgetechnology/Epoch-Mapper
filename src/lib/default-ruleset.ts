@@ -9,6 +9,7 @@ import type {
   Ruleset,
 } from './engine-types'
 import { CHIP_TRACKS, CHIP_BOSS_INTRO, SFX_META } from './chiptune'
+import { CLASS_GEAR_ITEMS } from './class-gear'
 
 // ── Attributes ─────────────────────────────────────────────────────────────────
 
@@ -2091,6 +2092,8 @@ export const DEFAULT_ITEMS: ItemDef[] = [
     description: 'An ancient coin from a forgotten civilization. Someone might want this.', kind: 'quest',
     value: 0, stackable: false,
   },
+  // Class-signature armor sets + shared rings/amulets/shields (see class-gear.ts)
+  ...CLASS_GEAR_ITEMS,
 ]
 
 // ── Enemies ────────────────────────────────────────────────────────────────────

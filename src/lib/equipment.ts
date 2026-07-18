@@ -37,6 +37,13 @@ export function canEquip(
 
   if (!cls) return { ok: true }
 
+  // Class lock: some gear is signature to a class (a Gunslinger's duster, a
+  // Mage's archmage robe). Absent/empty = no restriction.
+  if (def.classes && def.classes.length > 0 && !def.classes.includes(cls.id)) {
+    const names = def.classes.map(id => ruleset?.classes.find(c => c.id === id)?.name ?? id)
+    return { ok: false, reason: `Only ${names.join(' / ')} can equip ${def.name}` }
+  }
+
   if (!cls.allowedEquip.includes(def.slot)) {
     return { ok: false, reason: `${cls.name} can't use that slot` }
   }

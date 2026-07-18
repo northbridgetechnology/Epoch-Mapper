@@ -153,6 +153,29 @@ function ItemEditor({
         </div>
       )}
 
+      {/* Class lock — restrict equipping to specific classes */}
+      {(item.kind === 'weapon' || item.kind === 'armor' || item.kind === 'accessory') && (
+        <div className="pt-2 border-t border-white/10">
+          <label className="block text-xs font-medium text-white/60 mb-1">Class Lock <span className="text-white/30">(none selected = any eligible class)</span></label>
+          <div className="flex flex-wrap gap-1.5">
+            {ruleset.classes.map(c => {
+              const on = item.classes?.includes(c.id) ?? false
+              return (
+                <button key={c.id} type="button"
+                  onClick={() => {
+                    const cur = item.classes ?? []
+                    const next = on ? cur.filter(x => x !== c.id) : [...cur, c.id]
+                    onChange({ ...item, classes: next.length ? next : undefined })
+                  }}
+                  className={`px-2 py-1 rounded text-xs border transition-colors ${on ? 'bg-amber-500/20 border-amber-500/40 text-amber-200' : 'border-white/10 text-white/50 hover:text-white/80'}`}>
+                  {c.icon ?? ''} {c.name}
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
       {/* On-use effects (consumables) */}
       <div className="pt-2 border-t border-white/10">
         <EffectBuilder
