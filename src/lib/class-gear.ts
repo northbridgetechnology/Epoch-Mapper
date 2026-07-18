@@ -10,7 +10,7 @@
  * defense/attack/speed map to derived modifiers.
  */
 
-import type { ItemDef, ItemSlot, StatModifier } from './engine-types'
+import type { ItemDef, ItemSlot, StatModifier, DamageType, LootTableDef, ShopDef } from './engine-types'
 
 const DERIVED = new Set(['attack', 'defense', 'speed'])
 function toMods(spec: Record<string, number>): StatModifier[] {
@@ -302,7 +302,98 @@ const SHIELDS: Row[] = [
   ['Sentinel Buckler', 'A watchman’s quick, light guard.', 'atype.buckler', { defense: 3 }],
 ]
 
+// ── Weapons ───────────────────────────────────────────────────────────────────
+const WTYPE_ICON: Record<string, string> = {
+  'wtype.sword': '⚔️', 'wtype.katana': '🗡️', 'wtype.greatsword': '⚔️', 'wtype.axe': '🪓',
+  'wtype.mace': '🔨', 'wtype.hammer': '🔨', 'wtype.spear': '🔱', 'wtype.bow': '🏹',
+  'wtype.staff': '🪄', 'wtype.rod': '✨', 'wtype.dagger': '🗡️', 'wtype.gun': '🔫', 'wtype.heavy_gun': '🔫',
+}
+/** [name, flavor, weaponType, modifiers, opts?] */
+type WRow = [string, string, string, Record<string, number>, {
+  twoHanded?: boolean; charges?: number; damageType?: DamageType; value?: number; icon?: string
+}?]
+
+function weapons(prefix: string, rows: WRow[], classes: string[]): ItemDef[] {
+  return rows.map(([name, desc, wtype, mods, o]) => ({
+    id: `item.${prefix}_${slug(name)}`,
+    name, icon: o?.icon ?? WTYPE_ICON[wtype] ?? '⚔️', color: '#dfe6e9',
+    description: desc, kind: 'weapon', slot: 'weapon', weaponType: wtype,
+    value: o?.value ?? 700, stackable: false,
+    modifiers: toMods(mods),
+    ...(o?.twoHanded ? { twoHanded: true } : {}),
+    ...(o?.charges ? { charges: o.charges } : {}),
+    ...(o?.damageType ? { damageType: o.damageType } : {}),
+    classes,
+  } as ItemDef))
+}
+
+const FIGHTER_WEAPONS: WRow[] = [
+  ['Andúril, Flame of the West', 'A king’s blade reforged from the shards of a legend.', 'wtype.sword', { might: 3, attack: 3 }, { value: 1400 }],
+  ['Excalibur', 'The sword in the stone, promised to a rightful hand.', 'wtype.sword', { might: 2, attack: 2, luck: 1 }, { value: 1500 }],
+  ['Dragonslayer', 'A slab of iron more raw will than sword.', 'wtype.greatsword', { might: 5, attack: 4 }, { twoHanded: true, value: 1600 }],
+  ['Buster Blade', 'An enormous flat-bladed sword carried in memory.', 'wtype.greatsword', { might: 4, attack: 3 }, { twoHanded: true, value: 1300 }],
+  ['Frostmourne', 'A runeblade that hungers, and whispers, and chills.', 'wtype.sword', { might: 3, attack: 3 }, { damageType: 'ice', value: 1500 }],
+  ['Gungnir', 'A spear that never misses the mark it is thrown at.', 'wtype.spear', { might: 3, attack: 2, agility: 1 }, { value: 1200 }],
+  ['Mjölnir', 'A thunder-hammer only the worthy can lift.', 'wtype.hammer', { might: 4, attack: 3 }, { twoHanded: true, damageType: 'lightning', value: 1600 }],
+  ['Stormbreaker', 'A axe-hammer forged in the heart of a dying star.', 'wtype.axe', { might: 4, attack: 4 }, { twoHanded: true, value: 1500 }],
+  ['Masamune', 'A perfect katana, folded ten thousand times.', 'wtype.katana', { might: 3, attack: 3, agility: 1 }, { value: 1300 }],
+  ['Gram', 'The blade that slew a dragon and cursed a bloodline.', 'wtype.sword', { might: 3, attack: 2 }, { value: 1100 }],
+]
+const MAGE_WEAPONS: WRow[] = [
+  ['Staff of the Magi', 'A gnarled length of power crackling with the arcane.', 'wtype.staff', { intellect: 4, attack: 1 }, { value: 1400 }],
+  ['Grey Wanderer’s Staff', 'A pilgrim-wizard’s walking staff, wiser than it looks.', 'wtype.staff', { intellect: 3, spirit: 1 }, { value: 1200 }],
+  ['Elder Wand', 'The most storied wand there is — and the deadliest to own.', 'wtype.rod', { intellect: 4 }, { value: 1500 }],
+  ['Fire Rod', 'A ruby-tipped rod that spits a bolt of flame.', 'wtype.rod', { intellect: 2 }, { charges: 12, damageType: 'fire', value: 800 }],
+  ['Frost Rod', 'A rime-cold rod that hurls a shard of ice.', 'wtype.rod', { intellect: 2 }, { charges: 12, damageType: 'ice', value: 800 }],
+  ['Storm Rod', 'A brass rod humming with caged lightning.', 'wtype.rod', { intellect: 2 }, { charges: 12, damageType: 'lightning', value: 850 }],
+  ['Archmage’s Staff', 'The staff of a master who forgot more magic than most learn.', 'wtype.staff', { intellect: 5 }, { value: 1600 }],
+  ['Ritual Athame', 'A ceremonial dagger that channels raw power.', 'wtype.dagger', { intellect: 3, agility: 1 }, { value: 900 }],
+  ['Serpent Staff', 'A twined-snake stave, cool and patient.', 'wtype.staff', { intellect: 3, spirit: 1 }, { value: 1000 }],
+  ['Void Rod', 'A rod tipped with a stone that drinks the light.', 'wtype.rod', { intellect: 4, attack: 1 }, { damageType: 'dark', value: 1200 }],
+]
+const CLERIC_WEAPONS: WRow[] = [
+  ['Mace of the Faithful', 'A blessed head that rings like a church bell on impact.', 'wtype.mace', { spirit: 3, attack: 2 }, { value: 1000 }],
+  ['Dawnbreaker', 'A holy mace that flares with the light of the sun.', 'wtype.mace', { spirit: 3, attack: 2 }, { damageType: 'holy', value: 1300 }],
+  ['Warhammer of Light', 'A two-handed maul that judges the wicked.', 'wtype.hammer', { spirit: 2, attack: 4 }, { twoHanded: true, damageType: 'holy', value: 1400 }],
+  ['Bishop’s Crozier', 'A shepherd’s crook of the high clergy.', 'wtype.staff', { spirit: 4 }, { value: 1100 }],
+  ['Hammer of Judgement', 'A great hammer that falls like a verdict.', 'wtype.hammer', { spirit: 3, attack: 3 }, { twoHanded: true, damageType: 'holy', value: 1300 }],
+  ['Holy-Water Sprinkler', 'A spiked mace once swung by warrior-priests.', 'wtype.mace', { spirit: 2, attack: 2 }, { value: 800 }],
+  ['Saint’s Staff', 'A relic-staff warm with a martyr’s blessing.', 'wtype.staff', { spirit: 4, endurance: 1 }, { value: 1200 }],
+  ['Censer Flail', 'A swinging censer that smites and sanctifies.', 'wtype.mace', { spirit: 2, attack: 2 }, { value: 850 }],
+  ['Hammer of the Dawn', 'A radiant maul that calls down the morning.', 'wtype.hammer', { spirit: 3, attack: 3 }, { twoHanded: true, damageType: 'holy', value: 1400 }],
+  ['Crusader’s Mace', 'A plain, faithful weapon that has ended many heresies.', 'wtype.mace', { spirit: 2, attack: 3 }, { value: 950 }],
+]
+const ROGUE_WEAPONS: WRow[] = [
+  ['Hidden Blade', 'A spring-loaded bracer-blade for a silent creed.', 'wtype.dagger', { agility: 3, attack: 2 }, { value: 1100 }],
+  ['Assassin’s Kris', 'A wavy, poison-grooved blade for close work.', 'wtype.dagger', { agility: 2, luck: 1 }, { damageType: 'poison', value: 950 }],
+  ['Tanto', 'A short, wickedly sharp blade drawn in a blink.', 'wtype.dagger', { agility: 2, attack: 2 }, { value: 800 }],
+  ['Duelist’s Rapier', 'A slender thrusting sword for the quick and the clever.', 'wtype.sword', { agility: 3, attack: 2 }, { value: 1000 }],
+  ['Outlaw’s Longbow', 'A yew bow that never seems to run out of arrows.', 'wtype.bow', { agility: 3, attack: 2 }, { value: 1050 }],
+  ['Emerald Longbow', 'A trick-arrow bow in a very particular shade of green.', 'wtype.bow', { agility: 2, luck: 1, attack: 2 }, { value: 1100 }],
+  ['Poisoned Rondel', 'A stiletto meant for the gaps in a man’s armor.', 'wtype.dagger', { agility: 2, attack: 2 }, { damageType: 'poison', value: 900 }],
+  ['Silenced Holdout', 'A muffled little pistol for wet work in the dark.', 'wtype.gun', { agility: 2, attack: 2 }, { charges: 8, value: 1200 }],
+  ['Fan of Knives', 'A bandolier of balanced throwing blades.', 'wtype.dagger', { agility: 3 }, { value: 850 }],
+  ['Folding Blade', 'A masked killer’s collapsible sword, quiet as a whisper.', 'wtype.sword', { agility: 3, attack: 2 }, { value: 1150 }],
+]
+const GUNSLINGER_WEAPONS: WRow[] = [
+  ['Sandalwood Revolvers', 'Great irons with worn sandalwood grips, born of a melted blade.', 'wtype.gun', { agility: 3, luck: 1 }, { charges: 6, value: 1600 }],
+  ['The Peacemaker', 'The gun that won a frontier, plain and deadly.', 'wtype.gun', { agility: 2, attack: 2 }, { charges: 6, value: 900 }],
+  ['Deadeye Revolver', 'A shootist’s piece that seems to slow time itself.', 'wtype.gun', { agility: 2, luck: 2 }, { charges: 6, value: 1100 }],
+  ['Vash’s Punisher', 'A humanoid typhoon’s oversized silver sidearm.', 'wtype.heavy_gun', { agility: 3, attack: 3 }, { twoHanded: true, charges: 6, value: 1500 }],
+  ['Single Action Army', 'A revolver-spinner’s weapon of choice — and vice.', 'wtype.gun', { agility: 3, luck: 1 }, { charges: 6, value: 1000 }],
+  ['Ranger Sequoia', 'A hand-engraved magnum of a fallen republic’s finest.', 'wtype.gun', { agility: 2, attack: 3 }, { charges: 6, value: 1300 }],
+  ['Lever-Action Repeater', 'A trusty long gun that speaks in a steady rhythm.', 'wtype.heavy_gun', { agility: 2, attack: 3 }, { twoHanded: true, charges: 7, value: 1200 }],
+  ['Sawed-Off Coach Gun', 'Two barrels of very persuasive argument.', 'wtype.heavy_gun', { agility: 1, attack: 5 }, { twoHanded: true, charges: 2, value: 1000 }],
+  ['Ivory Hex-Shooter', 'A gambler-gunslinger’s pearl-handled, fanning revolver.', 'wtype.gun', { agility: 2, luck: 2 }, { charges: 6, value: 1150 }],
+  ['Gilead’s Iron', 'A gunslinger’s birthright, forged for a long, hard road.', 'wtype.gun', { agility: 3, attack: 2, luck: 1 }, { charges: 6, value: 1500 }],
+]
+
 export const CLASS_GEAR_ITEMS: ItemDef[] = [
+  ...weapons('ftr', FIGHTER_WEAPONS, [FT]),
+  ...weapons('mag', MAGE_WEAPONS, [MG]),
+  ...weapons('clr', CLERIC_WEAPONS, [CL]),
+  ...weapons('rog', ROGUE_WEAPONS, [RG]),
+  ...weapons('gun', GUNSLINGER_WEAPONS, [GS]),
   ...expand('gun', 'head', GUNSLINGER_HEAD, [GS]),
   ...expand('gun', 'body', GUNSLINGER_BODY, [GS]),
   ...expand('gun', 'hands', GUNSLINGER_HANDS, [GS]),
@@ -324,3 +415,51 @@ export const CLASS_GEAR_ITEMS: ItemDef[] = [
   ...expand('acc', 'amulet', AMULETS, null),
   ...expand('off', 'offhand', SHIELDS, null),
 ]
+
+// ── Class loot tables + shops (generated from the pools above) ─────────────────
+const pool = (cls: string, slot?: ItemSlot) => CLASS_GEAR_ITEMS.filter(i => i.classes?.[0] === cls && (!slot || i.slot === slot))
+const sharedSlot = (slot: ItemSlot) => CLASS_GEAR_ITEMS.filter(i => !i.classes && i.slot === slot)
+const ARMOR_SLOTS: ItemSlot[] = ['head', 'body', 'hands', 'feet']
+const ACC_SAMPLE = [...sharedSlot('ring').slice(0, 4), ...sharedSlot('amulet').slice(0, 4)]
+
+interface ClassMeta {
+  cls: string; usesOffhand: boolean; ammo?: string[]
+  shop: { id: string; name: string; icon: string; description: string }
+  loot: { id: string; name: string; icon: string }
+}
+const META: ClassMeta[] = [
+  { cls: GS, usesOffhand: false, ammo: ['item.pistol_ammo', 'item.rifle_ammo', 'item.arrows'],
+    shop: { id: 'shop.gunsmith', name: 'Gunsmith', icon: '🔫', description: 'Irons, ammunition, and a gunslinger’s trail gear.' },
+    loot: { id: 'loot.gunslinger_cache', name: 'Gunslinger’s Cache', icon: '🔫' } },
+  { cls: FT, usesOffhand: true,
+    shop: { id: 'shop.blacksmith', name: 'Blacksmith', icon: '⚔️', description: 'Blades, plate, and shields for the front line.' },
+    loot: { id: 'loot.warrior_trove', name: 'Warrior’s Trove', icon: '⚔️' } },
+  { cls: MG, usesOffhand: false,
+    shop: { id: 'shop.arcanum', name: 'The Arcanum', icon: '🔮', description: 'Staves, rods, and robes for the learned.' },
+    loot: { id: 'loot.mage_reliquary', name: 'Sorcerer’s Reliquary', icon: '🔮' } },
+  { cls: CL, usesOffhand: true,
+    shop: { id: 'shop.reliquary', name: 'Temple Reliquary', icon: '✝️', description: 'Blessed arms and vestments of the faithful.' },
+    loot: { id: 'loot.sacred_cache', name: 'Sacred Cache', icon: '✝️' } },
+  { cls: RG, usesOffhand: true,
+    shop: { id: 'shop.fence', name: 'The Fence', icon: '🗡️', description: '“Acquired” blades, bows, and shadow-leathers. No questions asked.' },
+    loot: { id: 'loot.thiefs_stash', name: 'Thief’s Stash', icon: '🗡️' } },
+]
+
+export const CLASS_SHOPS: ShopDef[] = META.map(m => {
+  const stock: ShopDef['stock'] = []
+  for (const w of pool(m.cls, 'weapon')) stock.push({ item: w.id, price: w.value })
+  for (const s of ARMOR_SLOTS) for (const a of pool(m.cls, s).slice(0, 3)) stock.push({ item: a.id, price: a.value })
+  for (const acc of ACC_SAMPLE) stock.push({ item: acc.id, price: acc.value })
+  if (m.usesOffhand) for (const sh of sharedSlot('offhand').slice(0, 4)) stock.push({ item: sh.id, price: sh.value })
+  for (const ammo of m.ammo ?? []) stock.push({ item: ammo, qty: 99 })
+  return { id: m.shop.id, name: m.shop.name, icon: m.shop.icon, color: '#b2bec3', description: m.shop.description, buys: true, sellModifier: 0.4, stock }
+})
+
+export const CLASS_LOOT_TABLES: LootTableDef[] = META.map(m => {
+  const sample = [...pool(m.cls, 'weapon').slice(0, 3), ...ARMOR_SLOTS.flatMap(s => pool(m.cls, s).slice(0, 2))]
+  return {
+    id: m.loot.id, name: m.loot.name, icon: m.loot.icon, color: '#b8860b',
+    gold: { min: 20, max: 120 },
+    drops: sample.map(i => ({ item: i.id, qty: 1, chance: 0.12 })),
+  }
+})

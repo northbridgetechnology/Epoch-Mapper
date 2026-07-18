@@ -9,7 +9,7 @@ import type {
   Ruleset,
 } from './engine-types'
 import { CHIP_TRACKS, CHIP_BOSS_INTRO, SFX_META } from './chiptune'
-import { CLASS_GEAR_ITEMS } from './class-gear'
+import { CLASS_GEAR_ITEMS, CLASS_LOOT_TABLES, CLASS_SHOPS } from './class-gear'
 
 // ── Attributes ─────────────────────────────────────────────────────────────────
 
@@ -3101,11 +3101,11 @@ export function makeDefaultRuleset(startMapId = 'map1'): Ruleset {
     statusEffects: DEFAULT_STATUS_EFFECTS,
     enemies: DEFAULT_ENEMIES,
     encounterTables: DEFAULT_ENCOUNTER_TABLES,
-    lootTables: DEFAULT_LOOT_TABLES,
+    lootTables: [...DEFAULT_LOOT_TABLES, ...CLASS_LOOT_TABLES],
     events: [],
     npcs: [],
     quests: [],
     dialogues: [],
-    shops: DEFAULT_SHOPS,
+    shops: [...DEFAULT_SHOPS, ...CLASS_SHOPS],
   }
 }

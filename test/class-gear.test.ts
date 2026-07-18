@@ -8,7 +8,7 @@
 import assert from 'node:assert/strict'
 import { makeDefaultRuleset } from '../src/lib/default-ruleset'
 import { canEquip } from '../src/lib/equipment'
-import { CLASS_GEAR_ITEMS } from '../src/lib/class-gear'
+import { CLASS_GEAR_ITEMS, CLASS_SHOPS, CLASS_LOOT_TABLES } from '../src/lib/class-gear'
 import type { ItemSlot, Ruleset } from '../src/lib/engine-types'
 
 let passed = 0
@@ -73,6 +73,37 @@ test('all gear ids are unique and every item carries modifiers', () => {
   const ids = CLASS_GEAR_ITEMS.map(i => i.id)
   assert.equal(new Set(ids).size, ids.length)
   for (const i of CLASS_GEAR_ITEMS) assert.ok((i.modifiers?.length ?? 0) > 0, `${i.name} has no modifiers`)
+})
+
+test('each class has a slate of locked weapons using a proficient type', () => {
+  for (const cls of rs.classes) {
+    const ws = rs.items.filter(i => i.kind === 'weapon' && i.classes?.length === 1 && i.classes[0] === cls.id)
+    assert.ok(ws.length >= 8, `${cls.name}: expected ≥8 signature weapons, got ${ws.length}`)
+    for (const w of ws) {
+      const okType = !cls.weaponTypes?.length || cls.weaponTypes.includes(w.weaponType!)
+      assert.ok(okType, `${w.name} (${w.weaponType}) not wieldable by ${cls.name}`)
+      assert.equal(canEquip(cls, w, rs).ok, true, `${cls.name} should wield ${w.name}`)
+    }
+  }
+  // firearms carry a clip so the ammo system engages
+  const guns = rs.items.filter(i => i.classes?.[0] === 'class.gunslinger' && i.kind === 'weapon')
+  assert.ok(guns.every(g => (g.charges ?? 0) > 0), 'every signature gun holds a clip')
+})
+
+test('class shops and loot tables reference only real items', () => {
+  const ids = new Set(rs.items.map(i => i.id))
+  assert.ok(CLASS_SHOPS.length === 5 && CLASS_LOOT_TABLES.length === 5)
+  for (const s of CLASS_SHOPS) {
+    assert.ok(s.stock.length > 0)
+    for (const st of s.stock) assert.ok(ids.has(st.item), `${s.id} → missing ${st.item}`)
+  }
+  for (const l of CLASS_LOOT_TABLES) {
+    assert.ok(l.drops.length > 0)
+    for (const d of l.drops) assert.ok(ids.has(d.item), `${l.id} → missing ${d.item}`)
+  }
+  // the gunsmith stocks ammo
+  const gunsmith = CLASS_SHOPS.find(s => s.id === 'shop.gunsmith')!
+  assert.ok(gunsmith.stock.some(st => st.item === 'item.pistol_ammo'))
 })
 
 console.log(`\nclass-gear: ${passed} passed`)
