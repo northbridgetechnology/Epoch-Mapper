@@ -253,6 +253,37 @@ function leftOf(f: Facing): EdgeDir  { const m: Record<Facing,EdgeDir> = {N:'W',
 function rightOf(f: Facing): EdgeDir { const m: Record<Facing,EdgeDir> = {N:'E',S:'W',E:'S',W:'N'}; return m[f] }
 function frontOf(f: Facing): EdgeDir { return f as unknown as EdgeDir }
 
+// ── Perspective floor/ceiling texture casting ───────────────────────────────────
+// SVG can't project a texture per-pixel, so we slice the floor (and ceiling) into
+// thin horizontal strips and give each strip an affine patternTransform that is
+// EXACT at the strip's centre depth and a close linear approximation across its
+// small height. The tile represents one world cell (TEX_CELL px), and the
+// transform is anchored to the player's world position + facing so the texture is
+// glued to the floor — it flows toward the camera as you step and rotates on turns.
+const TEX_CELL = 128
+
+/** patternTransform (pattern→screen) for one floor/ceiling strip at depth z0. */
+function stripMatrix(surface: 'floor' | 'ceiling', px: number, py: number, facing: Facing, z0: number): string {
+  const [fx, fy] = facingDelta(facing)   // forward unit (world)
+  const [rx, ry] = rightDelta(facing)    // right unit (world)
+  const y0   = surface === 'floor' ? VP_Y + PF_Y / z0 : VP_Y - PF_Y / z0
+  const dzdy = (surface === 'floor' ? -1 : 1) * (z0 * z0) / PF_Y  // ∂depth/∂screenY at z0
+  const Lx = z0 / PF_X, L0 = -Lx * VP_X   // lateral: worldLat = Lx*sx + L0
+  const Zc = z0 - dzdy * y0               // depth:   z = dzdy*sy + Zc
+  const C = TEX_CELL
+  // screen → pattern (u,v) = world*CELL, affine in (sx,sy)
+  const P11 = C * rx * Lx, P12 = C * fx * dzdy, P13 = C * (px + fx * Zc + rx * L0)
+  const P21 = C * ry * Lx, P22 = C * fy * dzdy, P23 = C * (py + fy * Zc + ry * L0)
+  const det = P11 * P22 - P12 * P21
+  if (!isFinite(det) || Math.abs(det) < 1e-9) return 'matrix(1 0 0 1 0 0)'
+  // invert to pattern → screen for patternTransform
+  const a = P22 / det, c = -P12 / det, b = -P21 / det, d = P11 / det
+  const e = -(a * P13 + c * P23), f = -(b * P13 + d * P23)
+  return `matrix(${a} ${b} ${c} ${d} ${e} ${f})`
+}
+
+const TEX_STRIPS = 30  // horizontal slices per surface — more = smoother recession
+
 // ── Geometry / wall queries ────────────────────────────────────────────────────
 
 type CellKind = 'wall' | 'open' | 'water' | 'lava' | 'void' | 'stairs_up' | 'stairs_down'
@@ -327,6 +358,38 @@ function FirstPersonView({ map, facing, isCellRevealed, revealedBoundaries, flag
     ? <polygon key={key} points={points} fill="url(#fp-tex-wall)" style={{ mixBlendMode: 'soft-light' }} opacity={0.8} />
     : null
 
+  // Perspective floor/ceiling: one shared base pattern (holds the image once) +
+  // per-strip patterns that only carry a patternTransform, so custom uploads
+  // aren't duplicated across strips. Returns the <pattern> defs and the strip
+  // <rect>s to composite over the shaded bands.
+  const castSurface = (surface: 'floor' | 'ceiling', href: string | null) => {
+    if (!href) return { patterns: [] as React.ReactNode[], rects: [] as React.ReactNode[] }
+    const baseId = `fp-tex-${surface}-base`
+    const patterns: React.ReactNode[] = [
+      <pattern key="base" id={baseId} patternUnits="userSpaceOnUse" width={TEX_CELL} height={TEX_CELL}>
+        <image href={href} x={0} y={0} width={TEX_CELL} height={TEX_CELL} preserveAspectRatio="xMidYMid slice" />
+      </pattern>,
+    ]
+    const rects: React.ReactNode[] = []
+    const top0   = surface === 'floor' ? VP_Y : 0
+    const stripH = (surface === 'floor' ? VH - VP_Y : VP_Y) / TEX_STRIPS
+    for (let i = 0; i < TEX_STRIPS; i++) {
+      const top  = top0 + i * stripH
+      const midY = top + stripH / 2
+      const dy   = surface === 'floor' ? midY - VP_Y : VP_Y - midY
+      if (dy <= 0.5) continue
+      const z0 = PF_Y / dy
+      if (z0 > 12) continue   // near the horizon: too far to matter, left to fog
+      const id = `fp-tex-${surface}-${i}`
+      patterns.push(<pattern key={i} id={id} href={`#${baseId}`} patternTransform={stripMatrix(surface, px, py, facing, z0)} />)
+      rects.push(<rect key={`${surface}str${i}`} x={0} y={top} width={VW} height={stripH + 0.6}
+        fill={`url(#${id})`} style={{ mixBlendMode: 'soft-light' }} opacity={surface === 'floor' ? 0.8 : 0.72} />)
+    }
+    return { patterns, rects }
+  }
+  const floorCast = castSurface('floor', floorHref)
+  const ceilCast  = castSurface('ceiling', ceilHref)
+
   // Light: on dark maps the world fades to black beyond the party's light
   // radius. lightExtra ramps 0 → 0.55 at the radius edge → 1 one cell beyond.
   const liveFoes = listFoes(map, flags).filter(f => !f.dead)
@@ -366,16 +429,8 @@ function FirstPersonView({ map, facing, isCellRevealed, revealedBoundaries, flag
             <image href={wallHref} x="0" y="0" width={92} height={92} preserveAspectRatio="xMidYMid slice" />
           </pattern>
         )}
-        {floorHref && (
-          <pattern id="fp-tex-floor" patternUnits="userSpaceOnUse" width={80} height={80}>
-            <image href={floorHref} x="0" y="0" width={80} height={80} preserveAspectRatio="xMidYMid slice" />
-          </pattern>
-        )}
-        {ceilHref && (
-          <pattern id="fp-tex-ceil" patternUnits="userSpaceOnUse" width={80} height={80}>
-            <image href={ceilHref} x="0" y="0" width={80} height={80} preserveAspectRatio="xMidYMid slice" />
-          </pattern>
-        )}
+        {floorCast.patterns}
+        {ceilCast.patterns}
       </defs>,
     )
   }
@@ -453,14 +508,9 @@ function FirstPersonView({ map, facing, isCellRevealed, revealedBoundaries, flag
     )
   }
 
-  // Ceiling texture overlay — tiled plane blended over the shaded bands; the
+  // Ceiling texture: perspective-cast strips blended over the shaded bands; the
   // mortar grid below is redrawn on top so seams stay crisp.
-  if (ceilHref) {
-    nodes.push(
-      <rect key="tex-ceil" x={0} y={0} width={VW} height={VP_Y}
-        fill="url(#fp-tex-ceil)" style={{ mixBlendMode: 'soft-light' }} opacity={0.75} />,
-    )
-  }
+  if (ceilHref) nodes.push(...ceilCast.rects)
 
   // Ceiling: perspective-correct mortar grid — transverse lines at each depth
   // plane, longitudinal seams at cell boundaries converging on the VP
@@ -509,14 +559,9 @@ function FirstPersonView({ map, facing, isCellRevealed, revealedBoundaries, flag
     )
   }
 
-  // Floor texture overlay — tiled plane blended over the shaded bands; the
+  // Floor texture: perspective-cast strips blended over the shaded bands; the
   // perspective grid below is redrawn on top so seams stay crisp.
-  if (floorHref) {
-    nodes.push(
-      <rect key="tex-floor" x={0} y={VP_Y} width={VW} height={VH - VP_Y}
-        fill="url(#fp-tex-floor)" style={{ mixBlendMode: 'soft-light' }} opacity={0.8} />,
-    )
-  }
+  if (floorHref) nodes.push(...floorCast.rects)
 
   // Floor: longitudinal seams at cell boundaries (mirror of the ceiling grid)
   for (let k = -MAX_S; k <= MAX_S + 1; k++) {
