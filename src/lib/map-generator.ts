@@ -8,6 +8,16 @@ import { BASE, EDGE, OVERLAY, CHUNK_SIZE, boundaryKey } from './constants'
 import type { CellMap, MapData, EdgeDir, SubcubeObject, SubcubePos } from './types'
 import type { BoundaryData, CellEntity, DialogueDef, DialogueNode, EventDef, ItemDef, NpcDef, QuestDef, Ruleset } from './engine-types'
 import { uid } from './utils'
+import { getTheme, DEFAULT_THEME_ID } from './themes'
+
+// Freshly-seeded maps ship with the theme's recommended texture set so the
+// world reads as carved stone/cavern out of the box (editable in Settings).
+const seedTextures = (themeId = DEFAULT_THEME_ID) => {
+  const t = getTheme(themeId).defaultTextures
+  return t ? { ...t } : undefined
+}
+// A distinct raw-cavern set for the darker "Depths" sublevels, for variety.
+const DEPTHS_TEXTURES: MapData['textures'] = { wall: 'cave_rock', floor: 'cobblestone', ceiling: 'cave_rock' }
 
 /** Everything a generated map contributes: the map itself plus the ruleset
  *  content (NPCs, quest, events) that its story wiring references. */
@@ -172,6 +182,7 @@ export function buildBaseMap(name: string, config: NewMapConfig): MapData {
     playerX: mid, playerY: mid,
     revealedChunks: allChunkKeys(dim),
     seed: config.seed,
+    textures: seedTextures(),
   }
 }
 
@@ -1086,6 +1097,7 @@ export function buildGeneratedWorld(name: string, config: NewMapConfig, ruleset:
       revealedChunks: allChunkKeys(dDim),
       seed: config.seed + 7,
       dark: true,
+      textures: DEPTHS_TEXTURES,
     })
   }
 
@@ -1402,6 +1414,7 @@ export function buildGeneratedWorld(name: string, config: NewMapConfig, ruleset:
       playerX: startC.x, playerY: startC.y,
       revealedChunks: allChunkKeys(dim),
       seed: config.seed,
+      textures: seedTextures(),
     },
     extraMaps,
     npcs,

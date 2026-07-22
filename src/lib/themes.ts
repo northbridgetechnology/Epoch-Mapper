@@ -4,11 +4,18 @@
  * Zero file-size cost: names are stored in MapData.theme, definitions live here.
  */
 
+import type { MapTextures } from './types'
+
 export interface MapThemeDef {
   id: string
   name: string
   icon: string
   description: string
+
+  /** Recommended builtin texture set — applied to freshly-seeded maps so the
+   *  world ships with matching relief out of the box (authors can change or
+   *  clear it in Settings). Textures tint to this theme's palette. */
+  defaultTextures?: MapTextures
 
   // ── 2D editor ──────────────────────────────────────────────────────────────
   emptyColor: string    // revealed cell with no base terrain
@@ -37,6 +44,7 @@ export const THEMES: MapThemeDef[] = [
     name: 'Stone Dungeon',
     icon: '🏰',
     description: 'Classic blue-grey stone halls lit by torchlight.',
+    defaultTextures: { wall: 'stone_brick', floor: 'flagstone', ceiling: 'rough_hewn' },
     emptyColor: '#18181b', fogColor: '#0a0a0c', gapColor: '#0a0a0c',
     wallHue: 215, wallSat: 18, wallLBase: 58, wallLStep: 11,
     sideHue: 215, sideSat: 14, sideLBase: 42, sideLStep: 9,
@@ -51,6 +59,7 @@ export const THEMES: MapThemeDef[] = [
     name: 'Ice Cave',
     icon: '🧊',
     description: 'Frozen crystalline caverns — pale blue, bitterly cold.',
+    defaultTextures: { wall: 'cave_rock', floor: 'cobblestone', ceiling: 'cave_rock' },
     emptyColor: '#0b1520', fogColor: '#060b12', gapColor: '#060b12',
     floorTint: 'rgba(100,160,220,0.05)',
     wallHue: 195, wallSat: 48, wallLBase: 62, wallLStep: 12,
@@ -67,6 +76,7 @@ export const THEMES: MapThemeDef[] = [
     name: 'Lava Fortress',
     icon: '🌋',
     description: 'Obsidian walls above rivers of fire.',
+    defaultTextures: { wall: 'cut_block', floor: 'metal_panel', ceiling: 'rough_hewn' },
     emptyColor: '#1c0a04', fogColor: '#0a0402', gapColor: '#0a0402',
     floorTint: 'rgba(200,60,10,0.07)',
     wallHue: 12, wallSat: 58, wallLBase: 52, wallLStep: 10,
@@ -83,6 +93,7 @@ export const THEMES: MapThemeDef[] = [
     name: 'Ancient Ruins',
     icon: '🏛️',
     description: 'Weathered sandstone, dust, and forgotten gods.',
+    defaultTextures: { wall: 'cut_block', floor: 'flagstone', ceiling: 'cracked_plaster' },
     emptyColor: '#1a1610', fogColor: '#0d0c08', gapColor: '#0d0c08',
     floorTint: 'rgba(180,140,60,0.04)',
     wallHue: 35, wallSat: 22, wallLBase: 56, wallLStep: 11,
@@ -99,6 +110,7 @@ export const THEMES: MapThemeDef[] = [
     name: 'Forest Depths',
     icon: '🌿',
     description: 'Ancient overgrown passages beneath a dark canopy.',
+    defaultTextures: { wall: 'cobblestone', floor: 'dirt', ceiling: 'wood_beams' },
     emptyColor: '#0a1209', fogColor: '#040705', gapColor: '#040705',
     floorTint: 'rgba(40,110,30,0.07)',
     wallHue: 130, wallSat: 28, wallLBase: 50, wallLStep: 10,

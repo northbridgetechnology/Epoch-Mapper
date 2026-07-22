@@ -10,6 +10,10 @@ import {
   BUILTIN_TEXTURES, texturesForSurface, textureImageHref, tileToDataUri,
   isCustomRef, customHash, getBuiltinTexture, texturePreviewUri,
 } from '../src/lib/textures'
+import { THEMES } from '../src/lib/themes'
+import { buildBaseMap, buildGeneratedWorld } from '../src/lib/map-generator'
+import { makeDefaultRuleset } from '../src/lib/default-ruleset'
+import type { TexSurface } from '../src/lib/textures'
 
 let passed = 0
 function test(name: string, fn: () => void) {
@@ -82,6 +86,36 @@ test('getBuiltinTexture + texturePreviewUri', () => {
   const def = getBuiltinTexture('cobblestone')
   assert.ok(def)
   assert.ok(texturePreviewUri(def!).startsWith('data:image/svg+xml,'))
+})
+
+test('every theme default texture set references surface-appropriate builtins', () => {
+  for (const th of THEMES) {
+    const dt = th.defaultTextures
+    if (!dt) continue
+    const checks: [TexSurface, string | undefined][] = [['wall', dt.wall], ['floor', dt.floor], ['ceiling', dt.ceiling]]
+    for (const [surface, ref] of checks) {
+      if (!ref) continue
+      const def = getBuiltinTexture(ref)
+      assert.ok(def, `${th.id}.${surface} -> unknown texture ${ref}`)
+      assert.ok(def!.surfaces.includes(surface), `${th.id}.${surface} uses ${ref} which isn't tagged for ${surface}`)
+    }
+  }
+})
+
+test('every theme ships a default texture set', () => {
+  for (const th of THEMES) assert.ok(th.defaultTextures, `${th.id} has no defaultTextures`)
+})
+
+test('seeder applies textures to a base map', () => {
+  const m = buildBaseMap('T', { name: 'T', size: 'small', seed: 1, generate: false })
+  assert.ok(m.textures, 'base map got no textures')
+  assert.equal(m.textures!.wall, 'stone_brick')
+})
+
+test('seeder applies textures to a generated world (main + depths)', () => {
+  const w = buildGeneratedWorld('W', { name: 'W', size: 'small', seed: 3, generate: true }, makeDefaultRuleset())
+  assert.ok(w.map.textures, 'generated main map got no textures')
+  for (const em of w.extraMaps) assert.ok(em.textures, `extra map ${em.name} got no textures`)
 })
 
 console.log(`\ntextures: ${passed} passed`)

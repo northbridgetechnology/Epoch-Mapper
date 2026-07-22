@@ -2332,7 +2332,16 @@ export function DungeonMapper({
             setMaps(prev => prev.map((m, i) => i === idx ? { ...m, dark: dark || undefined } : m))
           }
           onThemeChange={(idx, themeId) =>
-            setMaps(prev => prev.map((m, i) => i === idx ? { ...m, theme: themeId } : m))
+            setMaps(prev => prev.map((m, i) => {
+              if (i !== idx) return m
+              // If the map still carries the previous theme's default texture set
+              // (author hasn't customised it), follow along to the new theme's set
+              // so the surfaces stay cohesive. Custom/cleared textures are left alone.
+              const prevDefaults = getTheme(m.theme).defaultTextures
+              const untouched = JSON.stringify(m.textures ?? null) === JSON.stringify(prevDefaults ?? null)
+              const nextTextures = untouched ? getTheme(themeId).defaultTextures : m.textures
+              return { ...m, theme: themeId, textures: nextTextures }
+            }))
           }
           tracks={ruleset.audioTracks}
           formulas={ruleset.formulas}
