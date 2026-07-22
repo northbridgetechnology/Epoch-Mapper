@@ -84,6 +84,19 @@ export interface MapData {
   seed?: number
   /** Visual theme ID — keys into THEMES in @/lib/themes. Defaults to 'stone_dungeon'. */
   theme?: string
+  /**
+   * Per-surface first-person textures. Each value is a texture reference:
+   * a builtin id (e.g. `'stone_brick'`, keys into BUILTIN_TEXTURES in
+   * @/lib/textures) or `'custom:<hash>'` pointing into `textureAssets`.
+   * Absent = the theme's flat HSL palette (classic look).
+   */
+  textures?: MapTextures
+  /**
+   * Custom uploaded texture image bytes for this map, keyed by content hash.
+   * Only the images referenced by `textures` are kept. Deduped across the whole
+   * project into a single binary pool by the `.epochmap` codec.
+   */
+  textureAssets?: Record<string, string>  // hash → data URI
   /** Dark map: view distance collapses to the party's light radius (torches,
    *  lanterns, light spells). Absent/false = fully lit (classic behavior). */
   dark?: boolean
@@ -104,6 +117,13 @@ export interface MapData {
     mapId: string
     transition?: import('./engine-types').TransitionStyle
   }>>
+}
+
+/** The three first-person surfaces that can carry a texture. */
+export interface MapTextures {
+  wall?: string     // texture ref: builtin id or 'custom:<hash>'
+  floor?: string
+  ceiling?: string
 }
 
 /** A user-defined cell type or overlay icon. IDs are 128–255. */
@@ -128,6 +148,11 @@ export interface EpochmapFile {
    *  and base64-encoded. Gathered from IndexedDB on export and written back on
    *  import; never part of the localStorage draft (which stays lean). */
   audioBlobs?: Record<string, string>
+  /** Custom texture image bytes baked into the `.epochmap`, keyed by content
+   *  hash and base64-encoded (data URI). Deduped across all maps: each map's
+   *  `textureAssets` are hoisted into this single pool on export and written
+   *  back on import. */
+  textureBlobs?: Record<string, string>
 }
 
 /** Built-in marker definition (base / overlay / edge tables). */

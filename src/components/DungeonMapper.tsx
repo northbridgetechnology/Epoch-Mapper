@@ -2340,6 +2340,11 @@ export function DungeonMapper({
           onMusicChange={(idx, musicId) =>
             setMaps(prev => prev.map((m, i) => i === idx ? { ...m, musicId } : m))
           }
+          onTexturesChange={(idx, textures, assets) =>
+            setMaps(prev => prev.map((m, i) => i === idx
+              ? { ...m, textures, textureAssets: Object.keys(assets).length ? assets : undefined }
+              : m))
+          }
           onEdgeLinkChange={(idx, dir, targetMapId) =>
             setMaps(prev => {
               const src = prev[idx]

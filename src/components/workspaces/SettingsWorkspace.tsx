@@ -8,6 +8,10 @@ import type { AudioTrackDef, GameMeta, OpeningStory } from '@/lib/engine-types'
 import { toast } from 'sonner'
 import { THEMES, getTheme } from '@/lib/themes'
 import { fileToImageDataUri, IMAGE_ACCEPT_ATTR } from '@/lib/sprite-upload'
+import {
+  texturesForSurface, texturePreviewUri, getBuiltinTexture, isCustomRef, customHash,
+  type TexSurface,
+} from '@/lib/textures'
 
 const OPENING_IMG_MAXDIM = 960
 const OPENING_IMG_MAXBYTES = 1_500_000
@@ -24,6 +28,9 @@ interface SettingsWorkspaceProps {
   /** Connect/disconnect a world-grid edge (N/S/E/W) of a map to a neighbour;
    *  the host reciprocates the opposite edge so the seam is bidirectional. */
   onEdgeLinkChange?: (mapIdx: number, dir: EdgeDir, targetMapId: string | undefined) => void
+  /** Set this map's per-surface textures (wall/floor/ceiling). `assets` carries
+   *  the custom-upload data URIs the new refs point at (already pruned). */
+  onTexturesChange?: (mapIdx: number, textures: MapData['textures'], assets: Record<string, string>) => void
   /** Author-tunable formula overrides (Ruleset.formulas). */
   formulas?: { xpToNext?: string }
   onFormulasChange?: (patch: { xpToNext?: string }) => void
@@ -48,6 +55,159 @@ function TrackSelect({ tracks, value, onChange, noneLabel = '— none —' }: {
       <option value="">{noneLabel}</option>
       {tracks.map(t => <option key={t.id} value={t.id}>{t.icon ?? '🎵'} {t.name}</option>)}
     </select>
+  )
+}
+
+// ── Per-map surface textures (walls / floor / ceiling) ──────────────────────────
+
+const TEX_SURFACES: { key: TexSurface; label: string; icon: string }[] = [
+  { key: 'wall',    label: 'Walls',   icon: '🧱' },
+  { key: 'floor',   label: 'Floor',   icon: '▦' },
+  { key: 'ceiling', label: 'Ceiling', icon: '☁️' },
+]
+
+/** FNV-1a → 8 hex chars: content hash for deduping uploaded texture bytes. */
+function hashDataUri(s: string): string {
+  let h = 0x811c9dc5
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) }
+  return (h >>> 0).toString(16).padStart(8, '0')
+}
+
+/** Download a 256×256 guide PNG so authors can paint their own seamless tiles. */
+function downloadTextureTemplate() {
+  const S = 256
+  const canvas = document.createElement('canvas')
+  canvas.width = S; canvas.height = S
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return
+  ctx.fillStyle = '#6b6b6b'; ctx.fillRect(0, 0, S, S)
+  // 16px grid
+  ctx.strokeStyle = 'rgba(255,255,255,0.12)'; ctx.lineWidth = 1
+  for (let i = 16; i < S; i += 16) {
+    ctx.beginPath(); ctx.moveTo(i + 0.5, 0); ctx.lineTo(i + 0.5, S); ctx.stroke()
+    ctx.beginPath(); ctx.moveTo(0, i + 0.5); ctx.lineTo(S, i + 0.5); ctx.stroke()
+  }
+  // centre cross + border (tiling reference)
+  ctx.strokeStyle = 'rgba(255,255,255,0.35)'; ctx.lineWidth = 2
+  ctx.strokeRect(1, 1, S - 2, S - 2)
+  ctx.beginPath(); ctx.moveTo(S / 2, 0); ctx.lineTo(S / 2, S); ctx.moveTo(0, S / 2); ctx.lineTo(S, S / 2); ctx.stroke()
+  ctx.fillStyle = 'rgba(255,255,255,0.6)'; ctx.font = '11px monospace'
+  ctx.fillText('256×256 · seamless · tint-neutral', 10, S - 10)
+  const a = document.createElement('a')
+  a.href = canvas.toDataURL('image/png')
+  a.download = 'epoch-texture-template-256.png'
+  a.click()
+}
+
+function TextureSettings({ map, onChange }: {
+  map: MapData
+  onChange: (textures: MapData['textures'], assets: Record<string, string>) => void
+}) {
+  const fileRefs = useRef<Record<TexSurface, HTMLInputElement | null>>({ wall: null, floor: null, ceiling: null })
+  const textures = map.textures ?? {}
+  const assets = map.textureAssets ?? {}
+  const activeTheme = getTheme(map.theme)
+
+  const commit = (surface: TexSurface, ref: string | undefined, newAsset?: { hash: string; uri: string }) => {
+    const next: NonNullable<MapData['textures']> = { ...textures }
+    if (ref) next[surface] = ref; else delete next[surface]
+    const pool = { ...assets, ...(newAsset ? { [newAsset.hash]: newAsset.uri } : {}) }
+    const keep: Record<string, string> = {}
+    for (const r of [next.wall, next.floor, next.ceiling]) {
+      if (r && isCustomRef(r)) { const h = customHash(r); if (pool[h]) keep[h] = pool[h] }
+    }
+    const anySet = next.wall || next.floor || next.ceiling
+    onChange(anySet ? next : undefined, keep)
+  }
+
+  const upload = async (surface: TexSurface, file: File | undefined) => {
+    if (!file) return
+    try {
+      const uri = await fileToImageDataUri(file, { maxDim: 256, maxBytes: 400_000 })
+      const hash = hashDataUri(uri)
+      commit(surface, `custom:${hash}`, { hash, uri })
+      toast.success('Custom texture applied')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Upload failed')
+    }
+  }
+
+  const surfaceSwatch = (s: TexSurface): string => {
+    const t = activeTheme
+    if (s === 'wall')    return `hsl(${t.wallHue} ${t.wallSat}% ${t.wallLBase}%)`
+    if (s === 'ceiling') return `hsl(${t.ceilHue} ${t.ceilSat}% ${t.ceilLBase}%)`
+    return `hsl(${t.floorHue} ${t.floorSat}% ${t.floorLBase}%)`
+  }
+
+  const previewUri = (ref: string | undefined): string | null => {
+    if (!ref) return null
+    if (isCustomRef(ref)) return assets[customHash(ref)] ?? null
+    const def = getBuiltinTexture(ref)
+    return def ? texturePreviewUri(def) : null
+  }
+
+  return (
+    <div className="rounded-lg border border-white/8 bg-white/4 px-3 py-2.5 space-y-2.5">
+      <div className="flex items-center gap-2">
+        <span className="text-xs text-white/70">🎨 Surface textures</span>
+        <span className="text-[10px] text-white/30 flex-1">
+          Relief over the theme colours — builtins tint to the theme, or upload your own tiles.
+        </span>
+        <button
+          onClick={downloadTextureTemplate}
+          className="text-[10px] px-2 py-0.5 rounded bg-white/8 hover:bg-white/14 text-white/60 hover:text-white/90 border border-white/10"
+        >
+          ⬇︎ Template
+        </button>
+      </div>
+
+      {TEX_SURFACES.map(({ key, label, icon }) => {
+        const ref = textures[key]
+        const preview = previewUri(ref)
+        const isCustom = isCustomRef(ref)
+        return (
+          <div key={key} className="flex items-center gap-2">
+            <div
+              className="h-8 w-8 rounded-md border border-white/15 flex-shrink-0 bg-cover bg-center"
+              style={preview
+                ? { backgroundImage: `url("${preview}")`, backgroundColor: surfaceSwatch(key) }
+                : { background: surfaceSwatch(key) }}
+              title={preview ? 'Texture preview' : 'Theme colour (no texture)'}
+            />
+            <span className="text-[11px] text-white/55 w-16 flex-shrink-0">{icon} {label}</span>
+            <select
+              value={isCustom ? '__custom__' : (ref ?? '')}
+              onChange={e => {
+                const v = e.target.value
+                if (v === '__upload__') { fileRefs.current[key]?.click(); return }
+                if (v === '__custom__') return // keep current custom
+                commit(key, v || undefined)
+              }}
+              className={MUSIC_SELECT + ' flex-1'}
+            >
+              <option value="">— theme colour —</option>
+              {texturesForSurface(key).map(t => (
+                <option key={t.id} value={t.id}>{t.icon} {t.name}</option>
+              ))}
+              {isCustom && <option value="__custom__">🖼️ Custom (uploaded)</option>}
+              <option value="__upload__">⬆︎ Upload custom…</option>
+            </select>
+            {ref && (
+              <button
+                onClick={() => commit(key, undefined)}
+                className="text-[10px] px-1.5 py-0.5 rounded bg-white/8 hover:bg-red-500/25 text-white/50 hover:text-white border border-white/10"
+                title="Clear"
+              >✕</button>
+            )}
+            <input
+              ref={el => { fileRefs.current[key] = el }}
+              type="file" accept={IMAGE_ACCEPT_ATTR} className="hidden"
+              onChange={e => { upload(key, e.target.files?.[0]); e.target.value = '' }}
+            />
+          </div>
+        )
+      })}
+    </div>
   )
 }
 
@@ -313,7 +473,7 @@ const EDGE_DIRS: { dir: EdgeDir; label: string }[] = [
   { dir: 'E', label: '➡️ East edge' },
 ]
 
-export function SettingsWorkspace({ maps, onThemeChange, onDarkChange, meta, onMetaChange, tracks = [], onMusicChange, onEdgeLinkChange, formulas, onFormulasChange }: SettingsWorkspaceProps) {
+export function SettingsWorkspace({ maps, onThemeChange, onDarkChange, meta, onMetaChange, tracks = [], onMusicChange, onEdgeLinkChange, onTexturesChange, formulas, onFormulasChange }: SettingsWorkspaceProps) {
   if (maps.length === 0) {
     return (
       <div className="flex-1 flex items-center justify-center text-white/20 text-sm">
@@ -422,6 +582,10 @@ export function SettingsWorkspace({ maps, onThemeChange, onDarkChange, meta, onM
                     noneLabel={meta?.defaultMusicId ? '— use default —' : '— none —'} />
                   <span className="text-[10px] text-white/30">Loops while exploring this level.</span>
                 </label>
+              )}
+
+              {onTexturesChange && (
+                <TextureSettings map={map} onChange={(textures, assets) => onTexturesChange(idx, textures, assets)} />
               )}
 
               {onEdgeLinkChange && maps.length > 1 && (

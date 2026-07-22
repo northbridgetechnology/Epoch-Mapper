@@ -309,16 +309,45 @@ export function serializeDotEpochmap(file: EpochmapFile): Uint8Array {
     body.bytes(bytes)
   }
 
+  // ----- texture block (raw binary; dedup all maps' textureAssets into one pool) -----
+  // Every `custom:<hash>` reference across all maps resolves through this shared
+  // pool keyed by content hash, so a texture reused on many maps is stored once.
+  // Collect only the custom hashes actually referenced by some map's textures,
+  // so stale uploads never bloat the file.
+  const referenced = new Set<string>()
+  for (const m of maps) {
+    for (const ref of [m.textures?.wall, m.textures?.floor, m.textures?.ceiling]) {
+      if (ref && ref.startsWith('custom:')) referenced.add(ref.slice('custom:'.length))
+    }
+  }
+  const texturePool: Record<string, string> = {}
+  const collect = (src?: Record<string, string>) => {
+    if (!src) return
+    for (const [hash, uri] of Object.entries(src)) {
+      if (referenced.has(hash) && !(hash in texturePool)) texturePool[hash] = uri
+    }
+  }
+  collect(file.textureBlobs)
+  for (const m of maps) collect(m.textureAssets)
+  const textureIds = Object.keys(texturePool)
+  body.u32(textureIds.length)
+  for (const hash of textureIds) {
+    body.str(hash, (n) => body.u16(n))
+    const bytes = new TextEncoder().encode(texturePool[hash])  // store the data URI text verbatim
+    body.u32(bytes.length)
+    body.bytes(bytes)
+  }
+
   // ----- v3 JSON extension block: ruleset DIFF + per-map entities/boundaries/meta -----
   const ext: {
     rulesetDiff?: RulesetDiff
     mapEntities?: Array<Record<string, CellEntity[]>>
     mapBoundaries?: Array<Record<string, BoundaryData>>
-    mapMeta?: Array<{ theme?: string; dark?: boolean; seed?: number; musicId?: string; combatMode?: string; edgeLinks?: MapData['edgeLinks'] }>
+    mapMeta?: Array<{ theme?: string; dark?: boolean; seed?: number; musicId?: string; combatMode?: string; edgeLinks?: MapData['edgeLinks']; textures?: MapData['textures'] }>
   } = {}
   if (file.ruleset) ext.rulesetDiff = diffRuleset(file.ruleset)
-  const mapMeta = maps.map(m => ({ theme: m.theme, dark: m.dark, seed: m.seed, musicId: m.musicId, combatMode: m.combatMode, edgeLinks: m.edgeLinks }))
-  if (mapMeta.some(m => m.theme !== undefined || m.dark !== undefined || m.seed !== undefined || m.musicId !== undefined || m.combatMode !== undefined || m.edgeLinks !== undefined)) ext.mapMeta = mapMeta
+  const mapMeta = maps.map(m => ({ theme: m.theme, dark: m.dark, seed: m.seed, musicId: m.musicId, combatMode: m.combatMode, edgeLinks: m.edgeLinks, textures: m.textures }))
+  if (mapMeta.some(m => m.theme !== undefined || m.dark !== undefined || m.seed !== undefined || m.musicId !== undefined || m.combatMode !== undefined || m.edgeLinks !== undefined || m.textures !== undefined)) ext.mapMeta = mapMeta
   const mapEntities: Array<Record<string, CellEntity[]>> = maps.map(map => {
     const ent: Record<string, CellEntity[]> = {}
     for (const [key, cell] of Object.entries(map.cells)) {
@@ -471,6 +500,25 @@ export function parseDotEpochmap(buffer: ArrayBuffer | Uint8Array): EpochmapFile
     }
   }
 
+  // v3: raw texture block (sits between the audio block and the JSON extension).
+  let textureBlobs: Record<string, string> | undefined
+  if (version >= 3 && r.remaining >= 4) {
+    try {
+      const texCount = r.u32()
+      if (texCount > 0) {
+        textureBlobs = {}
+        for (let i = 0; i < texCount; i++) {
+          const hash = r.str(r.u16())
+          const byteLen = r.u32()
+          textureBlobs[hash] = new TextDecoder().decode(r.take(byteLen, 'texture blob'))
+        }
+        result.textureBlobs = textureBlobs
+      }
+    } catch {
+      // ignore malformed texture block — degrade gracefully
+    }
+  }
+
   // v2/v3: JSON extension block (ruleset[-diff] + entities + boundaries + meta).
   if (version >= 2 && r.remaining >= 4) {
     try {
@@ -482,7 +530,7 @@ export function parseDotEpochmap(buffer: ArrayBuffer | Uint8Array): EpochmapFile
           rulesetDiff?: RulesetDiff  // v3: diff against the default ruleset
           mapEntities?: Array<Record<string, CellEntity[]>>
           mapBoundaries?: Array<Record<string, BoundaryData>>
-          mapMeta?: Array<{ theme?: string; dark?: boolean; seed?: number; musicId?: string; combatMode?: string; edgeLinks?: MapData['edgeLinks'] }>
+          mapMeta?: Array<{ theme?: string; dark?: boolean; seed?: number; musicId?: string; combatMode?: string; edgeLinks?: MapData['edgeLinks']; textures?: MapData['textures'] }>
           audioBlobs?: Record<string, string>  // v2 only (v3 uses the binary block)
         }
         if (ext.rulesetDiff) result.ruleset = patchRuleset(ext.rulesetDiff)
@@ -498,6 +546,20 @@ export function parseDotEpochmap(buffer: ArrayBuffer | Uint8Array): EpochmapFile
             if (meta.musicId !== undefined) map.musicId = meta.musicId
             if (meta.combatMode === 'classic' || meta.combatMode === 'oneMore' || meta.combatMode === 'pressTurn') map.combatMode = meta.combatMode
             if (meta.edgeLinks) map.edgeLinks = meta.edgeLinks
+            if (meta.textures) {
+              map.textures = meta.textures
+              // Rehydrate only the custom assets this map references from the shared pool.
+              const refs = [meta.textures.wall, meta.textures.floor, meta.textures.ceiling]
+              const assets: Record<string, string> = {}
+              for (const ref of refs) {
+                if (ref && ref.startsWith('custom:')) {
+                  const hash = ref.slice('custom:'.length)
+                  const uri = textureBlobs?.[hash]
+                  if (uri) assets[hash] = uri
+                }
+              }
+              if (Object.keys(assets).length > 0) map.textureAssets = assets
+            }
           })
         }
         if (ext.mapEntities) {

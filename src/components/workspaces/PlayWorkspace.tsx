@@ -6,6 +6,7 @@ import { cn } from '@/lib/utils'
 import { baseDef, overlayDef, edgeDef, boundaryKey, DEFAULT_CELL, MIN_CELL, MAX_CELL, BASE, EDGE } from '@/lib/constants'
 import type { CellData, MapData, MarkerDef, EdgeDir } from '@/lib/types'
 import { getTheme, type MapThemeDef } from '@/lib/themes'
+import { textureImageHref } from '@/lib/textures'
 import { getSubcubeDef } from '@/lib/subcube-defs'
 import { pixelSprite, pixelSpriteRect, spriteAspect, creatureSprite } from '@/lib/pixel-sprites'
 import { computeLightRadius, cellHasTrick, listFoes } from '@/lib/exploration'
@@ -313,6 +314,19 @@ function FirstPersonView({ map, facing, isCellRevealed, revealedBoundaries, flag
   const theme = getTheme(map.theme)
   const pal = makeFpPalette(theme)
 
+  // ── Textures (Tier 2): optional per-surface relief composited over the themed
+  // geometry with soft-light blending. Absent = classic flat HSL palette. ──────
+  const texAssets = map.textureAssets
+  const wallHref  = textureImageHref(map.textures?.wall,    { hue: theme.wallHue,  sat: theme.wallSat,  light: theme.wallLBase },  texAssets)
+  const floorHref = textureImageHref(map.textures?.floor,   { hue: theme.floorHue, sat: theme.floorSat, light: theme.floorLBase }, texAssets)
+  const ceilHref  = textureImageHref(map.textures?.ceiling, { hue: theme.ceilHue,  sat: theme.ceilSat,  light: theme.ceilLBase },  texAssets)
+  const texWall = (key: string, x: number, y: number, w: number, h: number) => wallHref
+    ? <rect key={key} x={x} y={y} width={w} height={h} fill="url(#fp-tex-wall)" style={{ mixBlendMode: 'soft-light' }} opacity={0.9} />
+    : null
+  const texPoly = (key: string, points: string) => wallHref
+    ? <polygon key={key} points={points} fill="url(#fp-tex-wall)" style={{ mixBlendMode: 'soft-light' }} opacity={0.8} />
+    : null
+
   // Light: on dark maps the world fades to black beyond the party's light
   // radius. lightExtra ramps 0 → 0.55 at the radius edge → 1 one cell beyond.
   const liveFoes = listFoes(map, flags).filter(f => !f.dead)
@@ -335,6 +349,30 @@ function FirstPersonView({ map, facing, isCellRevealed, revealedBoundaries, flag
   }
 
   const nodes: React.ReactNode[] = []
+
+  // Texture pattern defs — one tile per wall face (objectBoundingBox) so bricks
+  // stay a consistent size near and far; tiled floor/ceiling planes in screen space.
+  if (wallHref || floorHref || ceilHref) {
+    nodes.push(
+      <defs key="tex-defs">
+        {wallHref && (
+          <pattern id="fp-tex-wall" width="1" height="1">
+            <image href={wallHref} x="0" y="0" width="1" height="1" preserveAspectRatio="xMidYMid slice" />
+          </pattern>
+        )}
+        {floorHref && (
+          <pattern id="fp-tex-floor" patternUnits="userSpaceOnUse" width={80} height={80}>
+            <image href={floorHref} x="0" y="0" width={80} height={80} preserveAspectRatio="xMidYMid slice" />
+          </pattern>
+        )}
+        {ceilHref && (
+          <pattern id="fp-tex-ceil" patternUnits="userSpaceOnUse" width={80} height={80}>
+            <image href={ceilHref} x="0" y="0" width={80} height={80} preserveAspectRatio="xMidYMid slice" />
+          </pattern>
+        )}
+      </defs>,
+    )
+  }
 
   // ── Wall-mounted switch lever ────────────────────────────────────────────────
   // Drawn on a visible wall face when its boundary carries a switch whose face
@@ -409,6 +447,15 @@ function FirstPersonView({ map, facing, isCellRevealed, revealedBoundaries, flag
     )
   }
 
+  // Ceiling texture overlay — tiled plane blended over the shaded bands; the
+  // mortar grid below is redrawn on top so seams stay crisp.
+  if (ceilHref) {
+    nodes.push(
+      <rect key="tex-ceil" x={0} y={0} width={VW} height={VP_Y}
+        fill="url(#fp-tex-ceil)" style={{ mixBlendMode: 'soft-light' }} opacity={0.75} />,
+    )
+  }
+
   // Ceiling: perspective-correct mortar grid — transverse lines at each depth
   // plane, longitudinal seams at cell boundaries converging on the VP
   nodes.push(
@@ -453,6 +500,15 @@ function FirstPersonView({ map, facing, isCellRevealed, revealedBoundaries, flag
     nodes.push(
       <rect key={`fb${d}`} x={0} y={y0} width={VW} height={y1 - y0} fill={pal.floorBand(d)} />,
       lightExtra(d) > 0 && <rect key={`fbl${d}`} x={0} y={y0} width={VW} height={y1 - y0} fill={`rgba(0,0,0,${lightExtra(d)})`} />,
+    )
+  }
+
+  // Floor texture overlay — tiled plane blended over the shaded bands; the
+  // perspective grid below is redrawn on top so seams stay crisp.
+  if (floorHref) {
+    nodes.push(
+      <rect key="tex-floor" x={0} y={VP_Y} width={VW} height={VH - VP_Y}
+        fill="url(#fp-tex-floor)" style={{ mixBlendMode: 'soft-light' }} opacity={0.8} />,
     )
   }
 
@@ -503,6 +559,7 @@ function FirstPersonView({ map, facing, isCellRevealed, revealedBoundaries, flag
         if (d === 0 || !nearOpen) continue
         nodes.push(
           <rect key={`fw_${d}_${s}`}  x={near.x1} y={near.y1} width={fw} height={fh} fill={pal.frontWall(d)} />,
+          texWall(`fwt_tex_${d}_${s}`, near.x1, near.y1, fw, fh),
           <line key={`fwl_${d}_${s}`} x1={near.x1 + fw * 0.33} y1={near.y1} x2={near.x1 + fw * 0.33} y2={near.y2} stroke="rgba(0,0,0,0.18)" strokeWidth={0.6} />,
           <line key={`fwr_${d}_${s}`} x1={near.x1 + fw * 0.67} y1={near.y1} x2={near.x1 + fw * 0.67} y2={near.y2} stroke="rgba(0,0,0,0.18)" strokeWidth={0.6} />,
           <line key={`fwt_${d}_${s}`} x1={near.x1} y1={near.y1} x2={near.x2} y2={near.y1} stroke={pal.wallEdge(d)} strokeWidth={1} />,
@@ -519,6 +576,7 @@ function FirstPersonView({ map, facing, isCellRevealed, revealedBoundaries, flag
         const pts = `${near.x1},${near.y1} ${far.x1},${far.y1} ${far.x1},${far.y2} ${near.x1},${near.y2}`
         nodes.push(
           <polygon key={`lw_${d}_${s}`}  points={pts} fill={pal.sideWall(d)} />,
+          texPoly(`lw_tex_${d}_${s}`, pts),
           <polygon key={`lwao_${d}_${s}`}
             points={`${near.x1},${near.y1} ${far.x1},${far.y1} ${far.x1},${far.y1 - (far.y2 - far.y1) * 0.07} ${near.x1},${near.y1 - fh * 0.07}`}
             fill="rgba(0,0,0,0.26)" />,
@@ -530,6 +588,7 @@ function FirstPersonView({ map, facing, isCellRevealed, revealedBoundaries, flag
         const pts = `${near.x2},${near.y1} ${far.x2},${far.y1} ${far.x2},${far.y2} ${near.x2},${near.y2}`
         nodes.push(
           <polygon key={`rw_${d}_${s}`}  points={pts} fill={pal.sideWall(d)} />,
+          texPoly(`rw_tex_${d}_${s}`, pts),
           <polygon key={`rwao_${d}_${s}`}
             points={`${near.x2},${near.y1} ${far.x2},${far.y1} ${far.x2},${far.y1 - (far.y2 - far.y1) * 0.07} ${near.x2},${near.y1 - fh * 0.07}`}
             fill="rgba(0,0,0,0.26)" />,
@@ -754,6 +813,7 @@ function FirstPersonView({ map, facing, isCellRevealed, revealedBoundaries, flag
       } else if (blocked) {
         nodes.push(
           <rect key={`bw_${d}_${s}`}  x={near.x1} y={near.y1} width={fw} height={fh} fill={pal.frontWall(d)} />,
+          texWall(`bw_tex_${d}_${s}`, near.x1, near.y1, fw, fh),
           <line key={`bwt_${d}_${s}`} x1={near.x1} y1={near.y1} x2={near.x2} y2={near.y1} stroke={pal.wallEdge(d)} strokeWidth={1} />,
           <rect key={`bwao_${d}_${s}`} x={near.x1} y={near.y1 - fh * 0.08} width={fw} height={fh * 0.08} fill="url(#ao-up)" />,
           fog > 0 && <rect key={`bwf_${d}_${s}`} x={near.x1} y={near.y1} width={fw} height={fh} fill={`rgba(0,0,0,${fog})`} />,
