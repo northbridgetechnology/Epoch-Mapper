@@ -356,8 +356,14 @@ function FirstPersonView({ map, facing, isCellRevealed, revealedBoundaries, flag
     nodes.push(
       <defs key="tex-defs">
         {wallHref && (
-          <pattern id="fp-tex-wall" width="1" height="1">
-            <image href={wallHref} x="0" y="0" width="1" height="1" preserveAspectRatio="xMidYMid slice" />
+          // Screen-space tiled wall pattern. objectBoundingBox tiles (one image
+          // per face) don't render reliably in Chromium — the pattern content
+          // collapses — and can't follow the side-wall trapezoids anyway, so we
+          // tile in user space like the floor/ceiling. Front-wall rects and
+          // side-wall polygons both fill from this one pattern; the coursing
+          // stays continuous across adjacent faces.
+          <pattern id="fp-tex-wall" patternUnits="userSpaceOnUse" width={92} height={92}>
+            <image href={wallHref} x="0" y="0" width={92} height={92} preserveAspectRatio="xMidYMid slice" />
           </pattern>
         )}
         {floorHref && (
