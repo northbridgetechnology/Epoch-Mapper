@@ -351,11 +351,18 @@ function FirstPersonView({ map, facing, isCellRevealed, revealedBoundaries, flag
   const wallHref  = textureImageHref(map.textures?.wall,    { hue: theme.wallHue,  sat: theme.wallSat,  light: theme.wallLBase },  texAssets)
   const floorHref = textureImageHref(map.textures?.floor,   { hue: theme.floorHue, sat: theme.floorSat, light: theme.floorLBase }, texAssets)
   const ceilHref  = textureImageHref(map.textures?.ceiling, { hue: theme.ceilHue,  sat: theme.ceilSat,  light: theme.ceilLBase },  texAssets)
+  // Revision token woven into every texture pattern id. SVG paint servers are
+  // cached by id: if we kept ids stable and only swapped the <image href>,
+  // Chromium would keep painting shapes from the stale pattern (and the strip
+  // patterns that inherit the base image cache it too) — so a texture swap would
+  // never show in Play. Changing the id on every selection forces fresh nodes.
+  const texRev = `${map.textures?.wall ?? ''}-${map.textures?.floor ?? ''}-${map.textures?.ceiling ?? ''}`.replace(/[^a-z0-9]/gi, '') || '0'
+  const wallPatId = `fp-tex-wall-${texRev}`
   const texWall = (key: string, x: number, y: number, w: number, h: number) => wallHref
-    ? <rect key={key} x={x} y={y} width={w} height={h} fill="url(#fp-tex-wall)" style={{ mixBlendMode: 'soft-light' }} opacity={0.9} />
+    ? <rect key={key} x={x} y={y} width={w} height={h} fill={`url(#${wallPatId})`} style={{ mixBlendMode: 'soft-light' }} opacity={0.9} />
     : null
   const texPoly = (key: string, points: string) => wallHref
-    ? <polygon key={key} points={points} fill="url(#fp-tex-wall)" style={{ mixBlendMode: 'soft-light' }} opacity={0.8} />
+    ? <polygon key={key} points={points} fill={`url(#${wallPatId})`} style={{ mixBlendMode: 'soft-light' }} opacity={0.8} />
     : null
 
   // Perspective floor/ceiling: one shared base pattern (holds the image once) +
@@ -364,7 +371,7 @@ function FirstPersonView({ map, facing, isCellRevealed, revealedBoundaries, flag
   // <rect>s to composite over the shaded bands.
   const castSurface = (surface: 'floor' | 'ceiling', href: string | null) => {
     if (!href) return { patterns: [] as React.ReactNode[], rects: [] as React.ReactNode[] }
-    const baseId = `fp-tex-${surface}-base`
+    const baseId = `fp-tex-${surface}-${texRev}-base`
     const patterns: React.ReactNode[] = [
       <pattern key="base" id={baseId} patternUnits="userSpaceOnUse" width={TEX_CELL} height={TEX_CELL}>
         <image href={href} x={0} y={0} width={TEX_CELL} height={TEX_CELL} preserveAspectRatio="xMidYMid slice" />
@@ -380,7 +387,7 @@ function FirstPersonView({ map, facing, isCellRevealed, revealedBoundaries, flag
       if (dy <= 0.5) continue
       const z0 = PF_Y / dy
       if (z0 > 12) continue   // near the horizon: too far to matter, left to fog
-      const id = `fp-tex-${surface}-${i}`
+      const id = `fp-tex-${surface}-${texRev}-${i}`
       patterns.push(<pattern key={i} id={id} href={`#${baseId}`} patternTransform={stripMatrix(surface, px, py, facing, z0)} />)
       rects.push(<rect key={`${surface}str${i}`} x={0} y={top} width={VW} height={stripH + 0.6}
         fill={`url(#${id})`} style={{ mixBlendMode: 'soft-light' }} opacity={surface === 'floor' ? 0.8 : 0.72} />)
@@ -425,7 +432,7 @@ function FirstPersonView({ map, facing, isCellRevealed, revealedBoundaries, flag
           // tile in user space like the floor/ceiling. Front-wall rects and
           // side-wall polygons both fill from this one pattern; the coursing
           // stays continuous across adjacent faces.
-          <pattern id="fp-tex-wall" patternUnits="userSpaceOnUse" width={92} height={92}>
+          <pattern id={wallPatId} patternUnits="userSpaceOnUse" width={92} height={92}>
             <image href={wallHref} x="0" y="0" width={92} height={92} preserveAspectRatio="xMidYMid slice" />
           </pattern>
         )}
