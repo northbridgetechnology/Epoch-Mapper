@@ -1478,7 +1478,7 @@ function computeSpinWalls(
   flags: Record<string, boolean | number | string>,
   revealedB: Set<string> | undefined,
   lightRadius: number | undefined,
-  radius = 6,
+  radius = 5,
 ): SpinWall[] {
   // Match the cardinal renderer's lighting: distance fog + dark-map light falloff.
   const viewD = lightRadius === undefined ? MAX_D : Math.max(1, Math.min(MAX_D, Math.floor(lightRadius)))
@@ -1539,7 +1539,7 @@ function computeSpinSprites(
   ruleset: Ruleset | undefined,
   flags: Record<string, boolean | number | string>,
   isRevealed: (x: number, y: number) => boolean,
-  radius = 6,
+  radius = 5,
 ): SpinSprite[] {
   const sin = Math.sin(yaw), cos = Math.cos(yaw)
   const camx = pivotX - 0.5 * sin, camy = pivotY + 0.5 * cos
@@ -1613,6 +1613,11 @@ function computeSpinSprites(
 
 /** Perspective-cast floor/ceiling strips for the tween camera (arbitrary yaw +
  *  fractional position), mirroring the cardinal renderer's texture casting. */
+// Fewer strips during motion than at rest — the tween re-projects every frame,
+// so 30 strips × 2 surfaces would swamp the reconciler; 14 stays smooth and the
+// coarser recession is invisible in fast motion.
+const TWEEN_STRIPS = 14
+
 function castTweenSurface(
   surface: 'floor' | 'ceiling', href: string, camX: number, camY: number, yaw: number,
 ): { patterns: React.ReactNode[]; rects: React.ReactNode[] } {
@@ -1625,8 +1630,8 @@ function castTweenSurface(
   ]
   const rects: React.ReactNode[] = []
   const top0 = surface === 'floor' ? VP_Y : 0
-  const stripH = (surface === 'floor' ? VH - VP_Y : VP_Y) / TEX_STRIPS
-  for (let i = 0; i < TEX_STRIPS; i++) {
+  const stripH = (surface === 'floor' ? VH - VP_Y : VP_Y) / TWEEN_STRIPS
+  for (let i = 0; i < TWEEN_STRIPS; i++) {
     const top = top0 + i * stripH
     const midY = top + stripH / 2
     const dy = surface === 'floor' ? midY - VP_Y : VP_Y - midY
@@ -1706,14 +1711,23 @@ function MoveTween({ map, fromCellX, fromCellY, toCellX, toCellY, fromYaw, toYaw
           <stop offset="0%" stopColor="rgba(0,0,0,0)" />
           <stop offset="100%" stopColor="rgba(0,0,0,0.55)" />
         </radialGradient>
+        {/* horizon-darkening so far floor/ceiling read as distant, like the resting frame */}
+        <linearGradient id="spin-ceil-fade" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="rgba(0,0,0,0)" /><stop offset="100%" stopColor="rgba(0,0,0,0.55)" />
+        </linearGradient>
+        <linearGradient id="spin-floor-fade" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="rgba(0,0,0,0.5)" /><stop offset="100%" stopColor="rgba(0,0,0,0)" />
+        </linearGradient>
         {ceilCast?.patterns}
         {floorCast?.patterns}
       </defs>
       <g clipPath="url(#spin-view-clip)">
         <rect x={0} y={0} width={VW} height={VP_Y} fill={`hsl(${theme.ceilHue} ${theme.ceilSat}% ${theme.ceilLBase}%)`} />
         {ceilCast?.rects}
+        <rect x={0} y={0} width={VW} height={VP_Y} fill="url(#spin-ceil-fade)" />
         <rect x={0} y={VP_Y} width={VW} height={VH - VP_Y} fill={`hsl(${theme.floorHue} ${theme.floorSat}% ${theme.floorLBase}%)`} />
         {floorCast?.rects}
+        <rect x={0} y={VP_Y} width={VW} height={VH - VP_Y} fill="url(#spin-floor-fade)" />
         <rect x={0} y={VP_Y + PF_Y / 2} width={VW} height={VH - VP_Y - PF_Y / 2} fill={theme.floorGlowColor} />
         {drawables.map(d => d.node)}
         <line x1={0} y1={VP_Y} x2={VW} y2={VP_Y} stroke="rgba(100,120,160,0.18)" strokeWidth={1} />
