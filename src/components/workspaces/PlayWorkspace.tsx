@@ -1549,11 +1549,14 @@ function TurnSpin({ map, pivotX, pivotY, fromYaw, toYaw, durationMs, theme, isRe
   return (
     <svg viewBox={`0 0 ${VW} ${VH}`} width="100%" height="100%" preserveAspectRatio="xMidYMid meet"
       style={{ position: 'absolute', inset: 0, display: 'block', opacity }} xmlns="http://www.w3.org/2000/svg">
-      <rect x={0} y={0} width={VW} height={VP_Y} fill={`hsl(${theme.ceilHue} ${theme.ceilSat}% ${theme.ceilLBase}%)`} />
-      <rect x={0} y={VP_Y} width={VW} height={VH - VP_Y} fill={`hsl(${theme.floorHue} ${theme.floorSat}% ${theme.floorLBase}%)`} />
-      {walls.map((w, i) => <polygon key={i} points={w.pts} fill={w.fill} />)}
-      <line x1={0} y1={VP_Y} x2={VW} y2={VP_Y} stroke="rgba(100,120,160,0.18)" strokeWidth={1} />
-      {theme.ambientTint && <rect x={0} y={0} width={VW} height={VH} fill={theme.ambientTint} />}
+      <defs><clipPath id="spin-view-clip"><rect x={0} y={0} width={VW} height={VH} /></clipPath></defs>
+      <g clipPath="url(#spin-view-clip)">
+        <rect x={0} y={0} width={VW} height={VP_Y} fill={`hsl(${theme.ceilHue} ${theme.ceilSat}% ${theme.ceilLBase}%)`} />
+        <rect x={0} y={VP_Y} width={VW} height={VH - VP_Y} fill={`hsl(${theme.floorHue} ${theme.floorSat}% ${theme.floorLBase}%)`} />
+        {walls.map((w, i) => <polygon key={i} points={w.pts} fill={w.fill} />)}
+        <line x1={0} y1={VP_Y} x2={VW} y2={VP_Y} stroke="rgba(100,120,160,0.18)" strokeWidth={1} />
+        {theme.ambientTint && <rect x={0} y={0} width={VW} height={VH} fill={theme.ambientTint} />}
+      </g>
     </svg>
   )
 }
