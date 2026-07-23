@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useId, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { ArrowUp, ArrowDown, ArrowLeft, ArrowRight, ZoomIn, ZoomOut, Coins, Map, Eye, Menu } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { baseDef, overlayDef, edgeDef, boundaryKey, DEFAULT_CELL, MIN_CELL, MAX_CELL, BASE, EDGE } from '@/lib/constants'
@@ -1446,28 +1446,156 @@ function classifyMove(
   return 'forward'   // forward or a lateral step both read as a dolly
 }
 
+// ── True turn rotation: continuous-yaw wall projection (turn tween) ──────────────
+// A real camera rotation, not a flat-image warp: during a turn we sweep the yaw
+// through 90° and re-project the surrounding walls each frame, so you see the
+// dungeon actually rotate. Floor/ceiling stay a horizon split (pure yaw keeps the
+// horizon level). Flat-shaded structural geometry only — the full textured cardinal
+// frame cross-fades back in at rest. Pure SVG maths, so it works in Safari too.
+
+const FACING_YAW: Record<Facing, number> = { N: 0, E: Math.PI / 2, S: Math.PI, W: (3 * Math.PI) / 2 }
+const SPIN_DIRS: EdgeDir[] = ['N', 'S', 'E', 'W']
+const SPIN_DELTA: Record<EdgeDir, [number, number]> = { N: [0, -1], S: [0, 1], E: [1, 0], W: [-1, 0] }
+function easeOutCubic(t: number): number { return 1 - Math.pow(1 - t, 3) }
+const r1 = (n: number) => Math.round(n * 10) / 10
+
+interface SpinWall { pts: string; z: number; fill: string }
+
+/** The two ground endpoints (+inward normal) of a cell edge, in world cells. */
+function spinEdge(gx: number, gy: number, dir: EdgeDir) {
+  switch (dir) {
+    case 'N': return { ax: gx - 0.5, ay: gy - 0.5, bx: gx + 0.5, by: gy - 0.5, nx: 0,  ny: 1 }
+    case 'S': return { ax: gx - 0.5, ay: gy + 0.5, bx: gx + 0.5, by: gy + 0.5, nx: 0,  ny: -1 }
+    case 'E': return { ax: gx + 0.5, ay: gy - 0.5, bx: gx + 0.5, by: gy + 0.5, nx: -1, ny: 0 }
+    default:  return { ax: gx - 0.5, ay: gy - 0.5, bx: gx - 0.5, by: gy + 0.5, nx: 1,  ny: 0 }
+  }
+}
+
+/** Project every visible wall around the pivot at the given yaw. The camera sits
+ *  half a cell behind the pivot along the current facing, so the frame matches the
+ *  cardinal renderer's scale at yaw = a cardinal angle (0/90/180/270°). */
+function computeSpinWalls(
+  map: MapData, pivotX: number, pivotY: number, yaw: number,
+  theme: MapThemeDef,
+  isRevealed: (x: number, y: number) => boolean,
+  flags: Record<string, boolean | number | string>,
+  revealedB: Set<string> | undefined,
+  radius = 6,
+): SpinWall[] {
+  const sin = Math.sin(yaw), cos = Math.cos(yaw)
+  const camx = pivotX - 0.5 * sin, camy = pivotY + 0.5 * cos   // 0.5 behind along fwd=(sin,-cos)
+  const near = 0.06
+  const cx = Math.round(pivotX), cy = Math.round(pivotY)
+  const toCam = (rx: number, ry: number) => ({ x: rx * cos + ry * sin, z: rx * sin - ry * cos })
+  const out: SpinWall[] = []
+  for (let gy = cy - radius; gy <= cy + radius; gy++) {
+    for (let gx = cx - radius; gx <= cx + radius; gx++) {
+      if (!isRevealed(gx, gy) || isWall(map, gx, gy)) continue
+      for (const dir of SPIN_DIRS) {
+        const [ndx, ndy] = SPIN_DELTA[dir]
+        const solid = isWall(map, gx + ndx, gy + ndy) || !isRevealed(gx + ndx, gy + ndy)
+        if (!solid && !hasBoundaryWall(map, gx, gy, dir, revealedB, flags)) continue
+        const s = spinEdge(gx, gy, dir)
+        const mvx = (s.ax + s.bx) / 2 - camx, mvy = (s.ay + s.by) / 2 - camy
+        if (s.nx * mvx + s.ny * mvy >= 0) continue   // back-facing
+        let A = toCam(s.ax - camx, s.ay - camy)
+        let B = toCam(s.bx - camx, s.by - camy)
+        if (A.z < near && B.z < near) continue
+        if (A.z < near) { const t = (near - A.z) / (B.z - A.z); A = { x: A.x + t * (B.x - A.x), z: near } }
+        else if (B.z < near) { const t = (near - B.z) / (A.z - B.z); B = { x: B.x + t * (A.x - B.x), z: near } }
+        const ax = VP_X + (PF_X * A.x) / A.z, bx = VP_X + (PF_X * B.x) / B.z
+        const aTop = VP_Y - PF_Y / A.z, aBot = VP_Y + PF_Y / A.z
+        const bTop = VP_Y - PF_Y / B.z, bBot = VP_Y + PF_Y / B.z
+        const z = (A.z + B.z) / 2
+        const ml = Math.hypot(mvx, mvy) || 1
+        const dotv = Math.abs((s.nx * mvx + s.ny * mvy) / ml)   // 1 head-on → bright, 0 grazing → dark
+        const frontL = theme.wallLBase - (z - 1) * theme.wallLStep
+        const sideL  = theme.sideLBase - (z - 1) * theme.sideLStep
+        const L = Math.max(6, Math.min(85, sideL + (frontL - sideL) * dotv))
+        out.push({
+          pts: `${r1(ax)},${r1(aTop)} ${r1(bx)},${r1(bTop)} ${r1(bx)},${r1(bBot)} ${r1(ax)},${r1(aBot)}`,
+          z, fill: `hsl(${theme.wallHue} ${theme.wallSat}% ${L.toFixed(1)}%)`,
+        })
+      }
+    }
+  }
+  out.sort((a, b) => b.z - a.z)   // painter's order: far first
+  return out
+}
+
+function TurnSpin({ map, pivotX, pivotY, fromYaw, toYaw, durationMs, theme, isRevealed, flags, revealedB, onDone }: {
+  map: MapData; pivotX: number; pivotY: number; fromYaw: number; toYaw: number; durationMs: number
+  theme: MapThemeDef; isRevealed: (x: number, y: number) => boolean
+  flags: Record<string, boolean | number | string>; revealedB: Set<string> | undefined; onDone: () => void
+}) {
+  const [p, setP] = useState(0)
+  const doneRef = useRef(onDone); doneRef.current = onDone
+  useEffect(() => {
+    let raf = 0; const t0 = performance.now()
+    const tick = (t: number) => {
+      const pr = Math.min(1, (t - t0) / durationMs)
+      setP(pr)
+      if (pr < 1) raf = requestAnimationFrame(tick); else doneRef.current()
+    }
+    raf = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(raf)
+  }, [durationMs])
+  const yaw = fromYaw + (toYaw - fromYaw) * easeOutCubic(p)
+  const walls = useMemo(
+    () => computeSpinWalls(map, pivotX, pivotY, yaw, theme, isRevealed, flags, revealedB),
+    [map, pivotX, pivotY, yaw, theme, isRevealed, flags, revealedB],
+  )
+  const opacity = p > 0.78 ? Math.max(0, 1 - (p - 0.78) / 0.22) : 1   // cross-fade to the textured frame at the end
+  return (
+    <svg viewBox={`0 0 ${VW} ${VH}`} width="100%" height="100%" preserveAspectRatio="xMidYMid meet"
+      style={{ position: 'absolute', inset: 0, display: 'block', opacity }} xmlns="http://www.w3.org/2000/svg">
+      <rect x={0} y={0} width={VW} height={VP_Y} fill={`hsl(${theme.ceilHue} ${theme.ceilSat}% ${theme.ceilLBase}%)`} />
+      <rect x={0} y={VP_Y} width={VW} height={VH - VP_Y} fill={`hsl(${theme.floorHue} ${theme.floorSat}% ${theme.floorLBase}%)`} />
+      {walls.map((w, i) => <polygon key={i} points={w.pts} fill={w.fill} />)}
+      <line x1={0} y1={VP_Y} x2={VW} y2={VP_Y} stroke="rgba(100,120,160,0.18)" strokeWidth={1} />
+      {theme.ambientTint && <rect x={0} y={0} width={VW} height={VH} fill={theme.ambientTint} />}
+    </svg>
+  )
+}
+
 function AnimatedFirstPersonView({ speed, ...fp }: FpProps & { speed: MoveAnimSpeed }) {
   const ms = MOVE_ANIM_MS[speed] ?? MOVE_ANIM_MS.balanced
   const ref = useRef<HTMLDivElement>(null)
   const animRef = useRef<Animation | null>(null)
   const poseRef = useRef({ mapId: fp.map.id, px: fp.map.playerX, py: fp.map.playerY, facing: fp.facing })
+  const spinTokenRef = useRef(0)
+  const [spin, setSpin] = useState<{ px: number; py: number; fromYaw: number; toYaw: number; token: number } | null>(null)
 
   useEffect(() => {
     const prev = poseRef.current
     const cur = { mapId: fp.map.id, px: fp.map.playerX, py: fp.map.playerY, facing: fp.facing }
     const kind = classifyMove(prev, cur)
     poseRef.current = cur
-    if (!kind || prefersReducedMotion() || !ref.current) return
-    animRef.current?.cancel()   // interrupt any in-flight transition, then settle in
-    animRef.current = ref.current.animate(
-      [{ transform: ENTER_FROM[kind] }, { transform: 'none' }],
-      { duration: ms, easing: MOVE_EASE },
-    )
+    if (!kind || prefersReducedMotion()) return
+    if (kind === 'turnLeft' || kind === 'turnRight') {
+      const fromYaw = FACING_YAW[prev.facing]
+      const toYaw = fromYaw + (kind === 'turnRight' ? Math.PI / 2 : -Math.PI / 2)
+      setSpin({ px: prev.px, py: prev.py, fromYaw, toYaw, token: ++spinTokenRef.current })
+    } else if (ref.current) {
+      animRef.current?.cancel()   // forward/back: honest 2D scale settle
+      animRef.current = ref.current.animate(
+        [{ transform: ENTER_FROM[kind] }, { transform: 'none' }],
+        { duration: ms, easing: MOVE_EASE },
+      )
+    }
   }, [fp.map, fp.facing, ms])
+
+  const theme = getTheme(fp.map.theme)
 
   return (
     <div ref={ref} className="absolute inset-0" style={{ transformOrigin: '50% 52%', willChange: 'transform' }}>
       <FirstPersonView {...fp} />
+      {spin && (
+        <TurnSpin key={spin.token} map={fp.map} pivotX={spin.px} pivotY={spin.py}
+          fromYaw={spin.fromYaw} toYaw={spin.toYaw} durationMs={ms} theme={theme}
+          isRevealed={fp.isCellRevealed} flags={fp.flags} revealedB={fp.revealedBoundaries}
+          onDone={() => setSpin(null)} />
+      )}
     </div>
   )
 }
