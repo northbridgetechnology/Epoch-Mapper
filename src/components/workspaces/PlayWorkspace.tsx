@@ -263,24 +263,33 @@ function frontOf(f: Facing): EdgeDir { return f as unknown as EdgeDir }
 // glued to the floor — it flows toward the camera as you step and rotates on turns.
 const TEX_CELL = 128
 
-/** patternTransform (pattern→screen) for one floor/ceiling strip at depth z0. */
-function stripMatrix(surface: 'floor' | 'ceiling', px: number, py: number, facing: Facing, z0: number): string {
-  const [fx, fy] = facingDelta(facing)   // forward unit (world)
-  const [rx, ry] = rightDelta(facing)    // right unit (world)
+/** patternTransform (pattern→screen) for one floor/ceiling strip at depth z0,
+ *  for a camera at world (camX,camY) with forward (fx,fy) and right (rx,ry). */
+function stripMatrixCam(
+  surface: 'floor' | 'ceiling', camX: number, camY: number,
+  fx: number, fy: number, rx: number, ry: number, z0: number,
+): string {
   const y0   = surface === 'floor' ? VP_Y + PF_Y / z0 : VP_Y - PF_Y / z0
   const dzdy = (surface === 'floor' ? -1 : 1) * (z0 * z0) / PF_Y  // ∂depth/∂screenY at z0
   const Lx = z0 / PF_X, L0 = -Lx * VP_X   // lateral: worldLat = Lx*sx + L0
   const Zc = z0 - dzdy * y0               // depth:   z = dzdy*sy + Zc
   const C = TEX_CELL
   // screen → pattern (u,v) = world*CELL, affine in (sx,sy)
-  const P11 = C * rx * Lx, P12 = C * fx * dzdy, P13 = C * (px + fx * Zc + rx * L0)
-  const P21 = C * ry * Lx, P22 = C * fy * dzdy, P23 = C * (py + fy * Zc + ry * L0)
+  const P11 = C * rx * Lx, P12 = C * fx * dzdy, P13 = C * (camX + fx * Zc + rx * L0)
+  const P21 = C * ry * Lx, P22 = C * fy * dzdy, P23 = C * (camY + fy * Zc + ry * L0)
   const det = P11 * P22 - P12 * P21
   if (!isFinite(det) || Math.abs(det) < 1e-9) return 'matrix(1 0 0 1 0 0)'
   // invert to pattern → screen for patternTransform
   const a = P22 / det, c = -P12 / det, b = -P21 / det, d = P11 / det
   const e = -(a * P13 + c * P23), f = -(b * P13 + d * P23)
   return `matrix(${a} ${b} ${c} ${d} ${e} ${f})`
+}
+
+/** Cardinal-facing floor/ceiling strip transform (camera at the player cell). */
+function stripMatrix(surface: 'floor' | 'ceiling', px: number, py: number, facing: Facing, z0: number): string {
+  const [fx, fy] = facingDelta(facing)
+  const [rx, ry] = rightDelta(facing)
+  return stripMatrixCam(surface, px, py, fx, fy, rx, ry, z0)
 }
 
 const TEX_STRIPS = 30  // horizontal slices per surface — more = smoother recession
@@ -1602,11 +1611,42 @@ function computeSpinSprites(
   return out
 }
 
-function MoveTween({ map, fromCellX, fromCellY, toCellX, toCellY, fromYaw, toYaw, durationMs, theme, wallHref, lightRadius, ruleset, isRevealed, flags, revealedB, onDone }: {
+/** Perspective-cast floor/ceiling strips for the tween camera (arbitrary yaw +
+ *  fractional position), mirroring the cardinal renderer's texture casting. */
+function castTweenSurface(
+  surface: 'floor' | 'ceiling', href: string, camX: number, camY: number, yaw: number,
+): { patterns: React.ReactNode[]; rects: React.ReactNode[] } {
+  const fx = Math.sin(yaw), fy = -Math.cos(yaw), rx = Math.cos(yaw), ry = Math.sin(yaw)
+  const baseId = `spin-tex-${surface}-base`
+  const patterns: React.ReactNode[] = [
+    <pattern key="base" id={baseId} patternUnits="userSpaceOnUse" width={TEX_CELL} height={TEX_CELL}>
+      <image href={href} x={0} y={0} width={TEX_CELL} height={TEX_CELL} preserveAspectRatio="xMidYMid slice" />
+    </pattern>,
+  ]
+  const rects: React.ReactNode[] = []
+  const top0 = surface === 'floor' ? VP_Y : 0
+  const stripH = (surface === 'floor' ? VH - VP_Y : VP_Y) / TEX_STRIPS
+  for (let i = 0; i < TEX_STRIPS; i++) {
+    const top = top0 + i * stripH
+    const midY = top + stripH / 2
+    const dy = surface === 'floor' ? midY - VP_Y : VP_Y - midY
+    if (dy <= 0.5) continue
+    const z0 = PF_Y / dy
+    if (z0 > 12) continue
+    const id = `spin-tex-${surface}-${i}`
+    patterns.push(<pattern key={i} id={id} href={`#${baseId}`} patternTransform={stripMatrixCam(surface, camX, camY, fx, fy, rx, ry, z0)} />)
+    rects.push(<rect key={`${surface}${i}`} x={0} y={top} width={VW} height={stripH + 0.6}
+      fill={`url(#${id})`} style={{ mixBlendMode: 'soft-light' }} opacity={surface === 'floor' ? 0.8 : 0.72} />)
+  }
+  return { patterns, rects }
+}
+
+function MoveTween({ map, fromCellX, fromCellY, toCellX, toCellY, fromYaw, toYaw, durationMs, theme, wallHref, floorHref, ceilHref, lightRadius, ruleset, isRevealed, flags, revealedB, onDone }: {
   map: MapData
   fromCellX: number; fromCellY: number; toCellX: number; toCellY: number
   fromYaw: number; toYaw: number; durationMs: number
-  theme: MapThemeDef; wallHref: string | null; lightRadius: number | undefined; ruleset: Ruleset | undefined
+  theme: MapThemeDef; wallHref: string | null; floorHref: string | null; ceilHref: string | null
+  lightRadius: number | undefined; ruleset: Ruleset | undefined
   isRevealed: (x: number, y: number) => boolean
   flags: Record<string, boolean | number | string>; revealedB: Set<string> | undefined; onDone: () => void
 }) {
@@ -1634,6 +1674,9 @@ function MoveTween({ map, fromCellX, fromCellY, toCellX, toCellY, fromYaw, toYaw
     () => computeSpinSprites(map, cellX, cellY, yaw, ruleset, flags, isRevealed),
     [map, cellX, cellY, yaw, ruleset, flags, isRevealed],
   )
+  const camX = cellX - 0.5 * Math.sin(yaw), camY = cellY + 0.5 * Math.cos(yaw)
+  const floorCast = useMemo(() => floorHref ? castTweenSurface('floor', floorHref, camX, camY, yaw) : null, [floorHref, camX, camY, yaw])
+  const ceilCast  = useMemo(() => ceilHref ? castTweenSurface('ceiling', ceilHref, camX, camY, yaw) : null, [ceilHref, camX, camY, yaw])
   // Merge walls + sprites into one back-to-front list so nearer walls occlude
   // farther sprites (and vice-versa), matching the cardinal renderer.
   const drawables = useMemo(() => {
@@ -1663,10 +1706,14 @@ function MoveTween({ map, fromCellX, fromCellY, toCellX, toCellY, fromYaw, toYaw
           <stop offset="0%" stopColor="rgba(0,0,0,0)" />
           <stop offset="100%" stopColor="rgba(0,0,0,0.55)" />
         </radialGradient>
+        {ceilCast?.patterns}
+        {floorCast?.patterns}
       </defs>
       <g clipPath="url(#spin-view-clip)">
         <rect x={0} y={0} width={VW} height={VP_Y} fill={`hsl(${theme.ceilHue} ${theme.ceilSat}% ${theme.ceilLBase}%)`} />
+        {ceilCast?.rects}
         <rect x={0} y={VP_Y} width={VW} height={VH - VP_Y} fill={`hsl(${theme.floorHue} ${theme.floorSat}% ${theme.floorLBase}%)`} />
+        {floorCast?.rects}
         <rect x={0} y={VP_Y + PF_Y / 2} width={VW} height={VH - VP_Y - PF_Y / 2} fill={theme.floorGlowColor} />
         {drawables.map(d => d.node)}
         <line x1={0} y1={VP_Y} x2={VW} y2={VP_Y} stroke="rgba(100,120,160,0.18)" strokeWidth={1} />
@@ -1705,11 +1752,10 @@ function AnimatedFirstPersonView({ speed, ...fp }: FpProps & { speed: MoveAnimSp
   }, [fp.map, fp.facing, ms])
 
   const theme = getTheme(fp.map.theme)
-  const wallHref = textureImageHref(
-    fp.map.textures?.wall,
-    { hue: theme.wallHue, sat: theme.wallSat, light: theme.wallLBase },
-    fp.map.textureAssets,
-  )
+  const tex = fp.map.textures, texA = fp.map.textureAssets
+  const wallHref  = textureImageHref(tex?.wall,    { hue: theme.wallHue,  sat: theme.wallSat,  light: theme.wallLBase },  texA)
+  const floorHref = textureImageHref(tex?.floor,   { hue: theme.floorHue, sat: theme.floorSat, light: theme.floorLBase }, texA)
+  const ceilHref  = textureImageHref(tex?.ceiling, { hue: theme.ceilHue,  sat: theme.ceilSat,  light: theme.ceilLBase },  texA)
 
   return (
     <div className="absolute inset-0">
@@ -1717,7 +1763,8 @@ function AnimatedFirstPersonView({ speed, ...fp }: FpProps & { speed: MoveAnimSp
       {tween && (
         <MoveTween key={tween.token} map={fp.map}
           fromCellX={tween.fromCellX} fromCellY={tween.fromCellY} toCellX={tween.toCellX} toCellY={tween.toCellY}
-          fromYaw={tween.fromYaw} toYaw={tween.toYaw} durationMs={ms} theme={theme} wallHref={wallHref}
+          fromYaw={tween.fromYaw} toYaw={tween.toYaw} durationMs={ms} theme={theme}
+          wallHref={wallHref} floorHref={floorHref} ceilHref={ceilHref}
           lightRadius={fp.lightRadius} ruleset={fp.ruleset}
           isRevealed={fp.isCellRevealed} flags={fp.flags} revealedB={fp.revealedBoundaries}
           onDone={() => setTween(null)} />
