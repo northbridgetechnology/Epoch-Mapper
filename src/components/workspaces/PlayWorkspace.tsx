@@ -1397,13 +1397,15 @@ function DungeonViewport({
   )
 }
 
-// ── Smooth movement: single-frame directional entrance ──────────────────────────
+// ── Smooth movement: single-frame directional settle (2D only) ──────────────────
 // The renderer is discrete (cardinal facings, whole cells), so we can't glide the
-// camera. A two-frame crossfade would paint two heavy textured SVGs at once — the
-// outgoing one can't reuse the incoming frame's rasterised texture tiles — which
-// stalls the main thread and shows as a blink. Instead we animate the SINGLE live
-// frame settling into place (a step grows in, a turn swings/rotates in) with one
-// GPU-composited transform on the already-painted frame. Honors reduced motion.
+// camera. Rotating the finished 2D frame in 3D (rotateY/perspective) only WARPS a
+// flat picture — it never reveals in-between geometry, so it reads as a lens tilt,
+// not a turn — and Safari refuses to composite 3D transforms on SVG at all. So we
+// keep this honest and 2D: a step gives a gentle scale push (moving forward really
+// does enlarge the view); a turn gives a small lateral settle. True camera rotation
+// needs the renderer to draw intermediate angles — a separate continuous-projection
+// upgrade. These 2D transforms work everywhere including Safari. Honors reduced motion.
 
 type FpProps = FirstPersonViewProps
 type MoveKind = 'forward' | 'back' | 'turnLeft' | 'turnRight'
@@ -1412,13 +1414,13 @@ const TURN_L: Record<Facing, Facing> = { N: 'W', W: 'S', S: 'E', E: 'N' }
 const TURN_R: Record<Facing, Facing> = { N: 'E', E: 'S', S: 'W', W: 'N' }
 
 // Starting transform for the incoming frame; it eases to identity ('none').
-// Turns use perspective + rotateY so the view swings in like a head-turn; steps
-// use a subtle scale dolly (forward overshoots slightly inward, back pulls back).
+// 2D only — no perspective/rotateY (warps + Safari-broken). Slides carry a slight
+// overscale so the lateral shift never exposes a black edge.
 const ENTER_FROM: Record<MoveKind, string> = {
-  forward:   'scale(1.16)',
-  back:      'scale(0.9)',
-  turnLeft:  'perspective(1400px) translateX(-9%) rotateY(-16deg)',
-  turnRight: 'perspective(1400px) translateX(9%) rotateY(16deg)',
+  forward:   'scale(1.09)',
+  back:      'scale(0.94)',
+  turnLeft:  'translateX(-5%) scale(1.06)',
+  turnRight: 'translateX(5%) scale(1.06)',
 }
 const MOVE_EASE = 'cubic-bezier(0.22, 0.61, 0.36, 1)'
 
