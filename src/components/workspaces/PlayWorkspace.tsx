@@ -1397,12 +1397,13 @@ function DungeonViewport({
   )
 }
 
-// ── Smooth movement: two-layer directional transition ──────────────────────────
+// ── Smooth movement: single-frame directional entrance ──────────────────────────
 // The renderer is discrete (cardinal facings, whole cells), so we can't glide the
-// camera. Instead, when the player steps or turns we keep the OUTGOING frame as a
-// second layer and cross-transform the two: a step dollies (old zooms past, new
-// grows in); a turn pans/rotates (old swings out one way, new swings in the other).
-// Zero projection maths — just animating two rendered frames. Honors reduced motion.
+// camera. A two-frame crossfade would paint two heavy textured SVGs at once — the
+// outgoing one can't reuse the incoming frame's rasterised texture tiles — which
+// stalls the main thread and shows as a blink. Instead we animate the SINGLE live
+// frame settling into place (a step grows in, a turn swings/rotates in) with one
+// GPU-composited transform on the already-painted frame. Honors reduced motion.
 
 type FpProps = FirstPersonViewProps
 type MoveKind = 'forward' | 'back' | 'turnLeft' | 'turnRight'
@@ -1410,12 +1411,14 @@ type MoveKind = 'forward' | 'back' | 'turnLeft' | 'turnRight'
 const TURN_L: Record<Facing, Facing> = { N: 'W', W: 'S', S: 'E', E: 'N' }
 const TURN_R: Record<Facing, Facing> = { N: 'E', E: 'S', S: 'W', W: 'N' }
 
-// [ incoming start transform, incoming start opacity, outgoing end transform ]
-const MOVE_KF: Record<MoveKind, { incFrom: string; incOp: number; outTo: string }> = {
-  forward:   { incFrom: 'scale(0.82)',  incOp: 0.35, outTo: 'scale(1.45)' },
-  back:      { incFrom: 'scale(1.28)',  incOp: 0.30, outTo: 'scale(0.80)' },
-  turnLeft:  { incFrom: 'perspective(1100px) translateX(-26%) rotateY(-20deg)', incOp: 0.45, outTo: 'perspective(1100px) translateX(26%) rotateY(20deg)' },
-  turnRight: { incFrom: 'perspective(1100px) translateX(26%) rotateY(20deg)',   incOp: 0.45, outTo: 'perspective(1100px) translateX(-26%) rotateY(-20deg)' },
+// Starting transform for the incoming frame; it eases to identity ('none').
+// Turns use perspective + rotateY so the view swings in like a head-turn; steps
+// use a subtle scale dolly (forward overshoots slightly inward, back pulls back).
+const ENTER_FROM: Record<MoveKind, string> = {
+  forward:   'scale(1.16)',
+  back:      'scale(0.9)',
+  turnLeft:  'perspective(1400px) translateX(-9%) rotateY(-16deg)',
+  turnRight: 'perspective(1400px) translateX(9%) rotateY(16deg)',
 }
 const MOVE_EASE = 'cubic-bezier(0.22, 0.61, 0.36, 1)'
 
@@ -1443,51 +1446,26 @@ function classifyMove(
 
 function AnimatedFirstPersonView({ speed, ...fp }: FpProps & { speed: MoveAnimSpeed }) {
   const ms = MOVE_ANIM_MS[speed] ?? MOVE_ANIM_MS.balanced
-  const incRef = useRef<HTMLDivElement>(null)
-  const outRef = useRef<HTMLDivElement>(null)
+  const ref = useRef<HTMLDivElement>(null)
+  const animRef = useRef<Animation | null>(null)
   const poseRef = useRef({ mapId: fp.map.id, px: fp.map.playerX, py: fp.map.playerY, facing: fp.facing })
-  const frameRef = useRef<{ map: MapData; facing: Facing }>({ map: fp.map, facing: fp.facing })
-  const tokenRef = useRef(0)
-  const [outgoing, setOutgoing] = useState<{ map: MapData; facing: Facing; kind: MoveKind; token: number } | null>(null)
 
-  // Detect a step/turn and stage the outgoing frame.
   useEffect(() => {
     const prev = poseRef.current
     const cur = { mapId: fp.map.id, px: fp.map.playerX, py: fp.map.playerY, facing: fp.facing }
     const kind = classifyMove(prev, cur)
-    const prevFrame = frameRef.current
     poseRef.current = cur
-    frameRef.current = { map: fp.map, facing: fp.facing }
-    if (!kind || prefersReducedMotion()) return
-    setOutgoing({ map: prevFrame.map, facing: prevFrame.facing, kind, token: ++tokenRef.current })
-  }, [fp.map, fp.facing])
-
-  // Run the cross-transform for the staged transition.
-  useEffect(() => {
-    if (!outgoing) return
-    const inc = incRef.current, out = outRef.current
-    if (!inc || !out) { setOutgoing(null); return }
-    const k = MOVE_KF[outgoing.kind]
-    const opts: KeyframeAnimationOptions = { duration: ms, easing: MOVE_EASE, fill: 'both' }
-    const a1 = inc.animate([{ transform: k.incFrom, opacity: k.incOp }, { transform: 'none', opacity: 1 }], opts)
-    const a2 = out.animate([{ transform: 'none', opacity: 1 }, { transform: k.outTo, opacity: 0 }], opts)
-    let done = false
-    const finish = () => { if (done) return; done = true; a1.cancel(); a2.cancel(); setOutgoing(null) }
-    a2.addEventListener('finish', finish)
-    a1.addEventListener('finish', finish)
-    return () => { a1.cancel(); a2.cancel() }
-  }, [outgoing, ms])
+    if (!kind || prefersReducedMotion() || !ref.current) return
+    animRef.current?.cancel()   // interrupt any in-flight transition, then settle in
+    animRef.current = ref.current.animate(
+      [{ transform: ENTER_FROM[kind] }, { transform: 'none' }],
+      { duration: ms, easing: MOVE_EASE },
+    )
+  }, [fp.map, fp.facing, ms])
 
   return (
-    <div className="absolute inset-0">
-      <div ref={incRef} className="absolute inset-0" style={{ transformOrigin: '50% 52%', willChange: 'transform, opacity' }}>
-        <FirstPersonView {...fp} />
-      </div>
-      {outgoing && (
-        <div ref={outRef} className="absolute inset-0" style={{ transformOrigin: '50% 52%', willChange: 'transform, opacity' }}>
-          <FirstPersonView {...fp} map={outgoing.map} facing={outgoing.facing} />
-        </div>
-      )}
+    <div ref={ref} className="absolute inset-0" style={{ transformOrigin: '50% 52%', willChange: 'transform' }}>
+      <FirstPersonView {...fp} />
     </div>
   )
 }
