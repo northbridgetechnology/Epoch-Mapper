@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { ArrowUp, ArrowDown, ArrowLeft, ArrowRight, ZoomIn, ZoomOut, Coins, Map, Eye, Menu } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { baseDef, overlayDef, edgeDef, boundaryKey, DEFAULT_CELL, MIN_CELL, MAX_CELL, BASE, EDGE } from '@/lib/constants'
@@ -265,10 +265,11 @@ const TEX_CELL = 128
 
 /** patternTransform (pattern→screen) for one floor/ceiling strip at depth z0,
  *  for a camera at world (camX,camY) with forward (fx,fy) and right (rx,ry). */
+type Mat6 = [number, number, number, number, number, number]
 function stripMatrixCam(
   surface: 'floor' | 'ceiling', camX: number, camY: number,
   fx: number, fy: number, rx: number, ry: number, z0: number,
-): string {
+): Mat6 {
   const y0   = surface === 'floor' ? VP_Y + PF_Y / z0 : VP_Y - PF_Y / z0
   const dzdy = (surface === 'floor' ? -1 : 1) * (z0 * z0) / PF_Y  // ∂depth/∂screenY at z0
   const Lx = z0 / PF_X, L0 = -Lx * VP_X   // lateral: worldLat = Lx*sx + L0
@@ -278,18 +279,19 @@ function stripMatrixCam(
   const P11 = C * rx * Lx, P12 = C * fx * dzdy, P13 = C * (camX + fx * Zc + rx * L0)
   const P21 = C * ry * Lx, P22 = C * fy * dzdy, P23 = C * (camY + fy * Zc + ry * L0)
   const det = P11 * P22 - P12 * P21
-  if (!isFinite(det) || Math.abs(det) < 1e-9) return 'matrix(1 0 0 1 0 0)'
-  // invert to pattern → screen for patternTransform
+  if (!isFinite(det) || Math.abs(det) < 1e-9) return [1, 0, 0, 1, 0, 0]
+  // invert to pattern → screen
   const a = P22 / det, c = -P12 / det, b = -P21 / det, d = P11 / det
   const e = -(a * P13 + c * P23), f = -(b * P13 + d * P23)
-  return `matrix(${a} ${b} ${c} ${d} ${e} ${f})`
+  return [a, b, c, d, e, f]
 }
 
 /** Cardinal-facing floor/ceiling strip transform (camera at the player cell). */
 function stripMatrix(surface: 'floor' | 'ceiling', px: number, py: number, facing: Facing, z0: number): string {
   const [fx, fy] = facingDelta(facing)
   const [rx, ry] = rightDelta(facing)
-  return stripMatrixCam(surface, px, py, fx, fy, rx, ry, z0)
+  const m = stripMatrixCam(surface, px, py, fx, fy, rx, ry, z0)
+  return `matrix(${m[0]} ${m[1]} ${m[2]} ${m[3]} ${m[4]} ${m[5]})`
 }
 
 const TEX_STRIPS = 30  // horizontal slices per surface — more = smoother recession
@@ -1454,9 +1456,8 @@ const FACING_YAW: Record<Facing, number> = { N: 0, E: Math.PI / 2, S: Math.PI, W
 const SPIN_DIRS: EdgeDir[] = ['N', 'S', 'E', 'W']
 const SPIN_DELTA: Record<EdgeDir, [number, number]> = { N: [0, -1], S: [0, 1], E: [1, 0], W: [-1, 0] }
 function easeOutCubic(t: number): number { return 1 - Math.pow(1 - t, 3) }
-const r1 = (n: number) => Math.round(n * 10) / 10
 
-interface SpinWall { pts: string; z: number; fill: string }
+interface SpinWall { poly: number[]; z: number; fill: string }
 
 /** The two ground endpoints (+inward normal) of a cell edge, in world cells. */
 function spinEdge(gx: number, gy: number, dir: EdgeDir) {
@@ -1518,7 +1519,7 @@ function computeSpinWalls(
         const sideL  = theme.sideLBase - (z - 1) * theme.sideLStep
         const L = Math.max(6, Math.min(85, sideL + (frontL - sideL) * dotv)) * (1 - fogAt(z))   // fog/light falloff
         out.push({
-          pts: `${r1(ax)},${r1(aTop)} ${r1(bx)},${r1(bTop)} ${r1(bx)},${r1(bBot)} ${r1(ax)},${r1(aBot)}`,
+          poly: [ax, aTop, bx, bTop, bx, bBot, ax, aBot],
           z, fill: `hsl(${theme.wallHue} ${theme.wallSat}% ${L.toFixed(1)}%)`,
         })
       }
@@ -1555,6 +1556,16 @@ function computeSpinSprites(
       if (z < near) continue
       const scX = VP_X + (PF_X * (rx * cos + ry * sin)) / z
       if (scX < -140 || scX > VW + 140) continue
+      // occlusion: sprites live on a top layer over the canvas, so skip any whose
+      // straight line from the camera is blocked by a solid cell.
+      const dd = Math.hypot(rx, ry), steps = Math.ceil(dd * 3)
+      let blocked = false
+      for (let k = 1; k < steps; k++) {
+        const sk = Math.round(camx + rx * (k / steps)), tk = Math.round(camy + ry * (k / steps))
+        if (sk === gx && tk === gy) continue
+        if (isWall(map, sk, tk)) { blocked = true; break }
+      }
+      if (blocked) continue
       const floorY = VP_Y + PF_Y / z
       const fh = (2 * PF_Y) / z
       const fog = Math.min(0.72, Math.max(0, (z - 1) * 0.18))
@@ -1618,123 +1629,155 @@ function computeSpinSprites(
 // coarser recession is invisible in fast motion.
 const TWEEN_STRIPS = 14
 
-function castTweenSurface(
-  surface: 'floor' | 'ceiling', href: string, camX: number, camY: number, yaw: number,
-): { patterns: React.ReactNode[]; rects: React.ReactNode[] } {
+/** Trace a flat [x0,y0,x1,y1,…] polygon onto the 2D context. */
+function tracePoly(ctx: CanvasRenderingContext2D, poly: number[]) {
+  ctx.beginPath()
+  ctx.moveTo(poly[0], poly[1])
+  for (let i = 2; i < poly.length; i += 2) ctx.lineTo(poly[i], poly[i + 1])
+  ctx.closePath()
+}
+
+/** Draw the textured, perspective floor or ceiling onto the canvas — a soft-light
+ *  pattern per depth strip, transformed to glue the tile to the world. */
+function drawTweenSurface(
+  ctx: CanvasRenderingContext2D, surface: 'floor' | 'ceiling',
+  tex: HTMLCanvasElement, cellX: number, cellY: number, yaw: number,
+) {
   const fx = Math.sin(yaw), fy = -Math.cos(yaw), rx = Math.cos(yaw), ry = Math.sin(yaw)
-  const baseId = `spin-tex-${surface}-base`
-  const patterns: React.ReactNode[] = [
-    <pattern key="base" id={baseId} patternUnits="userSpaceOnUse" width={TEX_CELL} height={TEX_CELL}>
-      <image href={href} x={0} y={0} width={TEX_CELL} height={TEX_CELL} preserveAspectRatio="xMidYMid slice" />
-    </pattern>,
-  ]
-  const rects: React.ReactNode[] = []
+  const camX = cellX - 0.5 * Math.sin(yaw), camY = cellY + 0.5 * Math.cos(yaw)
+  const pat = ctx.createPattern(tex, 'repeat')
+  if (!pat) return
+  const s = TEX_CELL / tex.width   // tex px → pattern units (one world cell = TEX_CELL)
   const top0 = surface === 'floor' ? VP_Y : 0
   const stripH = (surface === 'floor' ? VH - VP_Y : VP_Y) / TWEEN_STRIPS
+  ctx.save()
+  ctx.globalCompositeOperation = 'soft-light'
+  ctx.globalAlpha = surface === 'floor' ? 0.8 : 0.72
   for (let i = 0; i < TWEEN_STRIPS; i++) {
     const top = top0 + i * stripH
-    const midY = top + stripH / 2
-    const dy = surface === 'floor' ? midY - VP_Y : VP_Y - midY
+    const dy = surface === 'floor' ? top + stripH / 2 - VP_Y : VP_Y - (top + stripH / 2)
     if (dy <= 0.5) continue
     const z0 = PF_Y / dy
     if (z0 > 12) continue
-    const id = `spin-tex-${surface}-${i}`
-    patterns.push(<pattern key={i} id={id} href={`#${baseId}`} patternTransform={stripMatrixCam(surface, camX, camY, fx, fy, rx, ry, z0)} />)
-    rects.push(<rect key={`${surface}${i}`} x={0} y={top} width={VW} height={stripH + 0.6}
-      fill={`url(#${id})`} style={{ mixBlendMode: 'soft-light' }} opacity={surface === 'floor' ? 0.8 : 0.72} />)
+    const m = stripMatrixCam(surface, camX, camY, fx, fy, rx, ry, z0)
+    pat.setTransform(new DOMMatrix([m[0], m[1], m[2], m[3], m[4], m[5]]).scale(s))
+    ctx.fillStyle = pat
+    ctx.fillRect(0, top, VW, stripH + 0.6)
   }
-  return { patterns, rects }
+  ctx.restore()
 }
 
-function MoveTween({ map, fromCellX, fromCellY, toCellX, toCellY, fromYaw, toYaw, durationMs, theme, wallHref, floorHref, ceilHref, lightRadius, ruleset, isRevealed, flags, revealedB, onDone }: {
+/** Draw the whole motion frame (ceiling, floor, walls, lighting) onto a canvas —
+ *  no per-frame React or SVG reconciliation, and textures are decoded once. */
+function drawTweenScene(
+  ctx: CanvasRenderingContext2D, map: MapData, cellX: number, cellY: number, yaw: number,
+  theme: MapThemeDef, wallTex: HTMLCanvasElement | null, floorTex: HTMLCanvasElement | null, ceilTex: HTMLCanvasElement | null,
+  lightRadius: number | undefined, isRevealed: (x: number, y: number) => boolean,
+  flags: Record<string, boolean | number | string>, revealedB: Set<string> | undefined,
+) {
+  ctx.clearRect(0, 0, VW, VH)
+  // ceiling
+  ctx.fillStyle = `hsl(${theme.ceilHue} ${theme.ceilSat}% ${theme.ceilLBase}%)`; ctx.fillRect(0, 0, VW, VP_Y)
+  if (ceilTex) drawTweenSurface(ctx, 'ceiling', ceilTex, cellX, cellY, yaw)
+  const cg = ctx.createLinearGradient(0, 0, 0, VP_Y); cg.addColorStop(0, 'rgba(0,0,0,0)'); cg.addColorStop(1, 'rgba(0,0,0,0.55)')
+  ctx.fillStyle = cg; ctx.fillRect(0, 0, VW, VP_Y)
+  // floor
+  ctx.fillStyle = `hsl(${theme.floorHue} ${theme.floorSat}% ${theme.floorLBase}%)`; ctx.fillRect(0, VP_Y, VW, VH - VP_Y)
+  if (floorTex) drawTweenSurface(ctx, 'floor', floorTex, cellX, cellY, yaw)
+  const fg = ctx.createLinearGradient(0, VP_Y, 0, VH); fg.addColorStop(0, 'rgba(0,0,0,0.5)'); fg.addColorStop(1, 'rgba(0,0,0,0)')
+  ctx.fillStyle = fg; ctx.fillRect(0, VP_Y, VW, VH - VP_Y)
+  ctx.fillStyle = theme.floorGlowColor; ctx.fillRect(0, VP_Y + PF_Y / 2, VW, VH - VP_Y - PF_Y / 2)
+  // walls (back to front), base colour + soft-light texture
+  const walls = computeSpinWalls(map, cellX, cellY, yaw, theme, isRevealed, flags, revealedB, lightRadius)
+  const wallPat = wallTex ? ctx.createPattern(wallTex, 'repeat') : null
+  for (const w of walls) {
+    tracePoly(ctx, w.poly); ctx.fillStyle = w.fill; ctx.fill()
+    if (wallPat) {
+      ctx.save(); ctx.globalCompositeOperation = 'soft-light'; ctx.globalAlpha = 0.9
+      tracePoly(ctx, w.poly); ctx.fillStyle = wallPat; ctx.fill(); ctx.restore()
+    }
+  }
+  // horizon + ambient + vignette
+  ctx.strokeStyle = 'rgba(100,120,160,0.18)'; ctx.lineWidth = 1
+  ctx.beginPath(); ctx.moveTo(0, VP_Y); ctx.lineTo(VW, VP_Y); ctx.stroke()
+  if (theme.ambientTint) { ctx.fillStyle = theme.ambientTint; ctx.fillRect(0, 0, VW, VH) }
+  const vg = ctx.createRadialGradient(VW / 2, VH / 2, 0, VW / 2, VH / 2, VW * 0.72)
+  vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(1, 'rgba(0,0,0,0.55)')
+  ctx.fillStyle = vg; ctx.fillRect(0, 0, VW, VH)
+}
+
+/** Rasterise a texture href to a fixed-size offscreen canvas once, so the tween
+ *  can pattern-fill without decoding an SVG data-URI every frame (kills the pop-in). */
+function useRasterTexture(href: string | null, size: number): HTMLCanvasElement | null {
+  const [cv, setCv] = useState<HTMLCanvasElement | null>(null)
+  useEffect(() => {
+    if (!href || typeof document === 'undefined') { setCv(null); return }
+    let alive = true
+    const img = new Image()
+    img.onload = () => {
+      if (!alive) return
+      const c = document.createElement('canvas'); c.width = size; c.height = size
+      const g = c.getContext('2d')
+      if (g) { g.drawImage(img, 0, 0, size, size); setCv(c) }
+    }
+    img.src = href
+    return () => { alive = false }
+  }, [href, size])
+  return cv
+}
+
+function MoveTween({ map, fromCellX, fromCellY, toCellX, toCellY, fromYaw, toYaw, durationMs, theme, wallTex, floorTex, ceilTex, lightRadius, ruleset, isRevealed, flags, revealedB, onDone }: {
   map: MapData
   fromCellX: number; fromCellY: number; toCellX: number; toCellY: number
   fromYaw: number; toYaw: number; durationMs: number
-  theme: MapThemeDef; wallHref: string | null; floorHref: string | null; ceilHref: string | null
+  theme: MapThemeDef
+  wallTex: HTMLCanvasElement | null; floorTex: HTMLCanvasElement | null; ceilTex: HTMLCanvasElement | null
   lightRadius: number | undefined; ruleset: Ruleset | undefined
   isRevealed: (x: number, y: number) => boolean
   flags: Record<string, boolean | number | string>; revealedB: Set<string> | undefined; onDone: () => void
 }) {
-  const [p, setP] = useState(0)
+  const canvasRef = useRef<HTMLCanvasElement>(null)
   const doneRef = useRef(onDone); doneRef.current = onDone
-  useEffect(() => {
+  const [pose, setPose] = useState({ cellX: fromCellX, cellY: fromCellY, yaw: fromYaw, p: 0 })
+
+  useLayoutEffect(() => {
+    const draw = (cx: number, cy: number, y: number) => {
+      const ctx = canvasRef.current?.getContext('2d')
+      if (ctx) drawTweenScene(ctx, map, cx, cy, y, theme, wallTex, floorTex, ceilTex, lightRadius, isRevealed, flags, revealedB)
+    }
+    draw(fromCellX, fromCellY, fromYaw)   // first frame before paint — no flash
     let raf = 0; const t0 = performance.now()
     const tick = (t: number) => {
-      const pr = Math.min(1, (t - t0) / durationMs)
-      setP(pr)
-      if (pr < 1) raf = requestAnimationFrame(tick); else doneRef.current()
+      const p = Math.min(1, (t - t0) / durationMs)
+      const e = easeOutCubic(p)
+      const cellX = fromCellX + (toCellX - fromCellX) * e
+      const cellY = fromCellY + (toCellY - fromCellY) * e
+      const yaw = fromYaw + (toYaw - fromYaw) * e
+      draw(cellX, cellY, yaw)
+      setPose({ cellX, cellY, yaw, p })
+      if (p < 1) raf = requestAnimationFrame(tick); else doneRef.current()
     }
     raf = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(raf)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [durationMs])
-  const e = easeOutCubic(p)
-  const cellX = fromCellX + (toCellX - fromCellX) * e   // camera dollies through the cell for a step
-  const cellY = fromCellY + (toCellY - fromCellY) * e
-  const yaw = fromYaw + (toYaw - fromYaw) * e            // …and sweeps the yaw for a turn
-  const walls = useMemo(
-    () => computeSpinWalls(map, cellX, cellY, yaw, theme, isRevealed, flags, revealedB, lightRadius),
-    [map, cellX, cellY, yaw, theme, isRevealed, flags, revealedB, lightRadius],
-  )
+
   const sprites = useMemo(
-    () => computeSpinSprites(map, cellX, cellY, yaw, ruleset, flags, isRevealed),
-    [map, cellX, cellY, yaw, ruleset, flags, isRevealed],
+    () => computeSpinSprites(map, pose.cellX, pose.cellY, pose.yaw, ruleset, flags, isRevealed),
+    [map, pose, ruleset, flags, isRevealed],
   )
-  const camX = cellX - 0.5 * Math.sin(yaw), camY = cellY + 0.5 * Math.cos(yaw)
-  const floorCast = useMemo(() => floorHref ? castTweenSurface('floor', floorHref, camX, camY, yaw) : null, [floorHref, camX, camY, yaw])
-  const ceilCast  = useMemo(() => ceilHref ? castTweenSurface('ceiling', ceilHref, camX, camY, yaw) : null, [ceilHref, camX, camY, yaw])
-  // Merge walls + sprites into one back-to-front list so nearer walls occlude
-  // farther sprites (and vice-versa), matching the cardinal renderer.
-  const drawables = useMemo(() => {
-    const items: { z: number; node: React.ReactNode }[] = []
-    walls.forEach((w, i) => items.push({ z: w.z, node: (
-      <g key={`w${i}`}>
-        <polygon points={w.pts} fill={w.fill} />
-        {wallHref && <polygon points={w.pts} fill="url(#spin-tex-wall)" style={{ mixBlendMode: 'soft-light' }} opacity={0.9} />}
-      </g>
-    ) }))
-    sprites.forEach((s, i) => items.push({ z: s.z, node: <g key={`s${i}`}>{s.node}</g> }))
-    items.sort((a, b) => b.z - a.z)
-    return items
-  }, [walls, sprites, wallHref])
-  const opacity = p > 0.8 ? Math.max(0, 1 - (p - 0.8) / 0.2) : 1   // cross-fade to the textured frame at the end
+  const opacity = pose.p > 0.8 ? Math.max(0, 1 - (pose.p - 0.8) / 0.2) : 1
   return (
-    <svg viewBox={`0 0 ${VW} ${VH}`} width="100%" height="100%" preserveAspectRatio="xMidYMid meet"
-      style={{ position: 'absolute', inset: 0, display: 'block', opacity }} xmlns="http://www.w3.org/2000/svg">
-      <defs>
-        <clipPath id="spin-view-clip"><rect x={0} y={0} width={VW} height={VH} /></clipPath>
-        {wallHref && (
-          <pattern id="spin-tex-wall" patternUnits="userSpaceOnUse" width={92} height={92}>
-            <image href={wallHref} x="0" y="0" width={92} height={92} preserveAspectRatio="xMidYMid slice" />
-          </pattern>
-        )}
-        <radialGradient id="spin-vignette" cx="50%" cy="50%" r="70%">
-          <stop offset="0%" stopColor="rgba(0,0,0,0)" />
-          <stop offset="100%" stopColor="rgba(0,0,0,0.55)" />
-        </radialGradient>
-        {/* horizon-darkening so far floor/ceiling read as distant, like the resting frame */}
-        <linearGradient id="spin-ceil-fade" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="rgba(0,0,0,0)" /><stop offset="100%" stopColor="rgba(0,0,0,0.55)" />
-        </linearGradient>
-        <linearGradient id="spin-floor-fade" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="rgba(0,0,0,0.5)" /><stop offset="100%" stopColor="rgba(0,0,0,0)" />
-        </linearGradient>
-        {ceilCast?.patterns}
-        {floorCast?.patterns}
-      </defs>
-      <g clipPath="url(#spin-view-clip)">
-        <rect x={0} y={0} width={VW} height={VP_Y} fill={`hsl(${theme.ceilHue} ${theme.ceilSat}% ${theme.ceilLBase}%)`} />
-        {ceilCast?.rects}
-        <rect x={0} y={0} width={VW} height={VP_Y} fill="url(#spin-ceil-fade)" />
-        <rect x={0} y={VP_Y} width={VW} height={VH - VP_Y} fill={`hsl(${theme.floorHue} ${theme.floorSat}% ${theme.floorLBase}%)`} />
-        {floorCast?.rects}
-        <rect x={0} y={VP_Y} width={VW} height={VH - VP_Y} fill="url(#spin-floor-fade)" />
-        <rect x={0} y={VP_Y + PF_Y / 2} width={VW} height={VH - VP_Y - PF_Y / 2} fill={theme.floorGlowColor} />
-        {drawables.map(d => d.node)}
-        <line x1={0} y1={VP_Y} x2={VW} y2={VP_Y} stroke="rgba(100,120,160,0.18)" strokeWidth={1} />
-        {theme.ambientTint && <rect x={0} y={0} width={VW} height={VH} fill={theme.ambientTint} />}
-        <rect x={0} y={0} width={VW} height={VH} fill="url(#spin-vignette)" />
-      </g>
-    </svg>
+    <div className="absolute inset-0" style={{ opacity }}>
+      <canvas ref={canvasRef} width={VW} height={VH} className="absolute inset-0" style={{ width: '100%', height: '100%', display: 'block' }} />
+      {sprites.length > 0 && (
+        <svg viewBox={`0 0 ${VW} ${VH}`} width="100%" height="100%" preserveAspectRatio="xMidYMid meet"
+          className="absolute inset-0" style={{ display: 'block' }} xmlns="http://www.w3.org/2000/svg">
+          <defs><clipPath id="spin-sprite-clip"><rect x={0} y={0} width={VW} height={VH} /></clipPath></defs>
+          <g clipPath="url(#spin-sprite-clip)">{sprites.map((sp, i) => <g key={i}>{sp.node}</g>)}</g>
+        </svg>
+      )}
+    </div>
   )
 }
 
@@ -1770,6 +1813,10 @@ function AnimatedFirstPersonView({ speed, ...fp }: FpProps & { speed: MoveAnimSp
   const wallHref  = textureImageHref(tex?.wall,    { hue: theme.wallHue,  sat: theme.wallSat,  light: theme.wallLBase },  texA)
   const floorHref = textureImageHref(tex?.floor,   { hue: theme.floorHue, sat: theme.floorSat, light: theme.floorLBase }, texA)
   const ceilHref  = textureImageHref(tex?.ceiling, { hue: theme.ceilHue,  sat: theme.ceilSat,  light: theme.ceilLBase },  texA)
+  // Rasterise once, persistently — decoded and ready before any move (no pop-in).
+  const wallTex  = useRasterTexture(wallHref, 96)
+  const floorTex = useRasterTexture(floorHref, TEX_CELL)
+  const ceilTex  = useRasterTexture(ceilHref, TEX_CELL)
 
   return (
     <div className="absolute inset-0">
@@ -1778,7 +1825,7 @@ function AnimatedFirstPersonView({ speed, ...fp }: FpProps & { speed: MoveAnimSp
         <MoveTween key={tween.token} map={fp.map}
           fromCellX={tween.fromCellX} fromCellY={tween.fromCellY} toCellX={tween.toCellX} toCellY={tween.toCellY}
           fromYaw={tween.fromYaw} toYaw={tween.toYaw} durationMs={ms} theme={theme}
-          wallHref={wallHref} floorHref={floorHref} ceilHref={ceilHref}
+          wallTex={wallTex} floorTex={floorTex} ceilTex={ceilTex}
           lightRadius={fp.lightRadius} ruleset={fp.ruleset}
           isRevealed={fp.isCellRevealed} flags={fp.flags} revealedB={fp.revealedBoundaries}
           onDone={() => setTween(null)} />
