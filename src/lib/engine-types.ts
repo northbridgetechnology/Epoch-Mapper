@@ -512,6 +512,18 @@ export interface GameMeta {
    *  rule; legacy per-map MapData.combatMode is honored only when this is
    *  unset. Default 'classic'. */
   combatMode?: CombatMode
+  /** First-person movement smoothing: how long the step/turn transition runs.
+   *  'snappy' ~130ms · 'balanced' ~180ms · 'cinematic' ~260ms. Absent = balanced.
+   *  Honored only when the viewer hasn't asked for reduced motion. */
+  moveAnimSpeed?: MoveAnimSpeed
+}
+
+/** Movement-transition speed presets (see GameMeta.moveAnimSpeed). */
+export type MoveAnimSpeed = 'snappy' | 'balanced' | 'cinematic'
+
+/** Transition duration in ms for each preset. Balanced is the default. */
+export const MOVE_ANIM_MS: Record<MoveAnimSpeed, number> = {
+  snappy: 130, balanced: 180, cinematic: 260,
 }
 
 /** A short, paced intro shown once when starting a new game. */

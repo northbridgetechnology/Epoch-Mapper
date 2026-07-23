@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { ArrowUp, ArrowDown, ArrowLeft, ArrowRight, ZoomIn, ZoomOut, Coins, Map, Eye, Menu } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { baseDef, overlayDef, edgeDef, boundaryKey, DEFAULT_CELL, MIN_CELL, MAX_CELL, BASE, EDGE } from '@/lib/constants'
@@ -10,7 +10,8 @@ import { textureImageHref } from '@/lib/textures'
 import { getSubcubeDef } from '@/lib/subcube-defs'
 import { pixelSprite, pixelSpriteRect, spriteAspect, creatureSprite } from '@/lib/pixel-sprites'
 import { computeLightRadius, cellHasTrick, listFoes } from '@/lib/exploration'
-import type { BoundaryData, CellEntity, Character, Facing, Formation, ItemInstance, Ruleset } from '@/lib/engine-types'
+import type { BoundaryData, CellEntity, Character, Facing, Formation, ItemInstance, Ruleset, MoveAnimSpeed } from '@/lib/engine-types'
+import { MOVE_ANIM_MS } from '@/lib/engine-types'
 import { objectUsedFlagKey, effectiveDoorState, npcRecruitedFlagKey } from '@/lib/event-engine'
 import type { BattleViewState } from '@/lib/battle-scene'
 import type { CombatState } from '@/lib/combat-engine'
@@ -356,7 +357,10 @@ function FirstPersonView({ map, facing, isCellRevealed, revealedBoundaries, flag
   // Chromium would keep painting shapes from the stale pattern (and the strip
   // patterns that inherit the base image cache it too) — so a texture swap would
   // never show in Play. Changing the id on every selection forces fresh nodes.
-  const texRev = `${map.textures?.wall ?? ''}-${map.textures?.floor ?? ''}-${map.textures?.ceiling ?? ''}`.replace(/[^a-z0-9]/gi, '') || '0'
+  // The useId prefix keeps ids unique per instance, so the two frames rendered
+  // during a movement transition don't collide (url(#id) picks the first match).
+  const uid = useId().replace(/[^a-z0-9]/gi, '')
+  const texRev = `${uid}-${`${map.textures?.wall ?? ''}-${map.textures?.floor ?? ''}-${map.textures?.ceiling ?? ''}`.replace(/[^a-z0-9]/gi, '')}` || '0'
   const wallPatId = `fp-tex-wall-${texRev}`
   const texWall = (key: string, x: number, y: number, w: number, h: number) => wallHref
     ? <rect key={key} x={x} y={y} width={w} height={h} fill={`url(#${wallPatId})`} style={{ mixBlendMode: 'soft-light' }} opacity={0.9} />
@@ -1393,6 +1397,101 @@ function DungeonViewport({
   )
 }
 
+// ── Smooth movement: two-layer directional transition ──────────────────────────
+// The renderer is discrete (cardinal facings, whole cells), so we can't glide the
+// camera. Instead, when the player steps or turns we keep the OUTGOING frame as a
+// second layer and cross-transform the two: a step dollies (old zooms past, new
+// grows in); a turn pans/rotates (old swings out one way, new swings in the other).
+// Zero projection maths — just animating two rendered frames. Honors reduced motion.
+
+type FpProps = FirstPersonViewProps
+type MoveKind = 'forward' | 'back' | 'turnLeft' | 'turnRight'
+
+const TURN_L: Record<Facing, Facing> = { N: 'W', W: 'S', S: 'E', E: 'N' }
+const TURN_R: Record<Facing, Facing> = { N: 'E', E: 'S', S: 'W', W: 'N' }
+
+// [ incoming start transform, incoming start opacity, outgoing end transform ]
+const MOVE_KF: Record<MoveKind, { incFrom: string; incOp: number; outTo: string }> = {
+  forward:   { incFrom: 'scale(0.82)',  incOp: 0.35, outTo: 'scale(1.45)' },
+  back:      { incFrom: 'scale(1.28)',  incOp: 0.30, outTo: 'scale(0.80)' },
+  turnLeft:  { incFrom: 'perspective(1100px) translateX(-26%) rotateY(-20deg)', incOp: 0.45, outTo: 'perspective(1100px) translateX(26%) rotateY(20deg)' },
+  turnRight: { incFrom: 'perspective(1100px) translateX(26%) rotateY(20deg)',   incOp: 0.45, outTo: 'perspective(1100px) translateX(-26%) rotateY(-20deg)' },
+}
+const MOVE_EASE = 'cubic-bezier(0.22, 0.61, 0.36, 1)'
+
+function prefersReducedMotion(): boolean {
+  return typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+}
+
+function classifyMove(
+  prev: { mapId: string; px: number; py: number; facing: Facing },
+  cur:  { mapId: string; px: number; py: number; facing: Facing },
+): MoveKind | null {
+  if (prev.mapId !== cur.mapId) return null   // teleport / map change: leave to the fade
+  if (cur.facing !== prev.facing && cur.px === prev.px && cur.py === prev.py) {
+    if (TURN_L[prev.facing] === cur.facing) return 'turnLeft'
+    if (TURN_R[prev.facing] === cur.facing) return 'turnRight'
+    return null   // 180° flip — no clean direction
+  }
+  const dx = cur.px - prev.px, dy = cur.py - prev.py
+  if (dx === 0 && dy === 0) return null
+  if (Math.abs(dx) + Math.abs(dy) !== 1) return null   // multi-cell jump: not a step
+  const [fx, fy] = facingDelta(prev.facing)
+  if (dx === -fx && dy === -fy) return 'back'
+  return 'forward'   // forward or a lateral step both read as a dolly
+}
+
+function AnimatedFirstPersonView({ speed, ...fp }: FpProps & { speed: MoveAnimSpeed }) {
+  const ms = MOVE_ANIM_MS[speed] ?? MOVE_ANIM_MS.balanced
+  const incRef = useRef<HTMLDivElement>(null)
+  const outRef = useRef<HTMLDivElement>(null)
+  const poseRef = useRef({ mapId: fp.map.id, px: fp.map.playerX, py: fp.map.playerY, facing: fp.facing })
+  const frameRef = useRef<{ map: MapData; facing: Facing }>({ map: fp.map, facing: fp.facing })
+  const tokenRef = useRef(0)
+  const [outgoing, setOutgoing] = useState<{ map: MapData; facing: Facing; kind: MoveKind; token: number } | null>(null)
+
+  // Detect a step/turn and stage the outgoing frame.
+  useEffect(() => {
+    const prev = poseRef.current
+    const cur = { mapId: fp.map.id, px: fp.map.playerX, py: fp.map.playerY, facing: fp.facing }
+    const kind = classifyMove(prev, cur)
+    const prevFrame = frameRef.current
+    poseRef.current = cur
+    frameRef.current = { map: fp.map, facing: fp.facing }
+    if (!kind || prefersReducedMotion()) return
+    setOutgoing({ map: prevFrame.map, facing: prevFrame.facing, kind, token: ++tokenRef.current })
+  }, [fp.map, fp.facing])
+
+  // Run the cross-transform for the staged transition.
+  useEffect(() => {
+    if (!outgoing) return
+    const inc = incRef.current, out = outRef.current
+    if (!inc || !out) { setOutgoing(null); return }
+    const k = MOVE_KF[outgoing.kind]
+    const opts: KeyframeAnimationOptions = { duration: ms, easing: MOVE_EASE, fill: 'both' }
+    const a1 = inc.animate([{ transform: k.incFrom, opacity: k.incOp }, { transform: 'none', opacity: 1 }], opts)
+    const a2 = out.animate([{ transform: 'none', opacity: 1 }, { transform: k.outTo, opacity: 0 }], opts)
+    let done = false
+    const finish = () => { if (done) return; done = true; a1.cancel(); a2.cancel(); setOutgoing(null) }
+    a2.addEventListener('finish', finish)
+    a1.addEventListener('finish', finish)
+    return () => { a1.cancel(); a2.cancel() }
+  }, [outgoing, ms])
+
+  return (
+    <div className="absolute inset-0">
+      <div ref={incRef} className="absolute inset-0" style={{ transformOrigin: '50% 52%', willChange: 'transform, opacity' }}>
+        <FirstPersonView {...fp} />
+      </div>
+      {outgoing && (
+        <div ref={outRef} className="absolute inset-0" style={{ transformOrigin: '50% 52%', willChange: 'transform, opacity' }}>
+          <FirstPersonView {...fp} map={outgoing.map} facing={outgoing.facing} />
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 
 export function PlayWorkspace({
@@ -1546,7 +1645,8 @@ export function PlayWorkspace({
       {/* Main viewport — 3D fills all available space; map view keeps existing scroll grid */}
       {view === '3d' ? (
         <div ref={viewRef} className="relative flex-1 min-h-0 bg-zinc-950 overflow-hidden">
-          <FirstPersonView
+          <AnimatedFirstPersonView
+            speed={ruleset?.meta?.moveAnimSpeed ?? 'balanced'}
             map={activeMap}
             facing={facing}
             customOverlay={customOverlay}

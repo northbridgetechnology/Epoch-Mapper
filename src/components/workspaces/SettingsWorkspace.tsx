@@ -4,7 +4,7 @@ import { useRef } from 'react'
 import { Upload, Plus, Trash2, ChevronUp, ChevronDown, Image as ImageIcon } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { MapData, EdgeDir } from '@/lib/types'
-import type { AudioTrackDef, GameMeta, OpeningStory } from '@/lib/engine-types'
+import type { AudioTrackDef, GameMeta, OpeningStory, MoveAnimSpeed } from '@/lib/engine-types'
 import { toast } from 'sonner'
 import { THEMES, getTheme } from '@/lib/themes'
 import { fileToImageDataUri, IMAGE_ACCEPT_ATTR } from '@/lib/sprite-upload'
@@ -35,6 +35,12 @@ interface SettingsWorkspaceProps {
   formulas?: { xpToNext?: string }
   onFormulasChange?: (patch: { xpToNext?: string }) => void
 }
+
+const MOVE_SPEEDS: { id: MoveAnimSpeed; label: string }[] = [
+  { id: 'snappy',    label: 'Snappy' },
+  { id: 'balanced',  label: 'Balanced' },
+  { id: 'cinematic', label: 'Cinematic' },
+]
 
 const COMBAT_MODES: { id: 'classic' | 'oneMore' | 'pressTurn'; label: string; hint: string }[] = [
   { id: 'classic',   label: 'Classic',    hint: 'Speed-ordered round-robin.' },
@@ -321,6 +327,20 @@ function GameRules({ meta, onMetaChange }: { meta: GameMeta; onMetaChange: (patc
             className="h-4 w-4 rounded accent-red-500" />
           <span className="text-[11px] text-white/60 font-medium">💀 Permadeath</span>
           <span className="text-[10px] text-white/30">A wipe forfeits all saves.</span>
+        </label>
+        <label className="flex flex-col gap-1 rounded-lg border border-white/8 bg-white/4 px-3 py-2 col-span-2">
+          <span className="text-[11px] text-white/60 font-medium">🎥 Movement smoothing</span>
+          <select
+            value={meta.moveAnimSpeed ?? 'balanced'}
+            onChange={e => onMetaChange({ moveAnimSpeed: e.target.value === 'balanced' ? undefined : e.target.value as MoveAnimSpeed })}
+            className="px-2 py-1 rounded bg-zinc-800 border border-white/10 text-xs text-white/80 focus:outline-none"
+          >
+            {MOVE_SPEEDS.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
+          </select>
+          <span className="text-[10px] text-white/30">
+            First-person step &amp; turn transition length — Snappy ~130ms · Balanced ~180ms · Cinematic ~260ms.
+            Viewers who set “reduce motion” always get instant movement.
+          </span>
         </label>
       </div>
     </div>
