@@ -1457,7 +1457,7 @@ const SPIN_DIRS: EdgeDir[] = ['N', 'S', 'E', 'W']
 const SPIN_DELTA: Record<EdgeDir, [number, number]> = { N: [0, -1], S: [0, 1], E: [1, 0], W: [-1, 0] }
 function easeOutCubic(t: number): number { return 1 - Math.pow(1 - t, 3) }
 
-interface SpinWall { poly: number[]; z: number; fill: string }
+interface SpinWall { poly: number[]; z: number; fill: string; door?: boolean }
 
 /** The two ground endpoints (+inward normal) of a cell edge, in world cells. */
 function spinEdge(gx: number, gy: number, dir: EdgeDir) {
@@ -1501,6 +1501,8 @@ function computeSpinWalls(
         const [ndx, ndy] = SPIN_DELTA[dir]
         const solid = isWall(map, gx + ndx, gy + ndy) || !isRevealed(gx + ndx, gy + ndy)
         if (!solid && !hasBoundaryWall(map, gx, gy, dir, revealedB, flags)) continue
+        const bnd = map.boundaries?.[boundaryKey(gx, gy, dir)]
+        const isDoor = bnd?.door !== undefined && effectiveDoorState(bnd.door, flags) !== 'open'
         const s = spinEdge(gx, gy, dir)
         const mvx = (s.ax + s.bx) / 2 - camx, mvy = (s.ay + s.by) / 2 - camy
         if (s.nx * mvx + s.ny * mvy >= 0) continue   // back-facing
@@ -1521,6 +1523,7 @@ function computeSpinWalls(
         out.push({
           poly: [ax, aTop, bx, bTop, bx, bBot, ax, aBot],
           z, fill: `hsl(${theme.wallHue} ${theme.wallSat}% ${L.toFixed(1)}%)`,
+          door: isDoor,
         })
       }
     }
@@ -1587,6 +1590,36 @@ function computeSpinSprites(
       }
       if (!cell?.entities?.length) continue
 
+      const fenc = cell.entities.find((e): e is Extract<CellEntity, { t: 'encounter' }> =>
+        e.t === 'encounter' && e.mode === 'fixed' && !!e.table && !(e.oncePerVisit && flags[`enc.visited.${e.table}`]))
+      if (fenc) {
+        const table = ruleset?.encounterTables.find(t => t.id === fenc.table)
+        const entry = table && [...table.entries].sort((a, b) => b.weight - a.weight)[0]
+        const def = entry ? ruleset?.enemies.find(en => en.id === entry.enemy) : undefined
+        if (def && entry) {
+          const n = Math.max(1, Math.min(3, entry.min))
+          const fw = PF_X / z
+          const encSize = Math.max(12, fh * (n > 1 ? 0.34 : 0.42))
+          const lanes = n === 1 ? [0.5] : n === 2 ? [0.35, 0.65] : [0.25, 0.5, 0.75]
+          out.push({ z, node: (
+            <g opacity={Math.max(0.3, 1 - fog * 1.3)}>
+              {lanes.map((ln, li) => {
+                const ex = scX + (ln - 0.5) * fw
+                return (
+                  <g key={li}>
+                    <ellipse cx={ex} cy={floorY - fh * 0.02} rx={encSize * 0.4} ry={encSize * 0.1} fill="rgba(0,0,0,0.5)" />
+                    {creatureSprite({ sprite: def.sprite, id: def.id, name: def.name }, ex, floorY - encSize * 0.52, encSize, `senc_${gx}_${gy}_${li}`) ?? (
+                      <text x={ex} y={floorY - encSize * 0.55} textAnchor="middle" dominantBaseline="middle" fontSize={encSize} style={{ userSelect: 'none' }}>{def.icon ?? '👾'}</text>
+                    )}
+                  </g>
+                )
+              })}
+            </g>
+          ) })
+          continue
+        }
+      }
+
       const chestEnt = cell.entities.find((e): e is Extract<CellEntity, { t: 'object' }> => e.t === 'object' && e.object.kind === 'chest')
       if (chestEnt) {
         const kind = flags[objectUsedFlagKey(chestEnt.object.id)] ? 'chest_open' : 'chest'
@@ -1635,6 +1668,28 @@ function tracePoly(ctx: CanvasRenderingContext2D, poly: number[]) {
   ctx.moveTo(poly[0], poly[1])
   for (let i = 2; i < poly.length; i += 2) ctx.lineTo(poly[i], poly[i + 1])
   ctx.closePath()
+}
+
+/** A recessed wood door on a wall quad [ax,aTop,bx,bTop,bx,bBot,ax,aBot].
+ *  u runs left→right across the face, v bottom(floor)→top(ceiling). */
+function drawDoor(ctx: CanvasRenderingContext2D, poly: number[]) {
+  const pt = (u: number, v: number): [number, number] => {
+    const x = poly[0] + (poly[2] - poly[0]) * u
+    const yTop = poly[1] + (poly[3] - poly[1]) * u
+    const yBot = poly[7] + (poly[5] - poly[7]) * u
+    return [x, yBot + (yTop - yBot) * v]
+  }
+  const quad = (u0: number, v0: number, u1: number, v1: number, fill: string) => {
+    const a = pt(u0, v0), b = pt(u1, v0), c = pt(u1, v1), d = pt(u0, v1)
+    ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.lineTo(c[0], c[1]); ctx.lineTo(d[0], d[1]); ctx.closePath()
+    ctx.fillStyle = fill; ctx.fill()
+  }
+  quad(0.24, 0, 0.76, 0.86, 'hsl(28 30% 14%)')          // dark recess/frame
+  quad(0.28, 0, 0.72, 0.82, 'hsl(28 42% 22%)')          // wood panel
+  quad(0.485, 0, 0.515, 0.82, 'hsl(28 30% 15%)')        // centre seam (double-door look)
+  ctx.fillStyle = 'hsl(44 70% 55%)'                     // handle
+  const h = pt(0.44, 0.4)
+  ctx.beginPath(); ctx.arc(h[0], h[1], Math.max(1, (poly[2] - poly[0]) * 0.012), 0, Math.PI * 2); ctx.fill()
 }
 
 /** Draw the textured, perspective floor or ceiling onto the canvas — a soft-light
@@ -1696,6 +1751,7 @@ function drawTweenScene(
       ctx.save(); ctx.globalCompositeOperation = 'soft-light'; ctx.globalAlpha = 0.9
       tracePoly(ctx, w.poly); ctx.fillStyle = wallPat; ctx.fill(); ctx.restore()
     }
+    if (w.door) drawDoor(ctx, w.poly)
   }
   // horizon + ambient + vignette
   ctx.strokeStyle = 'rgba(100,120,160,0.18)'; ctx.lineWidth = 1
