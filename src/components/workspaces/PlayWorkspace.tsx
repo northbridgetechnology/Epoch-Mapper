@@ -1468,8 +1468,16 @@ function computeSpinWalls(
   isRevealed: (x: number, y: number) => boolean,
   flags: Record<string, boolean | number | string>,
   revealedB: Set<string> | undefined,
+  lightRadius: number | undefined,
   radius = 6,
 ): SpinWall[] {
+  // Match the cardinal renderer's lighting: distance fog + dark-map light falloff.
+  const viewD = lightRadius === undefined ? MAX_D : Math.max(1, Math.min(MAX_D, Math.floor(lightRadius)))
+  const fogAt = (z: number) => {
+    const df = Math.min(0.72, Math.max(0, (z - 1) * 0.18))
+    const le = viewD >= MAX_D ? 0 : Math.max(0, Math.min(1, (z - viewD + 1) * 0.55))
+    return Math.min(1, df + le)
+  }
   const sin = Math.sin(yaw), cos = Math.cos(yaw)
   const camx = pivotX - 0.5 * sin, camy = pivotY + 0.5 * cos   // 0.5 behind along fwd=(sin,-cos)
   const near = 0.06
@@ -1499,7 +1507,7 @@ function computeSpinWalls(
         const dotv = Math.abs((s.nx * mvx + s.ny * mvy) / ml)   // 1 head-on → bright, 0 grazing → dark
         const frontL = theme.wallLBase - (z - 1) * theme.wallLStep
         const sideL  = theme.sideLBase - (z - 1) * theme.sideLStep
-        const L = Math.max(6, Math.min(85, sideL + (frontL - sideL) * dotv))
+        const L = Math.max(6, Math.min(85, sideL + (frontL - sideL) * dotv)) * (1 - fogAt(z))   // fog/light falloff
         out.push({
           pts: `${r1(ax)},${r1(aTop)} ${r1(bx)},${r1(bTop)} ${r1(bx)},${r1(bBot)} ${r1(ax)},${r1(aBot)}`,
           z, fill: `hsl(${theme.wallHue} ${theme.wallSat}% ${L.toFixed(1)}%)`,
@@ -1511,11 +1519,95 @@ function computeSpinWalls(
   return out
 }
 
-function MoveTween({ map, fromCellX, fromCellY, toCellX, toCellY, fromYaw, toYaw, durationMs, theme, wallHref, isRevealed, flags, revealedB, onDone }: {
+interface SpinSprite { z: number; node: React.ReactNode }
+
+/** Project the world's standing billboards (patrol foes, chests, NPCs) at the
+ *  tween camera so they don't vanish during motion. Same anchoring the cardinal
+ *  renderer uses (bottom on the cell floor, size ∝ 1/distance), depth returned so
+ *  the caller can interleave them with the walls in painter's order. */
+function computeSpinSprites(
+  map: MapData, pivotX: number, pivotY: number, yaw: number,
+  ruleset: Ruleset | undefined,
+  flags: Record<string, boolean | number | string>,
+  isRevealed: (x: number, y: number) => boolean,
+  radius = 6,
+): SpinSprite[] {
+  const sin = Math.sin(yaw), cos = Math.cos(yaw)
+  const camx = pivotX - 0.5 * sin, camy = pivotY + 0.5 * cos
+  const cx = Math.round(pivotX), cy = Math.round(pivotY)
+  const near = 0.35
+  const foes = listFoes(map, flags).filter(f => !f.dead)
+  const out: SpinSprite[] = []
+  for (let gy = cy - radius; gy <= cy + radius; gy++) {
+    for (let gx = cx - radius; gx <= cx + radius; gx++) {
+      if (!isRevealed(gx, gy) || isWall(map, gx, gy)) continue
+      const rx = gx - camx, ry = gy - camy
+      const z = rx * sin - ry * cos
+      if (z < near) continue
+      const scX = VP_X + (PF_X * (rx * cos + ry * sin)) / z
+      if (scX < -140 || scX > VW + 140) continue
+      const floorY = VP_Y + PF_Y / z
+      const fh = (2 * PF_Y) / z
+      const fog = Math.min(0.72, Math.max(0, (z - 1) * 0.18))
+      const cell = map.cells[`${gx},${gy}`]
+
+      const foe = foes.find(f => f.pos.x === gx && f.pos.y === gy)
+      if (foe) {
+        const def = ruleset?.enemies.find(en => en.id === foe.entity.enemy)
+        const size = Math.max(14, fh * 0.52)
+        out.push({ z, node: (
+          <g opacity={Math.max(0.35, 1 - fog * 1.2)}>
+            <ellipse cx={scX} cy={floorY - fh * 0.02} rx={size * 0.45} ry={size * 0.11} fill="rgba(0,0,0,0.55)" />
+            {(def && creatureSprite({ sprite: def.sprite, id: def.id, name: def.name }, scX, floorY - size * 0.52, size, `sfoe_${gx}_${gy}`)) ?? (
+              <text x={scX} y={floorY - size * 0.55} textAnchor="middle" dominantBaseline="middle" fontSize={size} style={{ userSelect: 'none' }}>{def?.icon ?? '👹'}</text>
+            )}
+          </g>
+        ) })
+        continue
+      }
+      if (!cell?.entities?.length) continue
+
+      const chestEnt = cell.entities.find((e): e is Extract<CellEntity, { t: 'object' }> => e.t === 'object' && e.object.kind === 'chest')
+      if (chestEnt) {
+        const kind = flags[objectUsedFlagKey(chestEnt.object.id)] ? 'chest_open' : 'chest'
+        const cW = (PF_X / z) * 0.5
+        const chH = cW * (spriteAspect(kind) ?? 0.8)
+        out.push({ z, node: (
+          <g>
+            <ellipse cx={scX} cy={floorY - chH * 0.04} rx={cW * 0.55} ry={chH * 0.12} fill="rgba(0,0,0,0.45)" />
+            {pixelSpriteRect(kind, scX - cW / 2, floorY - chH, cW, chH, `schest_${gx}_${gy}`, Math.max(0.35, 1 - fog * 0.8))}
+          </g>
+        ) })
+        continue
+      }
+
+      const npcEnt = cell.entities.find((e): e is Extract<CellEntity, { t: 'object' }> =>
+        e.t === 'object' && e.object.kind === 'npc' && !(e.object.npc && flags[npcRecruitedFlagKey(e.object.npc)]))
+      if (npcEnt) {
+        const def = npcEnt.object.npc ? ruleset?.npcs.find(n => n.id === npcEnt.object.npc) : undefined
+        const size = Math.max(10, fh * 0.30), npcSize = size * 1.3
+        out.push({ z, node: (
+          <g opacity={Math.max(0.35, 1 - fog * 1.4)}>
+            <ellipse cx={scX} cy={floorY - fh * 0.02} rx={size * 0.42} ry={size * 0.10} fill="rgba(0,0,0,0.45)" />
+            {(def && (creatureSprite({ sprite: def.sprite, id: def.id, name: def.name }, scX, floorY - npcSize * 0.52, npcSize, `snpc_${gx}_${gy}`)
+              ?? pixelSprite('cr_hooded', scX, floorY - npcSize * 0.52, npcSize, `snpc_${gx}_${gy}`))) ?? (
+              <text x={scX} y={floorY - size * 0.55} textAnchor="middle" dominantBaseline="middle" fontSize={size} style={{ userSelect: 'none' }}>{def?.portrait ?? '🧑'}</text>
+            )}
+          </g>
+        ) })
+        continue
+      }
+    }
+  }
+  return out
+}
+
+function MoveTween({ map, fromCellX, fromCellY, toCellX, toCellY, fromYaw, toYaw, durationMs, theme, wallHref, lightRadius, ruleset, isRevealed, flags, revealedB, onDone }: {
   map: MapData
   fromCellX: number; fromCellY: number; toCellX: number; toCellY: number
   fromYaw: number; toYaw: number; durationMs: number
-  theme: MapThemeDef; wallHref: string | null; isRevealed: (x: number, y: number) => boolean
+  theme: MapThemeDef; wallHref: string | null; lightRadius: number | undefined; ruleset: Ruleset | undefined
+  isRevealed: (x: number, y: number) => boolean
   flags: Record<string, boolean | number | string>; revealedB: Set<string> | undefined; onDone: () => void
 }) {
   const [p, setP] = useState(0)
@@ -1535,9 +1627,27 @@ function MoveTween({ map, fromCellX, fromCellY, toCellX, toCellY, fromYaw, toYaw
   const cellY = fromCellY + (toCellY - fromCellY) * e
   const yaw = fromYaw + (toYaw - fromYaw) * e            // …and sweeps the yaw for a turn
   const walls = useMemo(
-    () => computeSpinWalls(map, cellX, cellY, yaw, theme, isRevealed, flags, revealedB),
-    [map, cellX, cellY, yaw, theme, isRevealed, flags, revealedB],
+    () => computeSpinWalls(map, cellX, cellY, yaw, theme, isRevealed, flags, revealedB, lightRadius),
+    [map, cellX, cellY, yaw, theme, isRevealed, flags, revealedB, lightRadius],
   )
+  const sprites = useMemo(
+    () => computeSpinSprites(map, cellX, cellY, yaw, ruleset, flags, isRevealed),
+    [map, cellX, cellY, yaw, ruleset, flags, isRevealed],
+  )
+  // Merge walls + sprites into one back-to-front list so nearer walls occlude
+  // farther sprites (and vice-versa), matching the cardinal renderer.
+  const drawables = useMemo(() => {
+    const items: { z: number; node: React.ReactNode }[] = []
+    walls.forEach((w, i) => items.push({ z: w.z, node: (
+      <g key={`w${i}`}>
+        <polygon points={w.pts} fill={w.fill} />
+        {wallHref && <polygon points={w.pts} fill="url(#spin-tex-wall)" style={{ mixBlendMode: 'soft-light' }} opacity={0.9} />}
+      </g>
+    ) }))
+    sprites.forEach((s, i) => items.push({ z: s.z, node: <g key={`s${i}`}>{s.node}</g> }))
+    items.sort((a, b) => b.z - a.z)
+    return items
+  }, [walls, sprites, wallHref])
   const opacity = p > 0.8 ? Math.max(0, 1 - (p - 0.8) / 0.2) : 1   // cross-fade to the textured frame at the end
   return (
     <svg viewBox={`0 0 ${VW} ${VH}`} width="100%" height="100%" preserveAspectRatio="xMidYMid meet"
@@ -1549,19 +1659,19 @@ function MoveTween({ map, fromCellX, fromCellY, toCellX, toCellY, fromYaw, toYaw
             <image href={wallHref} x="0" y="0" width={92} height={92} preserveAspectRatio="xMidYMid slice" />
           </pattern>
         )}
+        <radialGradient id="spin-vignette" cx="50%" cy="50%" r="70%">
+          <stop offset="0%" stopColor="rgba(0,0,0,0)" />
+          <stop offset="100%" stopColor="rgba(0,0,0,0.55)" />
+        </radialGradient>
       </defs>
       <g clipPath="url(#spin-view-clip)">
         <rect x={0} y={0} width={VW} height={VP_Y} fill={`hsl(${theme.ceilHue} ${theme.ceilSat}% ${theme.ceilLBase}%)`} />
         <rect x={0} y={VP_Y} width={VW} height={VH - VP_Y} fill={`hsl(${theme.floorHue} ${theme.floorSat}% ${theme.floorLBase}%)`} />
-        {walls.flatMap((w, i) => {
-          const nodes = [<polygon key={i} points={w.pts} fill={w.fill} />]
-          if (wallHref) nodes.push(
-            <polygon key={`t${i}`} points={w.pts} fill="url(#spin-tex-wall)" style={{ mixBlendMode: 'soft-light' }} opacity={0.9} />,
-          )
-          return nodes
-        })}
+        <rect x={0} y={VP_Y + PF_Y / 2} width={VW} height={VH - VP_Y - PF_Y / 2} fill={theme.floorGlowColor} />
+        {drawables.map(d => d.node)}
         <line x1={0} y1={VP_Y} x2={VW} y2={VP_Y} stroke="rgba(100,120,160,0.18)" strokeWidth={1} />
         {theme.ambientTint && <rect x={0} y={0} width={VW} height={VH} fill={theme.ambientTint} />}
+        <rect x={0} y={0} width={VW} height={VH} fill="url(#spin-vignette)" />
       </g>
     </svg>
   )
@@ -1608,6 +1718,7 @@ function AnimatedFirstPersonView({ speed, ...fp }: FpProps & { speed: MoveAnimSp
         <MoveTween key={tween.token} map={fp.map}
           fromCellX={tween.fromCellX} fromCellY={tween.fromCellY} toCellX={tween.toCellX} toCellY={tween.toCellY}
           fromYaw={tween.fromYaw} toYaw={tween.toYaw} durationMs={ms} theme={theme} wallHref={wallHref}
+          lightRadius={fp.lightRadius} ruleset={fp.ruleset}
           isRevealed={fp.isCellRevealed} flags={fp.flags} revealedB={fp.revealedBoundaries}
           onDone={() => setTween(null)} />
       )}
