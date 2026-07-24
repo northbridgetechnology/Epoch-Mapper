@@ -286,11 +286,14 @@ function stripMatrixCam(
   return [a, b, c, d, e, f]
 }
 
-/** Cardinal-facing floor/ceiling strip transform (camera at the player cell). */
+/** Cardinal-facing floor/ceiling strip transform. The camera sits at the BACK of
+ *  the player's cell (center − 0.5·forward) — the same origin the walls use — so
+ *  the floor/ceiling texture is glued to the world consistently with the walls and
+ *  matches the motion tween's cast at every cardinal pose (no shift on handoff). */
 function stripMatrix(surface: 'floor' | 'ceiling', px: number, py: number, facing: Facing, z0: number): string {
   const [fx, fy] = facingDelta(facing)
   const [rx, ry] = rightDelta(facing)
-  const m = stripMatrixCam(surface, px, py, fx, fy, rx, ry, z0)
+  const m = stripMatrixCam(surface, px - 0.5 * fx, py - 0.5 * fy, fx, fy, rx, ry, z0)
   return `matrix(${m[0]} ${m[1]} ${m[2]} ${m[3]} ${m[4]} ${m[5]})`
 }
 
