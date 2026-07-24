@@ -2079,19 +2079,35 @@ function drawTweenScene(
   flags: Record<string, boolean | number | string>, revealedB: Set<string> | undefined,
 ) {
   ctx.clearRect(0, 0, VW, VH)
-  // ceiling
-  ctx.fillStyle = `hsl(${theme.ceilHue} ${theme.ceilSat}% ${theme.ceilLBase}%)`; ctx.fillRect(0, 0, VW, VP_Y)
+  // Floor/ceiling lighting must match the SVG rest frame exactly or it flashes on
+  // the handoff: per-depth bands (darken with distance) + dark-map light falloff,
+  // NOT a flat fill + approximate gradient.
+  const pal = makeFpPalette(theme)
+  const viewD = lightRadius === undefined ? MAX_D : Math.max(1, Math.min(MAX_D, Math.floor(lightRadius)))
+  const lightExtra = (dd: number) => viewD >= MAX_D ? 0 : Math.max(0, Math.min(1, (dd - viewD + 1) * 0.55))
+  // ceiling bands (screen-top overhead → horizon)
+  for (let d = 0; d <= MAX_D; d++) {
+    const y0 = d === 0 ? 0 : ceilBandY(d)
+    const y1 = d === MAX_D ? VP_Y : ceilBandY(d + 1)
+    if (y1 <= y0) continue
+    ctx.fillStyle = pal.ceilBand(d + 1); ctx.fillRect(0, y0, VW, y1 - y0)
+    const le = lightExtra(d); if (le > 0) { ctx.fillStyle = `rgba(0,0,0,${le})`; ctx.fillRect(0, y0, VW, y1 - y0) }
+  }
   if (ceilTex) drawTweenSurface(ctx, 'ceiling', ceilTex, cellX, cellY, yaw)
   drawTweenGrid(ctx, 'ceiling', cellX, cellY, yaw, theme.ceilPatternColor, 0.7)
   const cg = ctx.createLinearGradient(0, 0, 0, VP_Y); cg.addColorStop(0, 'rgba(0,0,0,0)'); cg.addColorStop(1, 'rgba(0,0,0,0.55)')
   ctx.fillStyle = cg; ctx.fillRect(0, 0, VW, VP_Y)
-  // floor
-  ctx.fillStyle = `hsl(${theme.floorHue} ${theme.floorSat}% ${theme.floorLBase}%)`; ctx.fillRect(0, VP_Y, VW, VH - VP_Y)
+  // floor bands (horizon → screen-bottom nearest)
+  for (let d = MAX_D; d >= 0; d--) {
+    const y0 = d === MAX_D ? VP_Y : floorBandY(d + 1)
+    const y1 = d === 0 ? VH : floorBandY(d)
+    if (y1 <= y0) continue
+    ctx.fillStyle = pal.floorBand(d); ctx.fillRect(0, y0, VW, y1 - y0)
+    const le = lightExtra(d); if (le > 0) { ctx.fillStyle = `rgba(0,0,0,${le})`; ctx.fillRect(0, y0, VW, y1 - y0) }
+  }
   if (floorTex) drawTweenSurface(ctx, 'floor', floorTex, cellX, cellY, yaw)
   drawTweenGrid(ctx, 'floor', cellX, cellY, yaw, theme.gridLineColor, 0.7)
-  const fg = ctx.createLinearGradient(0, VP_Y, 0, VH); fg.addColorStop(0, 'rgba(0,0,0,0.5)'); fg.addColorStop(1, 'rgba(0,0,0,0)')
-  ctx.fillStyle = fg; ctx.fillRect(0, VP_Y, VW, VH - VP_Y)
-  ctx.fillStyle = theme.floorGlowColor; ctx.fillRect(0, VP_Y + PF_Y / 2, VW, VH - VP_Y - PF_Y / 2)
+  ctx.fillStyle = theme.floorGlowColor; ctx.fillRect(0, floorBandY(1), VW, VH - floorBandY(1))
   // stairs sit on the floor, under the walls (nearer walls occlude the well)
   drawTweenStairs(ctx, map, cellX, cellY, yaw, theme, isRevealed, flags, lightRadius)
   // walls (back to front), base colour + soft-light texture
