@@ -383,9 +383,6 @@ function FirstPersonView({ map, facing, isCellRevealed, revealedBoundaries, flag
   const texWall = (key: string, x: number, y: number, w: number, h: number, d: number) => wallHref
     ? <rect key={key} x={x} y={y} width={w} height={h} fill={`url(#${wallPatAt(d)})`} style={{ mixBlendMode: 'soft-light' }} opacity={0.9} />
     : null
-  const texPoly = (key: string, points: string, d: number) => wallHref
-    ? <polygon key={key} points={points} fill={`url(#${wallPatAt(d)})`} style={{ mixBlendMode: 'soft-light' }} opacity={0.8} />
-    : null
   const wallPatterns: React.ReactNode[] = wallHref ? [
     <pattern key="wbase" id={wallBaseId} patternUnits="userSpaceOnUse" width={TEX_CELL} height={TEX_CELL}>
       <image href={wallHref} x={0} y={0} width={TEX_CELL} height={TEX_CELL} preserveAspectRatio="xMidYMid slice" />
@@ -397,6 +394,39 @@ function FirstPersonView({ map, facing, isCellRevealed, revealedBoundaries, flag
         patternTransform={`translate(${(VP_X - fw / 2).toFixed(2)} ${y1.toFixed(2)}) scale(${(fw / TEX_CELL).toFixed(4)} ${(fh / TEX_CELL).toFixed(4)})`} />
     }),
   ] : []
+  // Side walls recede in depth (near plane z=d → far plane z=d+1), so a single
+  // flat tile can't foreshorten. Slice the trapezoid into vertical strips by
+  // world depth and give each an affine (exact at the strip) — perspective-
+  // correct texturing, matching the floor cast. One tile = one cell of depth.
+  const sideWallStrips = (
+    nearX: number, nearY1: number, nearY2: number, farX: number, farY1: number, farY2: number,
+    d: number, keyBase: string,
+  ): { patterns: React.ReactNode[]; polys: React.ReactNode[] } => {
+    if (!wallHref || farX === nearX) return { patterns: [], polys: [] }
+    const N = 5, C = TEX_CELL
+    const K = (nearX - VP_X) * d          // screen x = VP_X + K/z, exact at both planes
+    const sxAt = (t: number) => VP_X + K / (d + t)
+    // strip edges ride the renderer's straight quad, but are spaced by world depth
+    // (t) so the texture compresses toward the far end — perspective in the tile,
+    // flush with the flat base fill (no bulge).
+    const fr = (x: number) => (x - nearX) / (farX - nearX)
+    const topY = (x: number) => nearY1 + fr(x) * (farY1 - nearY1)
+    const botY = (x: number) => nearY2 + fr(x) * (farY2 - nearY2)
+    const patterns: React.ReactNode[] = [], polys: React.ReactNode[] = []
+    for (let i = 0; i < N; i++) {
+      const x0 = sxAt(i / N), x1 = sxAt((i + 1) / N)
+      const Ax = x0, Ay = topY(x0), Bx = x1, By = topY(x1), Dy = botY(x0)
+      const u0 = (i / N) * C, u1 = ((i + 1) / N) * C
+      const a = (Bx - Ax) / (u1 - u0), b = (By - Ay) / (u1 - u0), c = 0, dd = (Dy - Ay) / C
+      const e = Ax - a * u0, f = Ay - b * u0
+      const id = `${keyBase}_${i}`
+      patterns.push(<pattern key={id} id={id} href={`#${wallBaseId}`}
+        patternTransform={`matrix(${a.toFixed(4)} ${b.toFixed(4)} ${c} ${dd.toFixed(4)} ${e.toFixed(3)} ${f.toFixed(3)})`} />)
+      polys.push(<polygon key={`p${id}`} points={`${x0},${topY(x0)} ${x1},${topY(x1)} ${x1},${botY(x1)} ${x0},${botY(x0)}`}
+        fill={`url(#${id})`} style={{ mixBlendMode: 'soft-light' }} opacity={0.8} />)
+    }
+    return { patterns, polys }
+  }
 
   // Perspective floor/ceiling: one shared base pattern (holds the image once) +
   // per-strip patterns that only carry a patternTransform, so custom uploads
@@ -655,9 +685,11 @@ function FirstPersonView({ map, facing, isCellRevealed, revealedBoundaries, flag
       // Side walls bounding this open cell
       if (hasSideWallAt(d, s, 'left')) {
         const pts = `${near.x1},${near.y1} ${far.x1},${far.y1} ${far.x1},${far.y2} ${near.x1},${near.y2}`
+        const strips = sideWallStrips(near.x1, near.y1, near.y2, far.x1, far.y1, far.y2, d, `lw_str_${d}_${s}`)
         nodes.push(
           <polygon key={`lw_${d}_${s}`}  points={pts} fill={pal.sideWall(d)} />,
-          texPoly(`lw_tex_${d}_${s}`, pts, d),
+          strips.patterns.length > 0 && <defs key={`lwd_${d}_${s}`}>{strips.patterns}</defs>,
+          ...strips.polys,
           <polygon key={`lwao_${d}_${s}`}
             points={`${near.x1},${near.y1} ${far.x1},${far.y1} ${far.x1},${far.y1 - (far.y2 - far.y1) * 0.07} ${near.x1},${near.y1 - fh * 0.07}`}
             fill="rgba(0,0,0,0.26)" />,
@@ -667,9 +699,11 @@ function FirstPersonView({ map, facing, isCellRevealed, revealedBoundaries, flag
       }
       if (hasSideWallAt(d, s, 'right')) {
         const pts = `${near.x2},${near.y1} ${far.x2},${far.y1} ${far.x2},${far.y2} ${near.x2},${near.y2}`
+        const strips = sideWallStrips(near.x2, near.y1, near.y2, far.x2, far.y1, far.y2, d, `rw_str_${d}_${s}`)
         nodes.push(
           <polygon key={`rw_${d}_${s}`}  points={pts} fill={pal.sideWall(d)} />,
-          texPoly(`rw_tex_${d}_${s}`, pts, d),
+          strips.patterns.length > 0 && <defs key={`rwd_${d}_${s}`}>{strips.patterns}</defs>,
+          ...strips.polys,
           <polygon key={`rwao_${d}_${s}`}
             points={`${near.x2},${near.y1} ${far.x2},${far.y1} ${far.x2},${far.y1 - (far.y2 - far.y1) * 0.07} ${near.x2},${near.y1 - fh * 0.07}`}
             fill="rgba(0,0,0,0.26)" />,
@@ -1466,7 +1500,7 @@ const SPIN_DELTA: Record<EdgeDir, [number, number]> = { N: [0, -1], S: [0, 1], E
 const SPIN_OPP: Record<EdgeDir, EdgeDir> = { N: 'S', S: 'N', E: 'W', W: 'E' }
 function easeOutCubic(t: number): number { return 1 - Math.pow(1 - t, 3) }
 
-interface SpinWall { poly: number[]; z: number; fill: string; door?: boolean; lever?: 'on' | 'off'; inscription?: boolean; front?: boolean }
+interface SpinWall { poly: number[]; z: number; fill: string; door?: boolean; lever?: 'on' | 'off'; inscription?: boolean; front?: boolean; cam: [number, number, number, number] }
 
 /** The two ground endpoints (+inward normal) of a cell edge, in world cells. */
 function spinEdge(gx: number, gy: number, dir: EdgeDir) {
@@ -1540,6 +1574,7 @@ function computeSpinWalls(
           poly: [ax, aTop, bx, bTop, bx, bBot, ax, aBot],
           z, fill: `hsl(${theme.wallHue} ${theme.wallSat}% ${L.toFixed(1)}%)`,
           door: isDoor, lever, inscription, front: dotv > 0.55,
+          cam: [A.x, A.z, B.x, B.z],
         })
       }
     }
@@ -1743,6 +1778,37 @@ function drawDoor(ctx: CanvasRenderingContext2D, poly: number[]) {
   ctx.fillStyle = 'hsl(44 70% 55%)'                     // handle
   const h = pt(0.44, 0.4)
   ctx.beginPath(); ctx.arc(h[0], h[1], Math.max(1, (poly[2] - poly[0]) * 0.012), 0, Math.PI * 2); ctx.fill()
+}
+
+/** Soft-light the wall texture onto a wall quad, subdivided into vertical strips
+ *  by WORLD depth (from the cam-space endpoints) so the tile compresses toward the
+ *  far end — perspective-correct on receding side walls, one tile per cell. Strip
+ *  edges ride the renderer's straight quad, so the fill stays flush with the base.
+ *  cam = [Ax,Az,Bx,Bz] (near/far endpoints in camera space). */
+function fillWallStrips(ctx: CanvasRenderingContext2D, pat: CanvasPattern, poly: number[], cam: [number, number, number, number], texSize: number) {
+  const [Ax, Az, Bx, Bz] = cam
+  const dx = poly[2] - poly[0]
+  const C = texSize
+  const setFill = (a: number, b: number, c: number, d: number, e: number, f: number) => {
+    pat.setTransform(new DOMMatrix([a, b, c, d, e, f])); ctx.fillStyle = pat
+  }
+  if (Math.abs(dx) < 1) {   // grazing sliver — one affine over the whole quad
+    setFill((poly[2] - poly[0]) / C, (poly[3] - poly[1]) / C, (poly[6] - poly[0]) / C, (poly[7] - poly[1]) / C, poly[0], poly[1])
+    tracePoly(ctx, poly); ctx.fill(); return
+  }
+  const N = 5
+  const sxAt = (u: number) => { const cx = Ax + u * (Bx - Ax), cz = Az + u * (Bz - Az); return VP_X + (PF_X * cx) / cz }
+  const fr = (x: number) => (x - poly[0]) / dx
+  const topY = (x: number) => poly[1] + fr(x) * (poly[3] - poly[1])
+  const botY = (x: number) => poly[7] + fr(x) * (poly[5] - poly[7])
+  for (let i = 0; i < N; i++) {
+    const x0 = sxAt(i / N), x1 = sxAt((i + 1) / N)
+    const Ay = topY(x0), By = topY(x1), Dy = botY(x0)
+    const u0 = (i / N) * C, u1 = ((i + 1) / N) * C
+    const a = (x1 - x0) / (u1 - u0), b = (By - Ay) / (u1 - u0), d = (Dy - Ay) / C
+    setFill(a, b, 0, d, x0 - a * u0, Ay - b * u0)
+    ctx.beginPath(); ctx.moveTo(x0, topY(x0)); ctx.lineTo(x1, topY(x1)); ctx.lineTo(x1, botY(x1)); ctx.lineTo(x0, botY(x0)); ctx.closePath(); ctx.fill()
+  }
 }
 
 /** Interpolate a (u,v) point on a wall quad [ax,aTop,bx,bTop,bx,bBot,ax,aBot].
@@ -2034,17 +2100,11 @@ function drawTweenScene(
   for (const w of walls) {
     tracePoly(ctx, w.poly); ctx.fillStyle = w.fill; ctx.fill()
     if (wallPat && wallTex) {
-      // Pin one texture tile to the face (top edge = x-axis, left edge = y-axis)
-      // so the tile scales with the wall's projected size — same as the SVG rest
-      // frame — instead of a fixed screen-space repeat that changes with distance.
-      const p = w.poly, tw = wallTex.width, th = wallTex.height
-      wallPat.setTransform(new DOMMatrix([
-        (p[2] - p[0]) / tw, (p[3] - p[1]) / tw,
-        (p[6] - p[0]) / th, (p[7] - p[1]) / th,
-        p[0], p[1],
-      ]))
+      // Perspective-strip the texture so it stays pinned to the surface and
+      // foreshortens on receding side walls — matching the SVG rest frame.
       ctx.save(); ctx.globalCompositeOperation = 'soft-light'; ctx.globalAlpha = 0.9
-      tracePoly(ctx, w.poly); ctx.fillStyle = wallPat; ctx.fill(); ctx.restore()
+      fillWallStrips(ctx, wallPat, w.poly, w.cam, wallTex.width)
+      ctx.restore()
     }
     // mortar: the head-on wall's two vertical panel seams + a lit top edge,
     // mirroring the SVG front-wall detailing so the handoff carries no pop
