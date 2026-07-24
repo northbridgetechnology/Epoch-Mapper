@@ -1455,9 +1455,10 @@ function classifyMove(
 const FACING_YAW: Record<Facing, number> = { N: 0, E: Math.PI / 2, S: Math.PI, W: (3 * Math.PI) / 2 }
 const SPIN_DIRS: EdgeDir[] = ['N', 'S', 'E', 'W']
 const SPIN_DELTA: Record<EdgeDir, [number, number]> = { N: [0, -1], S: [0, 1], E: [1, 0], W: [-1, 0] }
+const SPIN_OPP: Record<EdgeDir, EdgeDir> = { N: 'S', S: 'N', E: 'W', W: 'E' }
 function easeOutCubic(t: number): number { return 1 - Math.pow(1 - t, 3) }
 
-interface SpinWall { poly: number[]; z: number; fill: string; door?: boolean }
+interface SpinWall { poly: number[]; z: number; fill: string; door?: boolean; lever?: 'on' | 'off'; inscription?: boolean }
 
 /** The two ground endpoints (+inward normal) of a cell edge, in world cells. */
 function spinEdge(gx: number, gy: number, dir: EdgeDir) {
@@ -1503,6 +1504,13 @@ function computeSpinWalls(
         if (!solid && !hasBoundaryWall(map, gx, gy, dir, revealedB, flags)) continue
         const bnd = map.boundaries?.[boundaryKey(gx, gy, dir)]
         const isDoor = bnd?.door !== undefined && effectiveDoorState(bnd.door, flags) !== 'open'
+        // Wall-face fixtures visible from this open cell: a lever/inscription
+        // mounts on the boundary face pointing back toward the cell (facing = OPP[dir]).
+        const sw = bnd?.switch
+        const lever: 'on' | 'off' | undefined =
+          sw && sw.facing === SPIN_OPP[dir] ? (flags[sw.flag] ? 'on' : 'off') : undefined
+        const insc = bnd?.inscription
+        const inscription = !!insc && (!insc.facing || insc.facing === SPIN_OPP[dir])
         const s = spinEdge(gx, gy, dir)
         const mvx = (s.ax + s.bx) / 2 - camx, mvy = (s.ay + s.by) / 2 - camy
         if (s.nx * mvx + s.ny * mvy >= 0) continue   // back-facing
@@ -1523,7 +1531,7 @@ function computeSpinWalls(
         out.push({
           poly: [ax, aTop, bx, bTop, bx, bBot, ax, aBot],
           z, fill: `hsl(${theme.wallHue} ${theme.wallSat}% ${L.toFixed(1)}%)`,
-          door: isDoor,
+          door: isDoor, lever, inscription,
         })
       }
     }
@@ -1692,6 +1700,71 @@ function drawDoor(ctx: CanvasRenderingContext2D, poly: number[]) {
   ctx.beginPath(); ctx.arc(h[0], h[1], Math.max(1, (poly[2] - poly[0]) * 0.012), 0, Math.PI * 2); ctx.fill()
 }
 
+/** Interpolate a (u,v) point on a wall quad [ax,aTop,bx,bTop,bx,bBot,ax,aBot].
+ *  u runs left→right across the face, v bottom(floor)→top(ceiling). */
+function quadPt(poly: number[], u: number, v: number): [number, number] {
+  const x = poly[0] + (poly[2] - poly[0]) * u
+  const yTop = poly[1] + (poly[3] - poly[1]) * u
+  const yBot = poly[7] + (poly[5] - poly[7]) * u
+  return [x, yBot + (yTop - yBot) * v]
+}
+
+/** A wall-mounted lever on a wall quad. Metal plate with a central bolt and an
+ *  angled handle: OFF throws up with a red knob, ON throws down with a green one
+ *  (mirrors the `lever_off`/`lever_on` pixel sprites the cardinal renderer uses). */
+function drawWallLever(ctx: CanvasRenderingContext2D, poly: number[], on: boolean, alpha: number) {
+  const w = Math.abs(poly[2] - poly[0])
+  if (w < 10) return   // too grazing/distant to read — skip the clutter
+  const pt = (u: number, v: number) => quadPt(poly, u, v)
+  ctx.save()
+  ctx.globalAlpha = alpha
+  // metal mounting plate
+  const box: [number, number][] = [[0.44, 0.44], [0.56, 0.44], [0.56, 0.56], [0.44, 0.56]]
+  ctx.beginPath()
+  box.forEach(([u, v], i) => { const [x, y] = pt(u, v); if (i) ctx.lineTo(x, y); else ctx.moveTo(x, y) })
+  ctx.closePath(); ctx.fillStyle = '#6b7684'; ctx.fill()
+  ctx.lineWidth = Math.max(1, w * 0.008); ctx.strokeStyle = '#454e59'; ctx.stroke()
+  // central bolt
+  const [bx, by] = pt(0.5, 0.5)
+  ctx.fillStyle = '#e8b93b'; ctx.beginPath(); ctx.arc(bx, by, Math.max(1, w * 0.01), 0, Math.PI * 2); ctx.fill()
+  // handle + knob
+  const base = on ? pt(0.5, 0.44) : pt(0.5, 0.56)
+  const tip  = on ? pt(0.5, 0.36) : pt(0.5, 0.64)
+  ctx.strokeStyle = '#7a5024'; ctx.lineCap = 'round'; ctx.lineWidth = Math.max(1.5, w * 0.018)
+  ctx.beginPath(); ctx.moveTo(base[0], base[1]); ctx.lineTo(tip[0], tip[1]); ctx.stroke()
+  ctx.fillStyle = on ? '#3fae5c' : '#c23434'
+  ctx.beginPath(); ctx.arc(tip[0], tip[1], Math.max(1.5, w * 0.02), 0, Math.PI * 2); ctx.fill()
+  ctx.restore()
+}
+
+/** A carved stone inscription plaque on a wall quad — a recessed tablet with a
+ *  few carved lines of "text", matching the cardinal renderer's plaque. */
+function drawWallInscription(ctx: CanvasRenderingContext2D, poly: number[], panelFill: string, alpha: number) {
+  const w = Math.abs(poly[2] - poly[0])
+  if (w < 14) return
+  const pt = (u: number, v: number) => quadPt(poly, u, v)
+  const fillQuad = (u0: number, v0: number, u1: number, v1: number, fill: string) => {
+    const a = pt(u0, v0), b = pt(u1, v0), c = pt(u1, v1), d = pt(u0, v1)
+    ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.lineTo(c[0], c[1]); ctx.lineTo(d[0], d[1]); ctx.closePath()
+    ctx.fillStyle = fill; ctx.fill()
+  }
+  ctx.save()
+  ctx.globalAlpha = alpha
+  fillQuad(0.275, 0.42, 0.725, 0.76, 'rgba(0,0,0,0.35)')   // recess shadow
+  fillQuad(0.29, 0.44, 0.71, 0.74, panelFill)              // tablet face
+  fillQuad(0.29, 0.71, 0.71, 0.74, 'rgba(255,255,255,0.08)') // top bevel highlight
+  // carved lines (last one shorter, like a real epitaph)
+  const lines = 3
+  ctx.strokeStyle = 'rgba(0,0,0,0.55)'; ctx.lineWidth = Math.max(0.8, w * 0.006)
+  for (let li = 0; li < lines; li++) {
+    const v = 0.68 - li * (0.20 / lines)
+    const inset = li === lines - 1 ? 0.36 : 0.32
+    const a = pt(inset, v), b = pt(1 - inset, v)
+    ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke()
+  }
+  ctx.restore()
+}
+
 /** Draw the textured, perspective floor or ceiling onto the canvas — a soft-light
  *  pattern per depth strip, transformed to glue the tile to the world. */
 function drawTweenSurface(
@@ -1722,6 +1795,133 @@ function drawTweenSurface(
   ctx.restore()
 }
 
+/** Draw stairwell geometry (up/down) for the tween camera. Ported from the
+ *  cardinal renderer's step geometry: each stair cell is placed in camera space
+ *  via its projected centre (Xc, Zc) and recedes straight away from the camera,
+ *  so at any cardinal frame it reproduces the rest view exactly and stays glued
+ *  to the cell as it sweeps across the view during a turn or step. Drawn after
+ *  the floor and before the walls so nearer walls occlude the well correctly. */
+function drawTweenStairs(
+  ctx: CanvasRenderingContext2D, map: MapData, cellX: number, cellY: number, yaw: number,
+  theme: MapThemeDef, isRevealed: (x: number, y: number) => boolean,
+  flags: Record<string, boolean | number | string>, lightRadius: number | undefined, radius = 5,
+) {
+  const pal = makeFpPalette(theme)
+  const viewD = lightRadius === undefined ? MAX_D : Math.max(1, Math.min(MAX_D, Math.floor(lightRadius)))
+  const fogAt = (z: number) => {
+    const df = Math.min(0.72, Math.max(0, (z - 1) * 0.18))
+    const le = viewD >= MAX_D ? 0 : Math.max(0, Math.min(1, (z - viewD + 1) * 0.55))
+    return Math.min(1, df + le)
+  }
+  const sin = Math.sin(yaw), cos = Math.cos(yaw)
+  const camx = cellX - 0.5 * sin, camy = cellY + 0.5 * cos
+  const cx = Math.round(cellX), cy = Math.round(cellY)
+  const fillPoly = (pts: number[], fill: string) => {
+    ctx.beginPath(); ctx.moveTo(pts[0], pts[1])
+    for (let i = 2; i < pts.length; i += 2) ctx.lineTo(pts[i], pts[i + 1])
+    ctx.closePath(); ctx.fillStyle = fill; ctx.fill()
+  }
+  const strokeSeg = (x1: number, y1: number, x2: number, y2: number, stroke: string, wdt = 1) => {
+    ctx.strokeStyle = stroke; ctx.lineWidth = wdt; ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke()
+  }
+
+  const cells: { gx: number; gy: number; kind: CellKind; Xc: number; Zc: number }[] = []
+  for (let gy = cy - radius; gy <= cy + radius; gy++) {
+    for (let gx = cx - radius; gx <= cx + radius; gx++) {
+      if (!isRevealed(gx, gy) || isWall(map, gx, gy)) continue
+      const kind = getCellKind(map, gx, gy)
+      if (kind !== 'stairs_up' && kind !== 'stairs_down') continue
+      const rx = gx - camx, ry = gy - camy
+      const Zc = rx * sin - ry * cos
+      if (Zc < 0.6) continue
+      const Xc = rx * cos + ry * sin
+      const scX = VP_X + (PF_X * Xc) / Zc
+      if (scX < -200 || scX > VW + 200) continue
+      const dd = Math.hypot(rx, ry), steps = Math.ceil(dd * 3)
+      let blocked = false
+      for (let k = 1; k < steps; k++) {
+        const sk = Math.round(camx + rx * (k / steps)), tk = Math.round(camy + ry * (k / steps))
+        if (sk === gx && tk === gy) continue
+        if (isWall(map, sk, tk)) { blocked = true; break }
+      }
+      if (blocked) continue
+      cells.push({ gx, gy, kind, Xc, Zc })
+    }
+  }
+  cells.sort((a, b) => b.Zc - a.Zc)   // far first
+
+  for (const c of cells) {
+    const d = Math.max(1, Math.round(c.Zc - 0.5))
+    const fog = fogAt(c.Zc)
+    const zAt = (t: number) => Math.max(0.55, c.Zc - 0.5 + t)
+    const sxAt = (z: number, fx: number) => VP_X + (c.Xc + fx - 0.5) * (PF_X / z)
+    const syAt = (z: number, u: number) => VP_Y + (PF_Y / z) * (1 - 2 * u)
+    const quad = (t1: number, u1: number, t2: number, u2: number, fxa: number, fxb: number): number[] => {
+      const z1 = zAt(t1), z2 = zAt(t2)
+      return [sxAt(z1, fxa), syAt(z1, u1), sxAt(z1, fxb), syAt(z1, u1), sxAt(z2, fxb), syAt(z2, u2), sxAt(z2, fxa), syAt(z2, u2)]
+    }
+    const N = 4, fxa = 0.16, fxb = 0.84, t0 = 0.12
+    const stepT = (i: number) => t0 + (1 - t0) * (i / N)
+
+    if (c.kind === 'stairs_down') {
+      const zn = zAt(t0), zf = zAt(1), uBot = -1.1
+      const openPts = [sxAt(zn, fxa), syAt(zn, 0), sxAt(zn, fxb), syAt(zn, 0), sxAt(zf, fxb), syAt(zf, 0), sxAt(zf, fxa), syAt(zf, 0)]
+      ctx.save()
+      ctx.beginPath(); ctx.moveTo(openPts[0], openPts[1])
+      for (let i = 2; i < openPts.length; i += 2) ctx.lineTo(openPts[i], openPts[i + 1])
+      ctx.closePath(); ctx.clip()
+      fillPoly(openPts, 'hsl(240 10% 2%)')
+      fillPoly([sxAt(zf, fxa), syAt(zf, 0), sxAt(zf, fxb), syAt(zf, 0), sxAt(zf, fxb), syAt(zf, uBot), sxAt(zf, fxa), syAt(zf, uBot)], 'hsl(240 7% 7%)')
+      for (const fx of [fxa, fxb]) {
+        fillPoly([sxAt(zn, fx), syAt(zn, 0), sxAt(zf, fx), syAt(zf, 0), sxAt(zf, fx), syAt(zf, uBot), sxAt(zn, fx), syAt(zn, uBot)], 'hsl(240 7% 5%)')
+      }
+      for (let i = N - 1; i >= 0; i--) {
+        const u = -0.42 * ((i + 1) / N)
+        const zi = zAt(stepT(i))
+        const treadPts = quad(stepT(i), u, stepT(i + 1), u, fxa, fxb)
+        fillPoly(treadPts, pal.floorBand(d))
+        fillPoly(treadPts, i < 2 ? `rgba(255,220,160,${0.14 - 0.06 * i})` : `rgba(0,0,0,${0.18 + 0.3 * (i - 2)})`)
+        strokeSeg(sxAt(zi, fxa), syAt(zi, u), sxAt(zi, fxb), syAt(zi, u), `rgba(255,235,200,${Math.max(0.06, 0.26 - 0.07 * i)})`, 1)
+      }
+      if (fog > 0) fillPoly(openPts, `rgba(0,0,0,${fog * 0.8})`)
+      ctx.restore()
+      ctx.save(); ctx.globalAlpha = 0.5
+      strokeSeg(sxAt(zn, fxa), syAt(zn, 0), sxAt(zn, fxb), syAt(zn, 0), pal.wallEdge(d), 1)
+      ctx.restore()
+    } else {
+      const zf = zAt(1), tOpen = 0.45, zo = zAt(tOpen)
+      const openPts = [sxAt(zo, fxa), syAt(zo, 1), sxAt(zo, fxb), syAt(zo, 1), sxAt(zf, fxb), syAt(zf, 1), sxAt(zf, fxa), syAt(zf, 1)]
+      fillPoly(openPts, 'hsl(38 42% 26%)')
+      fillPoly(openPts, 'rgba(255,220,150,0.30)')
+      strokeSeg(sxAt(zo, fxa), syAt(zo, 1), sxAt(zo, fxb), syAt(zo, 1), 'rgba(255,225,170,0.45)', 1)
+      for (const fx of [fxa, fxb]) {
+        const pts: number[] = [sxAt(zAt(t0), fx), syAt(zAt(t0), 0)]
+        for (let i = 0; i < N; i++) {
+          const uHi = (i + 1) / N
+          pts.push(sxAt(zAt(stepT(i)), fx), syAt(zAt(stepT(i)), uHi))
+          pts.push(sxAt(zAt(stepT(i + 1)), fx), syAt(zAt(stepT(i + 1)), uHi))
+        }
+        pts.push(sxAt(zf, fx), syAt(zf, 0))
+        fillPoly(pts, pal.sideWall(d))
+        fillPoly(pts, 'rgba(0,0,0,0.25)')
+      }
+      for (let i = N - 1; i >= 0; i--) {
+        const uLo = i / N, uHi = (i + 1) / N
+        const zi = zAt(stepT(i))
+        const riserPts = [sxAt(zi, fxa), syAt(zi, uLo), sxAt(zi, fxb), syAt(zi, uLo), sxAt(zi, fxb), syAt(zi, uHi), sxAt(zi, fxa), syAt(zi, uHi)]
+        fillPoly(riserPts, pal.frontWall(d))
+        fillPoly(riserPts, `rgba(255,220,150,${0.06 + 0.07 * i})`)
+        if (i < N - 1) {
+          const tread = quad(stepT(i), uHi, stepT(i + 1), uHi, fxa, fxb)
+          fillPoly(tread, pal.floorBand(d))
+          fillPoly(tread, `rgba(255,225,160,${0.06 + 0.08 * i})`)
+        }
+      }
+      if (fog > 0) fillPoly(quad(t0, 0, 1, 1, fxa, fxb), `rgba(0,0,0,${fog * 0.8})`)
+    }
+  }
+}
+
 /** Draw the whole motion frame (ceiling, floor, walls, lighting) onto a canvas —
  *  no per-frame React or SVG reconciliation, and textures are decoded once. */
 function drawTweenScene(
@@ -1742,6 +1942,8 @@ function drawTweenScene(
   const fg = ctx.createLinearGradient(0, VP_Y, 0, VH); fg.addColorStop(0, 'rgba(0,0,0,0.5)'); fg.addColorStop(1, 'rgba(0,0,0,0)')
   ctx.fillStyle = fg; ctx.fillRect(0, VP_Y, VW, VH - VP_Y)
   ctx.fillStyle = theme.floorGlowColor; ctx.fillRect(0, VP_Y + PF_Y / 2, VW, VH - VP_Y - PF_Y / 2)
+  // stairs sit on the floor, under the walls (nearer walls occlude the well)
+  drawTweenStairs(ctx, map, cellX, cellY, yaw, theme, isRevealed, flags, lightRadius)
   // walls (back to front), base colour + soft-light texture
   const walls = computeSpinWalls(map, cellX, cellY, yaw, theme, isRevealed, flags, revealedB, lightRadius)
   const wallPat = wallTex ? ctx.createPattern(wallTex, 'repeat') : null
@@ -1752,6 +1954,12 @@ function drawTweenScene(
       tracePoly(ctx, w.poly); ctx.fillStyle = wallPat; ctx.fill(); ctx.restore()
     }
     if (w.door) drawDoor(ctx, w.poly)
+    if (w.lever || w.inscription) {
+      const fog = Math.min(0.72, Math.max(0, (w.z - 1) * 0.18))
+      const alpha = Math.max(0.25, 1 - fog)
+      if (w.inscription) drawWallInscription(ctx, w.poly, `hsl(${theme.wallHue} ${theme.wallSat}% 30%)`, alpha)
+      if (w.lever) drawWallLever(ctx, w.poly, w.lever === 'on', alpha)
+    }
   }
   // horizon + ambient + vignette
   ctx.strokeStyle = 'rgba(100,120,160,0.18)'; ctx.lineWidth = 1
