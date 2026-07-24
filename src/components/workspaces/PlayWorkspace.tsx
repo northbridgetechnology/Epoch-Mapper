@@ -372,13 +372,31 @@ function FirstPersonView({ map, facing, isCellRevealed, revealedBoundaries, flag
   // during a movement transition don't collide (url(#id) picks the first match).
   const uid = useId().replace(/[^a-z0-9]/gi, '')
   const texRev = `${uid}-${`${map.textures?.wall ?? ''}-${map.textures?.floor ?? ''}-${map.textures?.ceiling ?? ''}`.replace(/[^a-z0-9]/gi, '')}` || '0'
-  const wallPatId = `fp-tex-wall-${texRev}`
-  const texWall = (key: string, x: number, y: number, w: number, h: number) => wallHref
-    ? <rect key={key} x={x} y={y} width={w} height={h} fill={`url(#${wallPatId})`} style={{ mixBlendMode: 'soft-light' }} opacity={0.9} />
+  // Wall texture is pinned to the wall SURFACE, not the screen: one texture tile
+  // spans one cell face (128 tex px = 1 cell, same as the floor cast), so a brick
+  // stays the same size on a given wall and simply scales with the wall's
+  // projected size as you approach — no more tile-count changing with distance.
+  // A shared base pattern holds the image once; per-depth patterns carry only a
+  // patternTransform, sizing/anchoring the tile to the wall face at that depth.
+  const wallBaseId = `fp-tex-wall-${texRev}-base`
+  const wallPatAt = (d: number) => `fp-tex-wall-${texRev}-d${Math.max(1, Math.min(MAX_D, Math.round(d)))}`
+  const texWall = (key: string, x: number, y: number, w: number, h: number, d: number) => wallHref
+    ? <rect key={key} x={x} y={y} width={w} height={h} fill={`url(#${wallPatAt(d)})`} style={{ mixBlendMode: 'soft-light' }} opacity={0.9} />
     : null
-  const texPoly = (key: string, points: string) => wallHref
-    ? <polygon key={key} points={points} fill={`url(#${wallPatId})`} style={{ mixBlendMode: 'soft-light' }} opacity={0.8} />
+  const texPoly = (key: string, points: string, d: number) => wallHref
+    ? <polygon key={key} points={points} fill={`url(#${wallPatAt(d)})`} style={{ mixBlendMode: 'soft-light' }} opacity={0.8} />
     : null
+  const wallPatterns: React.ReactNode[] = wallHref ? [
+    <pattern key="wbase" id={wallBaseId} patternUnits="userSpaceOnUse" width={TEX_CELL} height={TEX_CELL}>
+      <image href={wallHref} x={0} y={0} width={TEX_CELL} height={TEX_CELL} preserveAspectRatio="xMidYMid slice" />
+    </pattern>,
+    ...Array.from({ length: MAX_D }, (_, i) => {
+      const d = i + 1
+      const fw = PF_X / d, fh = (2 * PF_Y) / d, y1 = VP_Y - PF_Y / d
+      return <pattern key={`wd${d}`} id={`fp-tex-wall-${texRev}-d${d}`} href={`#${wallBaseId}`}
+        patternTransform={`translate(${(VP_X - fw / 2).toFixed(2)} ${y1.toFixed(2)}) scale(${(fw / TEX_CELL).toFixed(4)} ${(fh / TEX_CELL).toFixed(4)})`} />
+    }),
+  ] : []
 
   // Perspective floor/ceiling: one shared base pattern (holds the image once) +
   // per-strip patterns that only carry a patternTransform, so custom uploads
@@ -440,17 +458,7 @@ function FirstPersonView({ map, facing, isCellRevealed, revealedBoundaries, flag
   if (wallHref || floorHref || ceilHref) {
     nodes.push(
       <defs key="tex-defs">
-        {wallHref && (
-          // Screen-space tiled wall pattern. objectBoundingBox tiles (one image
-          // per face) don't render reliably in Chromium — the pattern content
-          // collapses — and can't follow the side-wall trapezoids anyway, so we
-          // tile in user space like the floor/ceiling. Front-wall rects and
-          // side-wall polygons both fill from this one pattern; the coursing
-          // stays continuous across adjacent faces.
-          <pattern id={wallPatId} patternUnits="userSpaceOnUse" width={92} height={92}>
-            <image href={wallHref} x="0" y="0" width={92} height={92} preserveAspectRatio="xMidYMid slice" />
-          </pattern>
-        )}
+        {wallPatterns}
         {floorCast.patterns}
         {ceilCast.patterns}
       </defs>,
@@ -632,7 +640,7 @@ function FirstPersonView({ map, facing, isCellRevealed, revealedBoundaries, flag
         if (d === 0 || !nearOpen) continue
         nodes.push(
           <rect key={`fw_${d}_${s}`}  x={near.x1} y={near.y1} width={fw} height={fh} fill={pal.frontWall(d)} />,
-          texWall(`fwt_tex_${d}_${s}`, near.x1, near.y1, fw, fh),
+          texWall(`fwt_tex_${d}_${s}`, near.x1, near.y1, fw, fh, d),
           <line key={`fwl_${d}_${s}`} x1={near.x1 + fw * 0.33} y1={near.y1} x2={near.x1 + fw * 0.33} y2={near.y2} stroke="rgba(0,0,0,0.18)" strokeWidth={0.6} />,
           <line key={`fwr_${d}_${s}`} x1={near.x1 + fw * 0.67} y1={near.y1} x2={near.x1 + fw * 0.67} y2={near.y2} stroke="rgba(0,0,0,0.18)" strokeWidth={0.6} />,
           <line key={`fwt_${d}_${s}`} x1={near.x1} y1={near.y1} x2={near.x2} y2={near.y1} stroke={pal.wallEdge(d)} strokeWidth={1} />,
@@ -649,7 +657,7 @@ function FirstPersonView({ map, facing, isCellRevealed, revealedBoundaries, flag
         const pts = `${near.x1},${near.y1} ${far.x1},${far.y1} ${far.x1},${far.y2} ${near.x1},${near.y2}`
         nodes.push(
           <polygon key={`lw_${d}_${s}`}  points={pts} fill={pal.sideWall(d)} />,
-          texPoly(`lw_tex_${d}_${s}`, pts),
+          texPoly(`lw_tex_${d}_${s}`, pts, d),
           <polygon key={`lwao_${d}_${s}`}
             points={`${near.x1},${near.y1} ${far.x1},${far.y1} ${far.x1},${far.y1 - (far.y2 - far.y1) * 0.07} ${near.x1},${near.y1 - fh * 0.07}`}
             fill="rgba(0,0,0,0.26)" />,
@@ -661,7 +669,7 @@ function FirstPersonView({ map, facing, isCellRevealed, revealedBoundaries, flag
         const pts = `${near.x2},${near.y1} ${far.x2},${far.y1} ${far.x2},${far.y2} ${near.x2},${near.y2}`
         nodes.push(
           <polygon key={`rw_${d}_${s}`}  points={pts} fill={pal.sideWall(d)} />,
-          texPoly(`rw_tex_${d}_${s}`, pts),
+          texPoly(`rw_tex_${d}_${s}`, pts, d),
           <polygon key={`rwao_${d}_${s}`}
             points={`${near.x2},${near.y1} ${far.x2},${far.y1} ${far.x2},${far.y1 - (far.y2 - far.y1) * 0.07} ${near.x2},${near.y1 - fh * 0.07}`}
             fill="rgba(0,0,0,0.26)" />,
@@ -886,7 +894,7 @@ function FirstPersonView({ map, facing, isCellRevealed, revealedBoundaries, flag
       } else if (blocked) {
         nodes.push(
           <rect key={`bw_${d}_${s}`}  x={near.x1} y={near.y1} width={fw} height={fh} fill={pal.frontWall(d)} />,
-          texWall(`bw_tex_${d}_${s}`, near.x1, near.y1, fw, fh),
+          texWall(`bw_tex_${d}_${s}`, near.x1, near.y1, fw, fh, d),
           <line key={`bwt_${d}_${s}`} x1={near.x1} y1={near.y1} x2={near.x2} y2={near.y1} stroke={pal.wallEdge(d)} strokeWidth={1} />,
           <rect key={`bwao_${d}_${s}`} x={near.x1} y={near.y1 - fh * 0.08} width={fw} height={fh * 0.08} fill="url(#ao-up)" />,
           fog > 0 && <rect key={`bwf_${d}_${s}`} x={near.x1} y={near.y1} width={fw} height={fh} fill={`rgba(0,0,0,${fog})`} />,
@@ -2025,7 +2033,16 @@ function drawTweenScene(
   const wallPat = wallTex ? ctx.createPattern(wallTex, 'repeat') : null
   for (const w of walls) {
     tracePoly(ctx, w.poly); ctx.fillStyle = w.fill; ctx.fill()
-    if (wallPat) {
+    if (wallPat && wallTex) {
+      // Pin one texture tile to the face (top edge = x-axis, left edge = y-axis)
+      // so the tile scales with the wall's projected size — same as the SVG rest
+      // frame — instead of a fixed screen-space repeat that changes with distance.
+      const p = w.poly, tw = wallTex.width, th = wallTex.height
+      wallPat.setTransform(new DOMMatrix([
+        (p[2] - p[0]) / tw, (p[3] - p[1]) / tw,
+        (p[6] - p[0]) / th, (p[7] - p[1]) / th,
+        p[0], p[1],
+      ]))
       ctx.save(); ctx.globalCompositeOperation = 'soft-light'; ctx.globalAlpha = 0.9
       tracePoly(ctx, w.poly); ctx.fillStyle = wallPat; ctx.fill(); ctx.restore()
     }
