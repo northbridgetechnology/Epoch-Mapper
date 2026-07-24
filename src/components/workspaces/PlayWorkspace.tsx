@@ -1458,7 +1458,7 @@ const SPIN_DELTA: Record<EdgeDir, [number, number]> = { N: [0, -1], S: [0, 1], E
 const SPIN_OPP: Record<EdgeDir, EdgeDir> = { N: 'S', S: 'N', E: 'W', W: 'E' }
 function easeOutCubic(t: number): number { return 1 - Math.pow(1 - t, 3) }
 
-interface SpinWall { poly: number[]; z: number; fill: string; door?: boolean; lever?: 'on' | 'off'; inscription?: boolean }
+interface SpinWall { poly: number[]; z: number; fill: string; door?: boolean; lever?: 'on' | 'off'; inscription?: boolean; front?: boolean }
 
 /** The two ground endpoints (+inward normal) of a cell edge, in world cells. */
 function spinEdge(gx: number, gy: number, dir: EdgeDir) {
@@ -1531,7 +1531,7 @@ function computeSpinWalls(
         out.push({
           poly: [ax, aTop, bx, bTop, bx, bBot, ax, aBot],
           z, fill: `hsl(${theme.wallHue} ${theme.wallSat}% ${L.toFixed(1)}%)`,
-          door: isDoor, lever, inscription,
+          door: isDoor, lever, inscription, front: dotv > 0.55,
         })
       }
     }
@@ -1581,6 +1581,42 @@ function computeSpinSprites(
       const fh = (2 * PF_Y) / z
       const fog = Math.min(0.72, Math.max(0, (z - 1) * 0.18))
       const cell = map.cells[`${gx},${gy}`]
+
+      // Sub-cube dressing (crates, wall fixtures, …). The 3×3×3 grid is
+      // world-aligned (x: W→E, y: floor→ceiling, z: S→N), so each object has a
+      // true world footprint we project directly — matching the SVG at the cell
+      // centre and staying correct at any yaw, so they don't vanish mid-move.
+      if (cell?.subcubeObjects?.length) {
+        for (const obj of cell.subcubeObjects) {
+          const def = getSubcubeDef(obj.kind)
+          if (!def) continue
+          const owx = gx + (obj.pos.x - 1) / 3, owy = gy + (1 - obj.pos.z) / 3
+          const orx = owx - camx, ory = owy - camy
+          const oz = orx * sin - ory * cos
+          if (oz < 0.5) continue
+          const oScX = VP_X + (PF_X * (orx * cos + ory * sin)) / oz
+          if (oScX < -140 || oScX > VW + 140) continue
+          const wallHalf = PF_Y / oz
+          const u = (obj.pos.y + 0.5) / 3
+          const spriteH = wallHalf * 2 * def.scale
+          const spriteW = spriteH / (spriteAspect(obj.kind) ?? 1)
+          let oScY = VP_Y + wallHalf * (1 - 2 * u)
+          if (def.mount === 'floor' && obj.pos.y === 0) oScY = VP_Y + wallHalf - spriteH / 2
+          else if (def.mount === 'ceiling' && obj.pos.y === 2) oScY = VP_Y - wallHalf + spriteH / 2
+          const oFog = Math.min(0.72, Math.max(0, (oz - 2) * 0.18))
+          const oOp = Math.max(0.25, 1 - oFog * 1.8)
+          const glow = obj.trigger
+            ? (obj.trigger === 'onInteract' ? 'rgba(56,189,248,0.30)' : obj.trigger === 'onView' ? 'rgba(52,211,153,0.30)' : 'rgba(251,191,36,0.30)')
+            : null
+          out.push({ z: oz, node: (
+            <g>
+              {glow && <circle cx={oScX} cy={oScY} r={spriteH * 0.55} fill={glow} opacity={oOp} />}
+              {pixelSprite(obj.kind, oScX, oScY, spriteW, `ssc_${gx}_${gy}_${obj.id}`, oOp)
+                ?? <text x={oScX} y={oScY} textAnchor="middle" dominantBaseline="middle" fontSize={spriteH * 0.8} opacity={oOp} style={{ userSelect: 'none' }}>{def.icon}</text>}
+            </g>
+          ) })
+        }
+      }
 
       const foe = foes.find(f => f.pos.x === gx && f.pos.y === gy)
       if (foe) {
@@ -1660,6 +1696,7 @@ function computeSpinSprites(
       }
     }
   }
+  out.sort((a, b) => b.z - a.z)   // painter's order: far first, so nearer sprites overlap correctly
   return out
 }
 
@@ -1922,6 +1959,43 @@ function drawTweenStairs(
   }
 }
 
+/** Draw the perspective floor/ceiling grid for the tween camera — the world
+ *  cell-boundary lattice (lines at every half-integer world x and y) projected
+ *  onto the floor (worldY=-1) or ceiling (worldY=+1) plane. Straight world lines
+ *  stay straight under projection, so each cell edge is one near-clipped segment;
+ *  the lattice converges on the vanishing point and rotates with the camera. */
+function drawTweenGrid(
+  ctx: CanvasRenderingContext2D, surface: 'floor' | 'ceiling',
+  cellX: number, cellY: number, yaw: number, color: string, lineWidth: number,
+  radius = MAX_D + 1,
+) {
+  const cos = Math.cos(yaw), sin = Math.sin(yaw)
+  const camX = cellX - 0.5 * sin, camY = cellY + 0.5 * cos
+  const worldY = surface === 'floor' ? -1 : 1
+  const near = 0.06
+  const cam = (wx: number, wy: number) => {
+    const rx = wx - camX, ry = wy - camY
+    return { x: rx * cos + ry * sin, z: rx * sin - ry * cos }
+  }
+  ctx.save()
+  ctx.strokeStyle = color; ctx.lineWidth = lineWidth
+  const strokeSeg = (ax: number, ay: number, bx: number, by: number) => {
+    let A = cam(ax, ay), B = cam(bx, by)
+    if (A.z < near && B.z < near) return
+    if (A.z < near) { const t = (near - A.z) / (B.z - A.z); A = { x: A.x + t * (B.x - A.x), z: near } }
+    else if (B.z < near) { const t = (near - B.z) / (A.z - B.z); B = { x: B.x + t * (A.x - B.x), z: near } }
+    ctx.beginPath()
+    ctx.moveTo(VP_X + (PF_X * A.x) / A.z, VP_Y - (PF_Y * worldY) / A.z)
+    ctx.lineTo(VP_X + (PF_X * B.x) / B.z, VP_Y - (PF_Y * worldY) / B.z)
+    ctx.stroke()
+  }
+  const cx = Math.round(cellX), cy = Math.round(cellY)
+  const lo = -radius - 1, hi = radius + 1
+  for (let k = cx + lo; k <= cx + hi; k++) strokeSeg(k + 0.5, cy + lo, k + 0.5, cy + hi)   // longitudinal seams
+  for (let m = cy + lo; m <= cy + hi; m++) strokeSeg(cx + lo, m + 0.5, cx + hi, m + 0.5)   // transverse depth lines
+  ctx.restore()
+}
+
 /** Draw the whole motion frame (ceiling, floor, walls, lighting) onto a canvas —
  *  no per-frame React or SVG reconciliation, and textures are decoded once. */
 function drawTweenScene(
@@ -1934,11 +2008,13 @@ function drawTweenScene(
   // ceiling
   ctx.fillStyle = `hsl(${theme.ceilHue} ${theme.ceilSat}% ${theme.ceilLBase}%)`; ctx.fillRect(0, 0, VW, VP_Y)
   if (ceilTex) drawTweenSurface(ctx, 'ceiling', ceilTex, cellX, cellY, yaw)
+  drawTweenGrid(ctx, 'ceiling', cellX, cellY, yaw, theme.ceilPatternColor, 0.7)
   const cg = ctx.createLinearGradient(0, 0, 0, VP_Y); cg.addColorStop(0, 'rgba(0,0,0,0)'); cg.addColorStop(1, 'rgba(0,0,0,0.55)')
   ctx.fillStyle = cg; ctx.fillRect(0, 0, VW, VP_Y)
   // floor
   ctx.fillStyle = `hsl(${theme.floorHue} ${theme.floorSat}% ${theme.floorLBase}%)`; ctx.fillRect(0, VP_Y, VW, VH - VP_Y)
   if (floorTex) drawTweenSurface(ctx, 'floor', floorTex, cellX, cellY, yaw)
+  drawTweenGrid(ctx, 'floor', cellX, cellY, yaw, theme.gridLineColor, 0.7)
   const fg = ctx.createLinearGradient(0, VP_Y, 0, VH); fg.addColorStop(0, 'rgba(0,0,0,0.5)'); fg.addColorStop(1, 'rgba(0,0,0,0)')
   ctx.fillStyle = fg; ctx.fillRect(0, VP_Y, VW, VH - VP_Y)
   ctx.fillStyle = theme.floorGlowColor; ctx.fillRect(0, VP_Y + PF_Y / 2, VW, VH - VP_Y - PF_Y / 2)
@@ -1952,6 +2028,19 @@ function drawTweenScene(
     if (wallPat) {
       ctx.save(); ctx.globalCompositeOperation = 'soft-light'; ctx.globalAlpha = 0.9
       tracePoly(ctx, w.poly); ctx.fillStyle = wallPat; ctx.fill(); ctx.restore()
+    }
+    // mortar: the head-on wall's two vertical panel seams + a lit top edge,
+    // mirroring the SVG front-wall detailing so the handoff carries no pop
+    if (w.front) {
+      ctx.lineWidth = 0.6; ctx.strokeStyle = 'rgba(0,0,0,0.18)'
+      for (const u of [0.33, 0.67]) {
+        const a = quadPt(w.poly, u, 0), b = quadPt(w.poly, u, 1)
+        ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke()
+      }
+      const d = Math.max(1, Math.round(w.z))
+      ctx.lineWidth = 1; ctx.strokeStyle = `hsl(${theme.wallHue} ${Math.min(60, theme.wallSat + 12)}% ${Math.min(72, 72 - (d - 1) * 12)}%)`
+      const tl = quadPt(w.poly, 0, 1), tr = quadPt(w.poly, 1, 1)
+      ctx.beginPath(); ctx.moveTo(tl[0], tl[1]); ctx.lineTo(tr[0], tr[1]); ctx.stroke()
     }
     if (w.door) drawDoor(ctx, w.poly)
     if (w.lever || w.inscription) {
