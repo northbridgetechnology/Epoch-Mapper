@@ -1965,9 +1965,15 @@ function drawTweenScene(
   ctx.strokeStyle = 'rgba(100,120,160,0.18)'; ctx.lineWidth = 1
   ctx.beginPath(); ctx.moveTo(0, VP_Y); ctx.lineTo(VW, VP_Y); ctx.stroke()
   if (theme.ambientTint) { ctx.fillStyle = theme.ambientTint; ctx.fillRect(0, 0, VW, VH) }
-  const vg = ctx.createRadialGradient(VW / 2, VH / 2, 0, VW / 2, VH / 2, VW * 0.72)
+  // Vignette — match the rest frame's SVG radialGradient (objectBoundingBox,
+  // cx/cy 50%, r 70%): an ellipse rx=0.7·VW, ry=0.7·VH. Squash y so a circle of
+  // radius 0.7·VW becomes that ellipse, so the handoff to the SVG is seamless.
+  ctx.save()
+  ctx.translate(VP_X, VP_Y); ctx.scale(1, VH / VW)
+  const vg = ctx.createRadialGradient(0, 0, 0, 0, 0, 0.7 * VW)
   vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(1, 'rgba(0,0,0,0.55)')
-  ctx.fillStyle = vg; ctx.fillRect(0, 0, VW, VH)
+  ctx.fillStyle = vg; ctx.fillRect(-VW, -VW, VW * 2, VW * 2)
+  ctx.restore()
 }
 
 /** Rasterise a texture href to a fixed-size offscreen canvas once, so the tween
@@ -2030,10 +2036,13 @@ function MoveTween({ map, fromCellX, fromCellY, toCellX, toCellY, fromYaw, toYaw
     () => computeSpinSprites(map, pose.cellX, pose.cellY, pose.yaw, ruleset, flags, isRevealed),
     [map, pose, ruleset, flags, isRevealed],
   )
-  const opacity = pose.p > 0.8 ? Math.max(0, 1 - (pose.p - 0.8) / 0.2) : 1
+  // No cross-fade at the end: easeOutCubic settles the pose by ~90%, so fading
+  // the canvas out would just cross-dissolve two near-identical renders of the
+  // SAME final view (canvas vs the SVG rest frame beneath) — a 50 ms brightness
+  // shimmer. Hard-cutting on unmount swaps them in a single frame instead.
   return (
-    <div className="absolute inset-0" style={{ opacity }}>
-      <canvas ref={canvasRef} width={VW} height={VH} className="absolute inset-0" style={{ width: '100%', height: '100%', display: 'block' }} />
+    <div className="absolute inset-0">
+      <canvas ref={canvasRef} width={VW} height={VH} className="absolute inset-0" style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }} />
       {sprites.length > 0 && (
         <svg viewBox={`0 0 ${VW} ${VH}`} width="100%" height="100%" preserveAspectRatio="xMidYMid meet"
           className="absolute inset-0" style={{ display: 'block' }} xmlns="http://www.w3.org/2000/svg">
